@@ -1,48 +1,67 @@
+# add "smoke" into your stages list (keep existing stages)
 stages:
   - build
+  - smoke    # <--- new
   - deploy
 
-variables:
-  IMAGE: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
-
-# Build & push using Kaniko (works on shared runners, secure)
-build:
-  stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:latest
-    entrypoint: [""]
+# ---------------------------------------------------------------------
+# Quick runner / host check
+# ---------------------------------------------------------------------
+smoke_runner_check:
+  stage: smoke
+  tags:
+    - vps1
+  # manual so you can trigger it when you want
+  when: manual
+  allow_failure: true
   script:
-    - mkdir -p /kaniko/.docker
+    - echo "=== CI runner / job identity ==="
+    - echo "CI_PROJECT_PATH: $CI_PROJECT_PATH"
+    - echo "CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME"
+    - echo "CI_RUNNER_DESCRIPTION: $CI_RUNNER_DESCRIPTION"
+    - echo "CI_RUNNER_TAGS: $CI_RUNNER_TAGS"
+    - echo
+    - echo "=== Host info ==="
+    - echo "User: $(whoami)"
+    - echo "Hostname: $(hostname)"
+    - uname -a
+    - date -u
+    - echo
+    - echo "=== Network addresses (local) ==="
+    - echo "All IPv4 addresses (global scope):"
+    - ip -4 addr show scope global || (which ifconfig && ifconfig) || true
+    - echo
+    - echo "Outbound (source) IP for external traffic (no external request):"
+    - ip route get 1.1.1.1 2>/dev/null | awk '/src/ { for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true
+    - echo
+    - echo "=== Public IP (optional external lookup) ==="
     - |
-      echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n $CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD | base64)\"}}}" \
-        > /kaniko/.docker/config.json
-    - /kaniko/executor --context $CI_PROJECT_DIR/python/rag_api \
-        --dockerfile $CI_PROJECT_DIR/python/rag_api/Dockerfile \
-        --destination $IMAGE \
-        --skip-tls-verify=false
-  rules:
-    - if: $CI_COMMIT_BRANCH
-
-deploy:
-  stage: deploy
-  image:
-    name: alpine:3.18
-    entrypoint: [""]
-  before_script:
-    - apk add --no-cache openssh-client bash
-    - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    # optional: add known_hosts properly instead of disabling StrictHostKeyChecking
-    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts || true
+      # WARNING: this calls an external service; it will reveal the public IP to that service.
+      # If you prefer not to call an external service, skip the next line.
+      curl -sS --max-time 5 https://ifconfig.co || echo "external lookup failed or blocked"
+    - echo
+    - echo "=== Tooling checks ==="
+    - echo "docker:"
+    - docker --version || echo "docker not found"
+    - echo "docker-compose:"
+    - docker-compose version || docker compose version || echo "docker-compose not found"
+    - echo
+    - echo "Done smoke_runner_check"
+# ---------------------------------------------------------------------
+# Build-only smoke: verify Docker build succeeds and simple sanity run
+# (does not attempt to start the RAG server which needs real FAISS/meta files)
+# ---------------------------------------------------------------------
+smoke_build_image:
+  stage: smoke
+  tags:
+    - vps1
+  when: manual
+  allow_failure: true
   script:
-    # ensure target dir exists and docker-compose file present; adapt path if needed
-    # Option A: if docker-compose.yml is already on the server:
-    - ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && docker-compose pull && docker-compose up -d --remove-orphans"
-    # Option B: if you want to copy docker-compose from repo to server:
-    # - scp docker-compose.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.yml"
-    # - ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && docker-compose pull && docker-compose up -d --remove-orphans"
-  environment:
-    name: production
-  rules:
-    - if: $CI_COMMIT_BRANCH
+    - echo "Building rag_api image to verify docker build on runner..."
+    - docker build -t "${CI_PROJECT_NAME}_rag_api:smoke" python/rag_api
+    - echo "Build finished. Now running a tiny sanity command inside the image (no server start)."
+    - docker run --rm --entrypoint python "${CI_PROJECT_NAME}_rag_api:smoke" -c "print('container_python_ok')"
+    - echo "If you see 'container_python_ok' above, the image was built and Python started fine."
+    - docker image ls | grep "${CI_PROJECT_NAME}_rag_api" || true
+    - echo "Done smoke_build_image"

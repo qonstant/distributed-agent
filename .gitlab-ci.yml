@@ -2,6 +2,7 @@ stages:
   - build
   - deploy
 
+# small before_script anchors
 .before-vps1: &before-vps1
   - echo "Running on $(hostname)"
   - docker --version || true
@@ -49,16 +50,20 @@ deploy-rag:
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
     - docker-compose up -d --build
-    - shred -u .env || rm -f .env || true
+    - 'shred -u .env || rm -f .env || true'
 
 ################################################################################
-# BOT (study-bot) — adjust 'cd' if your bot files are in a subfolder
+# BOT (study-bot) — runs only if Dockerfile + docker-compose.yml exist at repo root
 ################################################################################
 build-bot-image:
   stage: build
   tags:
     - vps1
   before_script: *before-vps1
+  rules:
+    - exists:
+        - Dockerfile
+        - docker-compose.yml
   script:
     - cd .
     - docker build --no-cache -t "${BOT_IMAGE_NAME}" .
@@ -68,6 +73,10 @@ deploy-bot:
   tags:
     - vps1
   before_script: *before-vps1
+  rules:
+    - exists:
+        - Dockerfile
+        - docker-compose.yml
   script:
     - cd .
     - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
@@ -80,7 +89,7 @@ deploy-bot:
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
     - docker-compose up -d --build
-    - shred -u .env || rm -f .env || true
+    - 'shred -u .env || rm -f .env || true'
 
 ################################################################################
 # GOLANG service (uses runner 'vps2')
@@ -109,4 +118,4 @@ deploy-golang:
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
     - docker-compose up -d --build
-    - shred -u .env || rm -f .env || true
+    - 'shred -u .env || rm -f .env || true'

@@ -27,7 +27,7 @@ S3_ENDPOINT = os.getenv("S3_ENDPOINT")
 S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY_ID") or os.getenv("S3_ACCESS_KEY")
 S3_SECRET = os.getenv("S3_SECRET_ACCESS_KEY") or os.getenv("S3_SECRET")
 S3_BUCKET_VECTORS = os.getenv("S3_BUCKET_VECTORS")
-S3_USE_SSL = os.getenv("S3_USE_SSL", "true").lower() in ("1", "true", "yes")
+S3_USE_SSL = os.getenv("S3_USE_SSL", "false").lower() in ("1", "true", "yes")
 RELEASE_PREFIX = os.getenv("RELEASE_PREFIX")  # optional override for release prefix
 
 OUT = Path(os.getenv("OUT_DIR", "out"))

@@ -1,33 +1,30 @@
-# .gitlab-ci.yml (no-docker deployment on host via systemd)
 stages:
-  - smoke
+  - build
   - deploy
 
-smoke_python_check:
-  stage: smoke
-  tags:
-    - vps1
-  when: manual
-  allow_failure: true
-  script:
-    - 'echo "Python version:"; python3 --version'
-    - 'python3 -m venv .venv_ci || true'
-    - '. .venv_ci/bin/activate && pip install -r python/rag_api/requirements.txt'
-    - '. .venv_ci/bin/activate && python -c "import uvicorn,faiss,numpy; print(\"imports_ok\")" || echo "import check failed"'
+variables:
+  IMAGE_NAME: demo-site:latest
+  CONTAINER_NAME: demo-site-container
 
-deploy_to_system:
-  stage: deploy
+.default-docker-job: &default-docker-job
   tags:
-    - vps1
-  when: manual
+    - vm
+  before_script:
+    - echo "Running on $(hostname)"
+    - docker --version
+
+build-docker-image:
+  <<: *default-docker-job
+  stage: build
   script:
-    - 'echo "Copying files to /opt/distributed-agent (requires runner user permissions)"'
-    - 'sudo rm -rf /opt/distributed-agent || true'
-    - 'sudo mkdir -p /opt/distributed-agent'
-    - 'sudo cp -r . /opt/distributed-agent'
-    - 'echo "Restarting rag_api systemd service (create unit file if not present)"'
-    - 'sudo systemctl daemon-reload || true'
-    - 'sudo systemctl restart rag_api.service || sudo systemctl start rag_api.service || true'
-    - 'sudo journalctl -u rag_api.service --no-pager -n 200 || true'
-  only:
-    - main
+    # set the correct build context to the folder containing Dockerfile
+    - docker build -t $IMAGE_NAME python/rag_api
+
+deploy-in-to-docker:
+  <<: *default-docker-job
+  stage: deploy
+  script:
+    - docker stop $CONTAINER_NAME || true
+    - docker rm $CONTAINER_NAME || true
+    # map host 8080 -> container 8000 (uvicorn listens on 8000)
+    - docker run -d -p 8080:8000 --name $CONTAINER_NAME $IMAGE_NAME

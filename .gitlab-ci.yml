@@ -3,8 +3,8 @@ stages:
   - deploy
 
 variables:
-  IMAGE_NAME: demo-site:latest
-  CONTAINER_NAME: demo-site-container
+  IMAGE_NAME: rag:latest
+  CONTAINER_NAME: rag-container
 
 .default-docker-job: &default-docker-job
   tags:
@@ -26,5 +26,8 @@ deploy-in-to-docker:
   script:
     - docker stop $CONTAINER_NAME || true
     - docker rm $CONTAINER_NAME || true
-    # map host 8080 -> container 8000 (uvicorn listens on 8000)
-    - docker run -d -p 8080:8000 --name $CONTAINER_NAME $IMAGE_NAME
+    - docker run -d \
+        -p 8080:8000 \
+        -e OPENAI_API_KEY="$OPENAI_API_KEY" \
+        --name $CONTAINER_NAME \
+        $IMAGE_NAME

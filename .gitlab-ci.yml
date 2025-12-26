@@ -2,58 +2,111 @@ stages:
   - build
   - deploy
 
+.before-vps1: &before-vps1
+  - echo "Running on $(hostname)"
+  - docker --version || true
+  - docker-compose --version || true
+
+.before-vps2: &before-vps2
+  - echo "Running on $(hostname) (golang runner)"
+  - docker --version || true
+  - docker-compose --version || true
+
 variables:
-  IMAGE_NAME: rag:latest
-  CONTAINER_NAME: rag-container
+  IMAGE_NAME: "rag:latest"
+  CONTAINER_NAME: "rag-container"
+  BOT_IMAGE_NAME: "study-bot:latest"
+  BOT_CONTAINER_NAME: "study-bot"
+  GOLANG_IMAGE_NAME: "golang-agent:latest"
+  GOLANG_CONTAINER_NAME: "golang-agent"
 
-.default-docker-job: &default-docker-job
-  tags:
-    - vps1
-  before_script:
-    - echo "Running on $(hostname)"
-    - docker --version
-
-build-docker-image:
+################################################################################
+# RAG (python/rag_api)
+################################################################################
+build-rag-image:
   stage: build
   tags:
     - vps1
+  before_script: *before-vps1
   script:
     - cd python/rag_api
-    - docker build --no-cache -t rag:latest .
+    - docker build --no-cache -t "${IMAGE_NAME}" .
 
-deploy-in-to-docker:
-  <<: *default-docker-job
+deploy-rag:
   stage: deploy
+  tags:
+    - vps1
+  before_script: *before-vps1
   script:
     - cd python/rag_api
-
-    # safe debug of OPENAI_API_KEY (doesn't print key)
-    - |
-      echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"
-      echo -n "$OPENAI_API_KEY" | wc -c | xargs printf "OPENAI_API_KEY length: %s\n"
-      echo -n "$OPENAI_API_KEY" | sha256sum | awk '{print "OPENAI_API_KEY sha256:", $1}'
-
-    # create ephemeral .env for compose (compose picks it up automatically)
-    - |
-      cat > .env <<EOF
-      OPENAI_API_KEY=${OPENAI_API_KEY}
-      S3_ENDPOINT=${S3_ENDPOINT}
-      S3_BUCKET_VECTORS=${S3_BUCKET_VECTORS}
-      S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
-      S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
-      EOF
-      chmod 600 .env
-
-    # bring container down (optionally remove volumes if FORCE_S3_REFRESH=1)
-    - |
-      if [ "${FORCE_S3_REFRESH}" = "1" ]; then
-        docker-compose down -v --remove-orphans || true
-      else
-        docker-compose down --remove-orphans || true
-      fi
-
-    # start container (will use the locally-built image)
+    - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
+    - 'echo "OPENAI_API_KEY length: ${#OPENAI_API_KEY}"'
+    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" > .env'
+    - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" >> .env'
+    - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS}" >> .env'
+    - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
+    - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
+    - chmod 600 .env
+    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
     - docker-compose up -d --build
+    - shred -u .env || rm -f .env || true
 
-    # cleanup .env
+################################################################################
+# BOT (study-bot) — adjust 'cd' if your bot files are in a subfolder
+################################################################################
+build-bot-image:
+  stage: build
+  tags:
+    - vps1
+  before_script: *before-vps1
+  script:
+    - cd .
+    - docker build --no-cache -t "${BOT_IMAGE_NAME}" .
+
+deploy-bot:
+  stage: deploy
+  tags:
+    - vps1
+  before_script: *before-vps1
+  script:
+    - cd .
+    - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
+    - 'echo "OPENAI_API_KEY length: ${#OPENAI_API_KEY}"'
+    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" > .env'
+    - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" >> .env'
+    - 'printf "S3_BUCKET=%s\n" "${S3_BUCKET}" >> .env'
+    - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
+    - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
+    - chmod 600 .env
+    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
+    - docker-compose up -d --build
+    - shred -u .env || rm -f .env || true
+
+################################################################################
+# GOLANG service (uses runner 'vps2')
+################################################################################
+build-golang-image:
+  stage: build
+  tags:
+    - vps2
+  before_script: *before-vps2
+  script:
+    - cd golang
+    - docker build --no-cache -t "${GOLANG_IMAGE_NAME}" .
+
+deploy-golang:
+  stage: deploy
+  tags:
+    - vps2
+  before_script: *before-vps2
+  script:
+    - cd golang
+    - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" > .env'
+    - 'printf "S3_BUCKET=%s\n" "${S3_BUCKET}" >> .env'
+    - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
+    - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
+    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" >> .env'
+    - chmod 600 .env
+    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
+    - docker-compose up -d --build
     - shred -u .env || rm -f .env || true

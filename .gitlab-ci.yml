@@ -47,13 +47,13 @@ deploy-in-to-docker:
     # bring container down (optionally remove volumes if FORCE_S3_REFRESH=1)
     - |
       if [ "${FORCE_S3_REFRESH}" = "1" ]; then
-        docker compose down -v --remove-orphans || true
+        docker-compose down -v --remove-orphans || true
       else
-        docker compose down --remove-orphans || true
+        docker-compose down --remove-orphans || true
       fi
 
     # start container (will use the locally-built image)
-    - docker compose up -d --build
+    - docker-compose up -d --build
 
     # cleanup .env
     - shred -u .env || rm -f .env || true

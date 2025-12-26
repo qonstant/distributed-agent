@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  rag-api:
+    image: ${IMAGE}
+    restart: always
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - ENV=prod
+    # optional: volumes, healthcheck, etc.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

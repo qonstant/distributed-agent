@@ -5,42 +5,44 @@ stages:
 variables:
   IMAGE: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
 
+# Build & push using Kaniko (works on shared runners, secure)
 build:
   stage: build
-  tags:
-    - "first"
   image:
     name: gcr.io/kaniko-project/executor:latest
     entrypoint: [""]
   script:
     - mkdir -p /kaniko/.docker
     - |
-      echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n $CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD | base64)\"}}}" > /kaniko/.docker/config.json
-    - /kaniko/executor --context $CI_PROJECT_DIR/python/rag_api --dockerfile $CI_PROJECT_DIR/python/rag_api/Dockerfile --destination $IMAGE --skip-tls-verify=false
+      echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n $CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD | base64)\"}}}" \
+        > /kaniko/.docker/config.json
+    - /kaniko/executor --context $CI_PROJECT_DIR/python/rag_api \
+        --dockerfile $CI_PROJECT_DIR/python/rag_api/Dockerfile \
+        --destination $IMAGE \
+        --skip-tls-verify=false
   rules:
     - if: $CI_COMMIT_BRANCH
-  artifacts:
-    expire_in: 1h
-    reports: {}
 
 deploy:
   stage: deploy
-  tags:
-    - "first"
   image:
-    name: lachlanevenson/k8s-helm:latest
+    name: alpine:3.18
     entrypoint: [""]
   before_script:
-    - mkdir -p ~/.kube
-    - echo "$KUBE_CONFIG" > ~/.kube/config
-    - helm version
+    - apk add --no-cache openssh-client bash
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    # optional: add known_hosts properly instead of disabling StrictHostKeyChecking
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts || true
   script:
-    - kubectl create namespace default || true
-    - helm upgrade --install rag-api charts/rag-api \
-        --namespace default \
-        --set image.repository="$CI_REGISTRY_IMAGE" \
-        --set image.tag="$CI_COMMIT_SHORT_SHA" \
-        --wait
+    # ensure target dir exists and docker-compose file present; adapt path if needed
+    # Option A: if docker-compose.yml is already on the server:
+    - ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && docker-compose pull && docker-compose up -d --remove-orphans"
+    # Option B: if you want to copy docker-compose from repo to server:
+    # - scp docker-compose.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.yml"
+    # - ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd $DEPLOY_PATH && docker-compose pull && docker-compose up -d --remove-orphans"
+  environment:
+    name: production
   rules:
     - if: $CI_COMMIT_BRANCH
-

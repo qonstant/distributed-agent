@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+numpy
+faiss-cpu
+python-dotenv
+openai
+pydantic
+PyYAML
+boto3

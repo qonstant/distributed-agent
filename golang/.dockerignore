@@ -1,0 +1,11 @@
+.git*
+.dockerignore
+Dockerfile
+example*
+*.deployment.yaml
+stack
+
+*.pdf
+*.png
+*.md
+.vscode

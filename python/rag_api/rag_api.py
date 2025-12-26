@@ -43,6 +43,7 @@ OPTIONAL_ARTIFACTS = ["embeddings.npy", "ids.npy", "chunks.jsonl", "manifest.jso
 # embedding & LLM models
 EMBED_MODEL = "text-embedding-3-small"
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+CLASS_MODEL = os.getenv("CLASS_MODEL", LLM_MODEL)  # classifier model (defaults to LLM_MODEL)
 
 # Attempt to download artifacts from S3 if local files are missing
 
@@ -397,11 +398,171 @@ def _call_llm_for_answer(prompt: str, model: str = LLM_MODEL, max_tokens:int = 5
             text = str(resp)
     return text
 
+# helper: robustly extract text from responses (reusable)
+def _resp_to_text(resp: Any) -> str:
+    if isinstance(resp, str):
+        return resp
+    try:
+        if hasattr(resp, "output_text") and resp.output_text:
+            return resp.output_text
+    except Exception:
+        pass
+    out = getattr(resp, "output", None) or (resp.get("output") if isinstance(resp, dict) else None)
+    if isinstance(out, list):
+        parts = []
+        for node in out:
+            if isinstance(node, dict):
+                content = node.get("content")
+                if isinstance(content, list):
+                    for c in content:
+                        if isinstance(c, dict) and c.get("type") == "output_text":
+                            parts.append(c.get("text", ""))
+                        elif isinstance(c, str):
+                            parts.append(c)
+                elif isinstance(content, str):
+                    parts.append(content)
+            elif isinstance(node, str):
+                parts.append(node)
+        return "".join(parts).strip()
+    if isinstance(out, str):
+        return out.strip()
+    # fallback
+    try:
+        return json.dumps(resp, default=str)
+    except Exception:
+        return str(resp)
+
+# GPT-only classifier (intent + language)
+def classify_query(query: str) -> Dict[str, str]:
+    """
+    Ask GPT to return JSON with keys:
+      - intent: GREETING, CHIT_CHAT, FACTUAL_QUESTION, DOCUMENT_REQUEST, OTHER
+      - explain: short explanation
+      - language: language name or two-letter code (e.g., 'ru', 'Russian', 'en')
+    If GPT parsing fails, fallback to intent=OTHER with empty language.
+    """
+    prompt = (
+        "You are a compact intent classifier and language detector. Given the user's single input below, "
+        "return a JSON object with EXACTLY three keys:\n"
+        " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"DOCUMENT_REQUEST\",\"OTHER\"]\n"
+        " - \"explain\": one short sentence explaining why\n"
+        " - \"language\": the detected language name or two-letter code (e.g. \"Russian\" or \"ru\")\n\n"
+        "Respond ONLY with valid JSON (no extra text). Example:\n"
+        "{\"intent\":\"GREETING\",\"explain\":\"short hello\",\"language\":\"ru\"}\n\n"
+        f"User input: {json.dumps(query)}\n"
+    )
+    try:
+        resp = client.responses.create(model=CLASS_MODEL, input=prompt, max_output_tokens=120, temperature=0.0)
+        txt = _resp_to_text(resp)
+        s = (txt or "").strip()
+        # attempt to extract JSON object from response
+        if s.startswith("```"):
+            # find braces inside fenced block
+            start = s.find("{")
+            end = s.rfind("}")
+            if start != -1 and end != -1:
+                s = s[start:end+1]
+        try:
+            j = json.loads(s)
+        except Exception:
+            # fallback: try to find first {...}
+            start = s.find("{")
+            end = s.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                candidate = s[start:end+1]
+                try:
+                    j = json.loads(candidate)
+                except Exception:
+                    j = {"intent": "OTHER", "explain": txt, "language": ""}
+            else:
+                j = {"intent": "OTHER", "explain": txt, "language": ""}
+        intent = (j.get("intent") or "").strip().upper()
+        explain = j.get("explain") or ""
+        language = (j.get("language") or "").strip()
+        if intent not in {"GREETING","CHIT_CHAT","FACTUAL_QUESTION","DOCUMENT_REQUEST","OTHER"}:
+            intent = "OTHER"
+        return {"intent": intent, "explain": explain, "language": language}
+    except Exception as e:
+        # last-resort fallback: treat as OTHER and empty language
+        print("[classify] classifier error:", e)
+        return {"intent": "OTHER", "explain": f"classifier error: {e}", "language": ""}
+
+# Generate greeting reply using GPT (no local greeting map)
+def generate_greeting_reply(user_text: str, language_hint: str) -> str:
+    """
+    Ask GPT to return a short one-sentence friendly reply in the detected language.
+    If language_hint is empty, ask GPT to reply in the same language as user input.
+    """
+    if language_hint:
+        lang_instr = f"in {language_hint}"
+    else:
+        lang_instr = "in the same language as the user"
+    prompt = (
+        f"The user wrote: {json.dumps(user_text)}\n\n"
+        f"Produce a single short friendly reply ({lang_instr}). Keep it to one short sentence (<=20 words). "
+        "Do NOT include file paths, document names, or any extra commentary. Return only the reply text."
+    )
+    try:
+        resp = client.responses.create(model=LLM_MODEL, input=prompt, max_output_tokens=50, temperature=0.0)
+        txt = _resp_to_text(resp).strip()
+        # strip code fences and return first non-empty line
+        if txt.startswith("```"):
+            txt = txt.strip("` \n")
+        for line in txt.splitlines():
+            l = line.strip()
+            if l:
+                return l
+        return txt
+    except Exception as e:
+        print("[greeting] generation failed:", e)
+        return "Hi — how can I help you today?"
+
+# Provide short answer from LLM for FACTUAL_QUESTION (no retrieval)
+def llm_answer_factual(query: str, language_hint: str) -> str:
+    if language_hint:
+        lang_instr = f"Answer in {language_hint}."
+    else:
+        lang_instr = "Answer in the same language as the user."
+    prompt = (
+        f"You are a concise helpful assistant. {lang_instr} "
+        "Answer the user question briefly (1-2 short paragraphs). Do NOT include any file paths or suggest internal document locations.\n\n"
+        f"Question: {query}\n\nAnswer:"
+    )
+    try:
+        resp = client.responses.create(model=LLM_MODEL, input=prompt, max_output_tokens=400, temperature=0.0)
+        return _resp_to_text(resp).strip()
+    except Exception as e:
+        print("[factual] LLM error:", e)
+        return f"(LLM error: {e})"
+
 @app.post("/query")
 def query_endpoint(req: Req) -> Dict[str, Optional[Any]]:
     q = (req.query or "").strip()
     if not q:
         raise HTTPException(status_code=400, detail="query is empty")
+
+    # --- Classification-first step (GPT-only) ---
+    try:
+        cls = classify_query(q)
+    except Exception as e:
+        # classification failure; log and fall back to previous pipeline
+        print("[query] classification failed:", e)
+        cls = {"intent": "OTHER", "explain": "classification failure", "language": ""}
+
+    intent = cls.get("intent")
+    lang = cls.get("language") or ""
+
+    # GREETING / CHIT_CHAT: generate greeting via GPT and return (no retrieval)
+    if intent in ("GREETING", "CHIT_CHAT"):
+        greeting = generate_greeting_reply(q, lang)
+        return {"answer": greeting, "file": None}
+
+    # FACTUAL_QUESTION: ask LLM directly (no retrieval)
+    if intent == "FACTUAL_QUESTION":
+        answer = llm_answer_factual(q, lang)
+        return {"answer": answer, "file": None}
+
+    # DOCUMENT_REQUEST or OTHER -> proceed to retrieval pipeline
     try:
         q_emb = _embed_text(q)
     except Exception as e:
@@ -420,7 +581,15 @@ def query_endpoint(req: Req) -> Dict[str, Optional[Any]]:
     top_n = max(1, int(req.top_for_llm or 8))
     top_chunks = results[:top_n]
 
+    # Tell the synthesizer explicitly to answer in same language if we have language hint
     prompt = _prepare_llm_prompt(q, top_chunks)
+    if lang:
+        # insert language instruction at the top (keeps original instructions intact)
+        prompt = f"Answer in the same language as detected: {lang}\n\n" + prompt
+    else:
+        # instruct LLM to answer in same language as user if possible
+        prompt = "Answer in the same language as the user's query if possible.\n\n" + prompt
+
     llm_text = None
     llm_json = None
     try:

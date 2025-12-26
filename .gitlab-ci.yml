@@ -17,20 +17,28 @@ build-docker-image:
   <<: *default-docker-job
   stage: build
   script:
-    # set the correct build context to the folder containing Dockerfile
     - docker build -t $IMAGE_NAME python/rag_api
 
 deploy-in-to-docker:
   <<: *default-docker-job
   stage: deploy
+  # Use a single multiline script block to avoid YAML quoting issues
   script:
-    - echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"
-    - echo -n "$OPENAI_API_KEY" | wc -c | xargs printf "OPENAI_API_KEY length: %s\n"
-    - echo -n "$OPENAI_API_KEY" | head -c 4; echo '... (first 4 chars)'
-    - echo -n "$OPENAI_API_KEY" | sha256sum | awk '{print "OPENAI_API_KEY sha256:", $1}'
-    # If variable is a file (see note below) unwrap it:
-    - if [ -f "$OPENAI_API_KEY" ]; then echo "Detected file-type variable: reading value from file"; export OPENAI_API_KEY="$(cat "$OPENAI_API_KEY")"; fi
-    - docker stop $CONTAINER_NAME || true
-    - docker rm $CONTAINER_NAME || true
-    # pass env into container; see alternatives below
-    - docker run -d -p 8080:8000 -e OPENAI_API_KEY="$OPENAI_API_KEY" --name $CONTAINER_NAME $IMAGE_NAME
+    - |
+      echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"
+      # print length and first 4 chars (safe), and a sha256 fingerprint (safe)
+      echo -n "$OPENAI_API_KEY" | wc -c | xargs printf "OPENAI_API_KEY length: %s\n"
+      echo -n "$OPENAI_API_KEY" | head -c 4; echo '... (first 4 chars)'
+      echo -n "$OPENAI_API_KEY" | sha256sum | awk '{print "OPENAI_API_KEY sha256:", $1}'
+
+      # If GitLab variable was stored as a FILE type, $OPENAI_API_KEY will be a path:
+      if [ -f "$OPENAI_API_KEY" ]; then
+        echo "Detected file-type variable: reading value from file"
+        export OPENAI_API_KEY="$(cat "$OPENAI_API_KEY")"
+      fi
+
+      docker stop $CONTAINER_NAME || true
+      docker rm $CONTAINER_NAME || true
+
+      # Run container and pass env into it
+      docker run -d -p 8080:8000 -e OPENAI_API_KEY="$OPENAI_API_KEY" --name $CONTAINER_NAME $IMAGE_NAME

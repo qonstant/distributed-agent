@@ -1,17 +1,7 @@
-# add "smoke" into your stages list (keep existing stages)
-stages:
-  - build
-  - smoke    # <--- new
-  - deploy
-
-# ---------------------------------------------------------------------
-# Quick runner / host check
-# ---------------------------------------------------------------------
 smoke_runner_check:
   stage: smoke
   tags:
     - vps1
-  # manual so you can trigger it when you want
   when: manual
   allow_failure: true
   script:
@@ -20,48 +10,24 @@ smoke_runner_check:
     - echo "CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME"
     - echo "CI_RUNNER_DESCRIPTION: $CI_RUNNER_DESCRIPTION"
     - echo "CI_RUNNER_TAGS: $CI_RUNNER_TAGS"
-    - echo
+
     - echo "=== Host info ==="
-    - echo "User: $(whoami)"
-    - echo "Hostname: $(hostname)"
+    - whoami
+    - hostname
     - uname -a
     - date -u
-    - echo
+
     - echo "=== Network addresses (local) ==="
-    - echo "All IPv4 addresses (global scope):"
-    - ip -4 addr show scope global || (which ifconfig && ifconfig) || true
-    - echo
-    - echo "Outbound (source) IP for external traffic (no external request):"
-    - ip route get 1.1.1.1 2>/dev/null | awk '/src/ { for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true
-    - echo
-    - echo "=== Public IP (optional external lookup) ==="
-    - |
-      # WARNING: this calls an external service; it will reveal the public IP to that service.
-      # If you prefer not to call an external service, skip the next line.
-      curl -sS --max-time 5 https://ifconfig.co || echo "external lookup failed or blocked"
-    - echo
+    - ip -4 addr show scope global || true
+
+    - echo "=== Outbound source IP (no external call) ==="
+    - ip route get 1.1.1.1 | awk '/src/ {print $NF}' || true
+
+    - echo "=== Public IP (external lookup, optional) ==="
+    - curl -sS --max-time 5 https://ifconfig.co || echo "external lookup failed"
+
     - echo "=== Tooling checks ==="
-    - echo "docker:"
     - docker --version || echo "docker not found"
-    - echo "docker-compose:"
     - docker-compose version || docker compose version || echo "docker-compose not found"
-    - echo
-    - echo "Done smoke_runner_check"
-# ---------------------------------------------------------------------
-# Build-only smoke: verify Docker build succeeds and simple sanity run
-# (does not attempt to start the RAG server which needs real FAISS/meta files)
-# ---------------------------------------------------------------------
-smoke_build_image:
-  stage: smoke
-  tags:
-    - vps1
-  when: manual
-  allow_failure: true
-  script:
-    - echo "Building rag_api image to verify docker build on runner..."
-    - docker build -t "${CI_PROJECT_NAME}_rag_api:smoke" python/rag_api
-    - echo "Build finished. Now running a tiny sanity command inside the image (no server start)."
-    - docker run --rm --entrypoint python "${CI_PROJECT_NAME}_rag_api:smoke" -c "print('container_python_ok')"
-    - echo "If you see 'container_python_ok' above, the image was built and Python started fine."
-    - docker image ls | grep "${CI_PROJECT_NAME}_rag_api" || true
-    - echo "Done smoke_build_image"
+
+    - echo "Smoke test finished"

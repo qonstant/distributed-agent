@@ -462,3 +462,8 @@ def query_endpoint(req: Req) -> Dict[str, Optional[Any]]:
         answer = answer[:1600].rstrip() + "..."
 
     return {"answer": answer, "file": file_chosen}
+
+
+# curl -v -X POST http://127.0.0.1:8080/query \
+#   -H "Content-Type: application/json" \
+#   -d '{"query":"Как податься внж?"}'

@@ -2,10 +2,6 @@ stages:
   - build
   - deploy
 
-variables:
-  IMAGE_NAME: rag:latest
-  CONTAINER_NAME: rag-container
-
 .default-docker-job: &default-docker-job
   tags:
     - vps1
@@ -17,28 +13,45 @@ build-docker-image:
   <<: *default-docker-job
   stage: build
   script:
-    - docker build -t $IMAGE_NAME python/rag_api
+    - cd python/rag_api
+    # Build via compose to ensure local build and reproducible image
+    - docker compose build --pull --no-cache
 
 deploy-in-to-docker:
   <<: *default-docker-job
   stage: deploy
-  # Use a single multiline script block to avoid YAML quoting issues
   script:
+    - cd python/rag_api
+
+    # --- safe debug of OPENAI_API_KEY (doesn't print key) ---
     - |
       echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"
-      # print length and first 4 chars (safe), and a sha256 fingerprint (safe)
       echo -n "$OPENAI_API_KEY" | wc -c | xargs printf "OPENAI_API_KEY length: %s\n"
-      echo -n "$OPENAI_API_KEY" | head -c 4; echo '... (first 4 chars)'
       echo -n "$OPENAI_API_KEY" | sha256sum | awk '{print "OPENAI_API_KEY sha256:", $1}'
 
-      # If GitLab variable was stored as a FILE type, $OPENAI_API_KEY will be a path:
-      if [ -f "$OPENAI_API_KEY" ]; then
-        echo "Detected file-type variable: reading value from file"
-        export OPENAI_API_KEY="$(cat "$OPENAI_API_KEY")"
+    # --- write .env file for docker-compose (job-local only) ---
+    - |
+      cat > .env <<EOF
+      OPENAI_API_KEY=${OPENAI_API_KEY}
+      S3_ENDPOINT=${S3_ENDPOINT}
+      S3_BUCKET_VECTORS=${S3_BUCKET_VECTORS}
+      S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+      EOF
+      # ensure .env file is present and not world-readable (optional)
+      chmod 600 .env
+
+    # If you want a fresh /app/out cache from S3, set FORCE_S3_REFRESH=1 in CI variables
+    - |
+      if [ "${FORCE_S3_REFRESH}" = "1" ]; then
+        echo "FORCE_S3_REFRESH enabled: tearing down and removing volumes"
+        docker compose down -v --remove-orphans || true
+      else
+        docker compose down --remove-orphans || true
       fi
 
-      docker stop $CONTAINER_NAME || true
-      docker rm $CONTAINER_NAME || true
+    # start/replace container (compose builds if necessary)
+    - docker compose up -d --build
 
-      # Run container and pass env into it
-      docker run -d -p 8080:8000 -e OPENAI_API_KEY="$OPENAI_API_KEY" --name $CONTAINER_NAME $IMAGE_NAME
+    # cleanup .env from runner workspace (optional but tidy)
+    - shred -u .env || rm -f .env || true

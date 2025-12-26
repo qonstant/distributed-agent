@@ -8,7 +8,7 @@ variables:
 
 .default-docker-job: &default-docker-job
   tags:
-    - vm
+    - vps1
   before_script:
     - echo "Running on $(hostname)"
     - docker --version

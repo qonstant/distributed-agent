@@ -43,3 +43,4 @@ deploy:
         --wait
   rules:
     - if: $CI_COMMIT_BRANCH
+

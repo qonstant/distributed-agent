@@ -26,8 +26,4 @@ deploy-in-to-docker:
   script:
     - docker stop $CONTAINER_NAME || true
     - docker rm $CONTAINER_NAME || true
-    - docker run -d \
-        -p 8080:8000 \
-        -e OPENAI_API_KEY="$OPENAI_API_KEY" \
-        --name $CONTAINER_NAME \
-        $IMAGE_NAME
+    - docker run -d -p 8080:8000 -e OPENAI_API_KEY="$OPENAI_API_KEY" --name $CONTAINER_NAME $IMAGE_NAME

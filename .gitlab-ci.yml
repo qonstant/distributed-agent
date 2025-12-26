@@ -14,12 +14,12 @@ variables:
     - docker --version
 
 build-docker-image:
-  <<: *default-docker-job
   stage: build
+  tags:
+    - vps1
   script:
     - cd python/rag_api
-    # build the image locally, pulling latest base images
-    - DOCKER_BUILDKIT=1 docker build --pull --no-cache -t $IMAGE_NAME .
+    - docker build --no-cache -t rag:latest .
 
 deploy-in-to-docker:
   <<: *default-docker-job

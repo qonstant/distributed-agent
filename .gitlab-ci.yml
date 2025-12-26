@@ -1,4 +1,4 @@
-# .gitlab-ci.yml - cleaned & YAML-safe version with 'smoke' stage
+# .gitlab-ci.yml - fixed: safe quoting so parentheses and pipes don't break bash eval
 image: docker:24.0.2
 
 services:
@@ -18,7 +18,7 @@ variables:
   REGISTRY_IMAGE: "${CI_REGISTRY}/${CI_PROJECT_PATH}/rag_api"
 
 before_script:
-  - "echo Logging into registry (if available)"
+  - 'echo "Logging into registry (if available)"'
   - 'echo "$CI_JOB_TOKEN" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY" || true'
 
 build_image:
@@ -26,9 +26,9 @@ build_image:
   tags:
     - vps1
   script:
-    - "echo Building image..."
-    - "docker build -t \"${REGISTRY_IMAGE}:latest\" python/rag_api"
-    - "docker push \"${REGISTRY_IMAGE}:latest\" || echo push skipped or failed"
+    - 'echo "Building image..."'
+    - 'docker build -t "${REGISTRY_IMAGE}:latest" python/rag_api'
+    - 'docker push "${REGISTRY_IMAGE}:latest" || echo "push skipped or failed"'
   only:
     - main
 
@@ -39,26 +39,26 @@ smoke_runner_check:
   when: manual
   allow_failure: true
   script:
-    - "echo '=== CI runner / job identity ==='"
-    - "echo CI_PROJECT_PATH: $CI_PROJECT_PATH"
-    - "echo CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME"
-    - "echo CI_RUNNER_DESCRIPTION: $CI_RUNNER_DESCRIPTION"
-    - "echo CI_RUNNER_TAGS: $CI_RUNNER_TAGS"
-    - "echo '=== Host info ==='"
-    - "whoami"
-    - "hostname"
-    - "uname -a"
-    - "date -u"
-    - "echo '=== Network addresses (local) ==='"
-    - "ip -4 addr show scope global || true"
-    - "echo '=== Outbound source IP (best-effort) ==='"
-    - "hostname -I | awk '{print $1}' || true"
-    - "echo '=== Public IP (external lookup, optional) ==='"
-    - "curl -sS --max-time 5 https://ifconfig.co || echo external lookup failed or blocked"
-    - "echo '=== Tooling checks ==='"
-    - "docker --version || echo docker not found"
-    - "docker-compose version || docker compose version || echo docker-compose not found"
-    - "echo Smoke runner check finished"
+    - 'echo "=== CI runner / job identity ==="'
+    - 'echo "CI_PROJECT_PATH: $CI_PROJECT_PATH"'
+    - 'echo "CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME"'
+    - 'echo "CI_RUNNER_DESCRIPTION: $CI_RUNNER_DESCRIPTION"'
+    - 'echo "CI_RUNNER_TAGS: $CI_RUNNER_TAGS"'
+    - 'echo "=== Host info ==="'
+    - 'whoami'
+    - 'hostname'
+    - 'uname -a'
+    - 'date -u'
+    - 'echo "=== Network addresses (local) ==="'
+    - 'ip -4 addr show scope global || true'
+    - 'echo "=== Outbound source IP (best-effort) ==="'
+    - 'hostname -I | awk "{print \$1}" || true'
+    - 'echo "=== Public IP (external lookup, optional) ==="'
+    - 'curl -sS --max-time 5 https://ifconfig.co || echo "external lookup failed or blocked"'
+    - 'echo "=== Tooling checks ==="'
+    - 'docker --version || echo "docker not found"'
+    - 'docker-compose version || docker compose version || echo "docker-compose not found"'
+    - 'echo "Smoke runner check finished"'
 
 smoke_build_image:
   stage: smoke
@@ -67,10 +67,10 @@ smoke_build_image:
   when: manual
   allow_failure: true
   script:
-    - "echo Building rag_api image (smoke test)..."
-    - "docker build -t rag_api:smoke python/rag_api"
-    - "docker run --rm --entrypoint python rag_api:smoke -c 'print(\"container_python_ok\")'"
-    - "docker image ls | grep rag_api || true"
+    - 'echo "Building rag_api image (smoke test)..."'
+    - 'docker build -t rag_api:smoke python/rag_api'
+    - 'docker run --rm --entrypoint python rag_api:smoke -c "print(\"container_python_ok\")"'
+    - 'docker image ls | grep rag_api || true'
 
 deploy:
   stage: deploy
@@ -78,10 +78,10 @@ deploy:
     - vps1
   when: manual
   script:
-    - "echo Deploying..."
-    - "docker pull \"${REGISTRY_IMAGE}:latest\" || echo pull failed or image not present"
-    - "export IMAGE=\"${REGISTRY_IMAGE}:latest\""
-    - "IMAGE=\"${IMAGE}\" docker-compose -f docker-compose.yml up -d --remove-orphans || echo docker-compose failed"
-    - "docker-compose -f docker-compose.yml ps || true"
+    - 'echo "Deploying..."'
+    - 'docker pull "${REGISTRY_IMAGE}:latest" || echo "pull failed or image not present"'
+    - 'export IMAGE="${REGISTRY_IMAGE}:latest"'
+    - 'IMAGE="${IMAGE}" docker-compose -f docker-compose.yml up -d --remove-orphans || echo "docker-compose failed"'
+    - 'docker-compose -f docker-compose.yml ps || true'
   only:
     - main

@@ -33,15 +33,25 @@ build-rag-image:
     - cd python/rag_api
     - docker build --no-cache -t "${IMAGE_NAME}" .
 
+# deploy-rag: run ONLY when bot artifacts exist, and if they do -> wait for deploy-bot
 deploy-rag:
   stage: deploy
   tags:
     - vps1
   before_script: *before-vps1
-  # ensure pipeline-level ordering: wait for deploy-bot job to finish first
+
+  # Run deploy-rag only when the repo has the bot docker artifacts.
+  # This prevents deploy-rag from running when deploy-bot is skipped (and avoids racing/failing).
+  rules:
+    - exists:
+        - Dockerfile
+        - docker-compose.yml
+    - when: on_success
+
   needs:
     - job: deploy-bot
-      optional: true      # allow deploy-rag to run if deploy-bot is skipped
+      optional: true      # when deploy-bot exists it will wait for it
+
   script:
     - cd python/rag_api
     - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'

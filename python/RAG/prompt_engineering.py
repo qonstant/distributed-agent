@@ -101,38 +101,40 @@ def _resp_to_text(resp: Any) -> str:
             text = str(resp)
     return text
 
-# Classification prompt: ask GPT to return JSON with intent + language (no local heuristics)
-def classify_query(query: str) -> Dict[str, Any]:
+# -------------------------
+# CLASSIFIER: now includes GUIDANCE intent
+# -------------------------
+def classify_query(query: str) -> Dict[str, str]:
     """
-    Returns dict with keys:
-      'intent' -> one of: GREETING, CHIT_CHAT, FACTUAL_QUESTION, DOCUMENT_REQUEST, OTHER
-      'explain' -> short explanation string
-      'language' -> language name or two-letter code (e.g. 'ru', 'English')
+    Returns JSON with keys:
+     - intent: one of ["GREETING","CHIT_CHAT","FACTUAL_QUESTION","GUIDANCE","DOCUMENT_REQUEST","OTHER"]
+     - explain: short explanation
+     - language: language code or name (optional)
     Classification is done by GPT. Only fallback to minimal heuristic if the call fails.
     """
     prompt = (
-        "You are a small intent classifier + language detector. Given a single user input, "
-        "return a JSON object with three keys exactly: "
-        "\"intent\" (one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"DOCUMENT_REQUEST\",\"OTHER\"]), "
-        "\"explain\" (one short sentence), and "
-        "\"language\" (a short language name or 2-letter code, e.g. \"Russian\" or \"ru\").\n\n"
-        "Definitions:\n"
-        "- GREETING: user just says hi / hello / a salutation.\n"
-        "- CHIT_CHAT: casual conversational message (small talk) that does not request knowledge or a document.\n"
-        "- FACTUAL_QUESTION: user asks a general knowledge / factual question that can be answered by the model without reading user's documents.\n"
-        "- DOCUMENT_REQUEST: user requests assistance that requires reading your uploaded files (e.g., \"show me the application form\", \"which file contains visa rules\").\n"
-        "- OTHER: none of the above.\n\n"
-        "Respond ONLY with valid JSON. Example:\n"
-        '{"intent":"GREETING","explain":"Short hello","language":"Russian"}\n\n'
+        "You are a compact intent classifier and language detector. Given the user's single input below, "
+        "return a JSON object with EXACTLY three keys:\n"
+        " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"GUIDANCE\",\"DOCUMENT_REQUEST\",\"OTHER\"]\n"
+        " - \"explain\": one short sentence explaining why\n"
+        " - \"language\": the detected language name or two-letter code (e.g. \"Russian\" or \"ru\")\n\n"
+        "Definitions/examples:\n"
+        " - GREETING: short hello/goodbye messages (no docs needed)\n"
+        " - CHIT_CHAT: small talk / thanks / compliment (no docs)\n"
+        " - FACTUAL_QUESTION: generic factual question where no document retrieval is needed (e.g., \"What is AI?\")\n"
+        " - GUIDANCE: user asks for step-by-step guidance, procedures or how-to that should be answered using documents if available, but may be synthesized from top-K excerpts (do NOT invent facts)\n"
+        " - DOCUMENT_REQUEST: user explicitly requests a document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n"
+        " - OTHER: none of the above\n\n"
+        "Respond ONLY with valid JSON (no extra text). Example:\n"
+        '{"intent":"GUIDANCE","explain":"user asks how to apply for residency","language":"ru"}\n\n'
         f"User input: {json.dumps(query)}\n"
     )
     try:
         resp = client.responses.create(model=CLASS_MODEL, input=prompt, max_output_tokens=120, temperature=0.0)
-        txt = _resp_to_text(resp)
+        txt = _resp_to_text(resp) or ""
         s = txt.strip()
-        # strip wrapper code fences if present and parse JSON inside
+        # try to extract JSON
         if s.startswith("```"):
-            # try to extract {...}
             start = s.find("{")
             end = s.rfind("}")
             if start != -1 and end != -1:
@@ -140,7 +142,7 @@ def classify_query(query: str) -> Dict[str, Any]:
         try:
             j = json.loads(s)
         except Exception:
-            # try to find JSON inside the response text
+            # fallback: find first {...}
             start = s.find("{")
             end = s.rfind("}")
             if start != -1 and end != -1 and end > start:
@@ -154,12 +156,11 @@ def classify_query(query: str) -> Dict[str, Any]:
         intent = (j.get("intent") or "").strip().upper()
         explain = j.get("explain") or ""
         language = (j.get("language") or "").strip()
-        # sanitize intent
-        if intent not in {"GREETING","CHIT_CHAT","FACTUAL_QUESTION","DOCUMENT_REQUEST","OTHER"}:
+        if intent not in {"GREETING","CHIT_CHAT","FACTUAL_QUESTION","GUIDANCE","DOCUMENT_REQUEST","OTHER"}:
             intent = "OTHER"
         return {"intent": intent, "explain": explain, "language": language}
     except Exception as e:
-        # if classifier fails, fallback minimal heuristic (rare)
+        # last-resort fallback: minimal heuristic
         lower = query.strip().lower()
         if re.match(r'^\s*(hi|hello|hey|hola|bonjour|hallo)\b', lower):
             return {"intent": "GREETING", "explain": "fallback regex matched greeting", "language": "en"}
@@ -170,7 +171,6 @@ def classify_query(query: str) -> Dict[str, Any]:
 # If classifier returns GREETING/CHIT_CHAT, generate a short reply in the same language using GPT (no local map)
 def generate_greeting_reply(user_text: str, language: str) -> str:
     # Ask LLM to produce single-sentence friendly response in the detected language.
-    # Keep it short and do not include file paths or extra commentary.
     lang_hint = f"in {language}" if language else "in the same language as the user"
     prompt = (
         f"You are an assistant. The user said: {json.dumps(user_text)}\n\n"
@@ -180,14 +180,11 @@ def generate_greeting_reply(user_text: str, language: str) -> str:
     try:
         resp = client.responses.create(model=LLM_MODEL, input=prompt, max_output_tokens=50, temperature=0.0)
         text = _resp_to_text(resp).strip()
-        # If LLM returns code fences or extra JSON, try to extract first non-empty line
         if text.startswith("```"):
             text = text.strip("` \n")
-        # prefer first paragraph
         text = text.splitlines()[0].strip()
         return text
-    except Exception as e:
-        # fallback English short greeting (last resort)
+    except Exception:
         return "Hi — how can I help you today?"
 
 # Embedding function
@@ -244,14 +241,16 @@ def format_retrieved(results: List[Dict[str,Any]], top_n:int=RETURN_TOP_K):
         })
     return out
 
-# for document synthesis: prepare prompt that requests JSON response {answer,file}
-def _prepare_synthesis_prompt(query: str, top_chunks: List[Dict[str,Any]]) -> str:
+# -------------------------
+# PROMPT ENGINEERING: DOCUMENT_REQUEST and GUIDANCE prompt styles
+# -------------------------
+def _prepare_document_request_prompt(query: str, top_chunks: List[Dict[str,Any]]) -> str:
     lines = [
-        "You are a helpful assistant that synthesizes multiple document excerpts and chooses the single most relevant file path.",
+        "You are a strict document retriever. Use ONLY the excerpts below; do NOT invent or generalize beyond them.",
         "User query:",
         query,
         "",
-        "Below are top document excerpts retrieved (each has file and page). Use them to produce a short helpful answer (concise, factual) and decide which file is most relevant.",
+        "Below are document excerpts (file + page + excerpt). If one of the documents is the requested template or sample, choose it.",
         ""
     ]
     for i, r in enumerate(top_chunks, start=1):
@@ -259,18 +258,44 @@ def _prepare_synthesis_prompt(query: str, top_chunks: List[Dict[str,Any]]) -> st
         sf = m.get("source_file") or m.get("filename") or "unknown"
         page = m.get("page")
         text = (m.get("text") or m.get("md") or "").strip()
-        excerpt = text[:800].replace("\n", " ").strip()
-        lines.append(f"[{i}] file: {sf}  page: {page}")
+        excerpt = text[:1600].replace("\n", " ").strip()
+        lines.append(f"[{i}] file: {sf} page: {page}")
         lines.append(f"excerpt: {excerpt}")
         lines.append("")
     lines.extend([
-        "Important instructions:",
-        "- Produce output ONLY as a single JSON object with exactly two keys: 'answer' and 'file'.",
-        "- 'answer' must be a short natural-language helpful reply to the user's query (in the same language).",
-        "- 'file' must be the single most relevant source_file (the path) chosen from the excerpts above, or null if none are relevant.",
-        "- Do not output any extra text, explanation, or commentary — output must be valid JSON only.",
+        "Output requirements:",
+        "- Respond ONLY with valid JSON with exactly these keys: 'answer' and 'file'.",
+        "- 'answer' must be a short sentence telling whether the requested document exists in the provided excerpts.",
+        "- If a matching document exists, 'answer' must be a short note (<=60 words) and 'file' must be the path string of that document.",
+        "- If no matching document exists in the excerpts, set 'answer' to: \"I don't know based on the provided documents.\" and 'file' to null.",
+        "- Do NOT add any other keys, commentary, or explanation. Return JSON only."
+    ])
+    return "\n".join(lines)
+
+def _prepare_guidance_prompt(query: str, top_chunks: List[Dict[str,Any]]) -> str:
+    lines = [
+        "You are an assistant that gives practical guidance using ONLY the provided document excerpts. Do NOT invent facts.",
+        "User query:",
+        query,
         "",
-        "Return the JSON now."
+        "Here are top document excerpts (file + page + excerpt):",
+        ""
+    ]
+    for i, r in enumerate(top_chunks, start=1):
+        m = r["meta"]
+        sf = m.get("source_file") or m.get("filename") or "unknown"
+        page = m.get("page")
+        text = (m.get("text") or m.get("md") or "").strip()
+        excerpt = text[:1600].replace("\n", " ").strip()
+        lines.append(f"[{i}] file: {sf} page: {page}")
+        lines.append(f"excerpt: {excerpt}")
+        lines.append("")
+    lines.extend([
+        "Output requirements:",
+        "- Respond ONLY with valid JSON with exactly two keys: 'answer' and 'file'.",
+        "- 'answer' should be a short, step-oriented guidance or summary (<=180 words) drawn only from the excerpts. If you cannot produce a guidance wholly supported by the excerpts, set 'answer' to: \"I don't know based on the provided documents.\"",
+        "- 'file' should be the single best supporting source_file path from the excerpts (or null if none).",
+        "- Do NOT invent, assume, or provide extra commentary. Return JSON only."
     ])
     return "\n".join(lines)
 
@@ -289,10 +314,9 @@ def main(query: str):
     cls = classify_query(q)
     intent = cls.get("intent")
     lang = cls.get("language") or ""
-    # if classifier didn't produce language, keep it empty (we won't use local greeting map)
-    # but we'll still instruct LLM to answer in same language when synthesizing
+    # note: we do NOT run any keyword overrides — routing solely by classifier
 
-    # GREETING / CHIT_CHAT -> ask GPT to generate a short reply in detected language (no local mapping)
+    # GREETING / CHIT_CHAT -> ask GPT to generate a short reply in detected language (no retrieval)
     if intent in ("GREETING", "CHIT_CHAT"):
         greeting = generate_greeting_reply(q, lang)
         out = {
@@ -306,7 +330,7 @@ def main(query: str):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
 
-    # FACTUAL_QUESTION -> ask LLM directly (no retrieval), instruct it to answer in same language
+    # FACTUAL_QUESTION -> ask LLM directly (no retrieval)
     if intent == "FACTUAL_QUESTION":
         prompt = (
             "You are a concise helpful assistant. Answer the user question briefly (1-2 short paragraphs). "
@@ -329,113 +353,133 @@ def main(query: str):
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
 
-    # DOCUMENT_REQUEST or OTHER -> perform retrieval
-    try:
-        q_emb = embed_query(q)
-    except Exception as e:
-        raise RuntimeError(f"embedding failed: {e}")
-
-    results = search_faiss(q_emb, k=RAW_TOP_K)
-    if not results:
-        out = {"answer": "", "file": None, "page": None, "score": None, "retrieved": [], "meta_conf": {"classifier": cls}}
-        print(json.dumps(out, ensure_ascii=False, indent=2))
-        return
-
-    best_file, best_chunk, file_scores = aggregate_by_file(results)
-    retrieved = format_retrieved(results, top_n=RETURN_TOP_K)
-    if best_chunk is None:
-        out = {"answer": "", "file": None, "page": None, "score": None, "retrieved": retrieved, "meta_conf": {"classifier": cls}}
-        print(json.dumps(out, ensure_ascii=False, indent=2))
-        return
-
-    # Confidence checks
-    agg_score = file_scores.get(best_file, 0.0)
-    all_scores = sorted(file_scores.values(), reverse=True)
-    second_best = all_scores[1] if len(all_scores) > 1 else 0.0
-    best_chunk_score = float(best_chunk["score"])
-
-    allow_return_file = (
-        agg_score >= MIN_FILE_SCORE_SUM and
-        best_chunk_score >= MIN_SINGLE_CHUNK_SCORE and
-        (agg_score - second_best) >= RELATIVE_MARGIN
-    )
-
-    # validate best_file exists in meta
-    if isinstance(best_file, str) and best_file not in _known_files:
-        allow_return_file = False
-
-    # Synthesize final answer using LLM (in same language if known)
-    top_for_synth = results[:min(8, len(results))]
-    prompt = _prepare_synthesis_prompt(q, top_for_synth)
-    # tell LLM to answer in detected language
-    if lang:
-        prompt = f"Answer in the same language as detected: {lang}\n\n" + prompt
-    else:
-        prompt = "Answer in the same language as the user's question if possible.\n\n" + prompt
-
-    llm_text = None
-    llm_json = None
-    try:
-        llm_text = call_llm(prompt, model=LLM_MODEL, max_tokens=512)
-        s = (llm_text or "").strip()
-        if s.startswith("```"):
-            start = s.find("{")
-            end = s.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                s = s[start:end+1]
+    # GUIDANCE or DOCUMENT_REQUEST -> retrieval-driven
+    if intent in ("GUIDANCE", "DOCUMENT_REQUEST", "OTHER"):
+        # embed + search
         try:
-            llm_json = json.loads(s)
-        except Exception:
-            start = s.find("{")
-            end = s.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                candidate = s[start:end+1]
-                try:
-                    llm_json = json.loads(candidate)
-                except Exception:
-                    llm_json = None
-            else:
-                llm_json = None
-    except Exception:
+            q_emb = embed_query(q)
+        except Exception as e:
+            raise RuntimeError(f"embedding failed: {e}")
+
+        results = search_faiss(q_emb, k=RAW_TOP_K)
+        if not results:
+            out = {"answer": "I don't know based on the provided documents.", "file": None, "page": None, "score": None, "retrieved": [], "meta_conf": {"classifier": cls}}
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+            return
+
+        best_file, best_chunk, file_scores = aggregate_by_file(results)
+        retrieved = format_retrieved(results, top_n=RETURN_TOP_K)
+        if best_chunk is None:
+            out = {"answer": "I don't know based on the provided documents.", "file": None, "page": None, "score": None, "retrieved": retrieved, "meta_conf": {"classifier": cls}}
+            print(json.dumps(out, ensure_ascii=False, indent=2))
+            return
+
+        # Confidence checks (same as your previous logic)
+        agg_score = file_scores.get(best_file, 0.0)
+        all_scores = sorted(file_scores.values(), reverse=True)
+        second_best = all_scores[1] if len(all_scores) > 1 else 0.0
+        best_chunk_score = float(best_chunk["score"])
+
+        allow_return_file = (
+            agg_score >= MIN_FILE_SCORE_SUM and
+            best_chunk_score >= MIN_SINGLE_CHUNK_SCORE and
+            (agg_score - second_best) >= RELATIVE_MARGIN
+        )
+
+        # validate best_file exists in meta
+        if isinstance(best_file, str) and best_file not in _known_files:
+            allow_return_file = False
+
+        # Prepare the prompt according to the classified intent
+        top_for_synth = results[:min(8, len(results))]
+        if intent == "DOCUMENT_REQUEST":
+            prompt = _prepare_document_request_prompt(q, top_for_synth)
+        else:
+            # GUIDANCE or OTHER: use guidance prompt (must not invent)
+            prompt = _prepare_guidance_prompt(q, top_for_synth)
+
+        # instruct language at top if known
+        if lang:
+            prompt = f"Answer in the same language as detected: {lang}\n\n" + prompt
+        else:
+            prompt = "Answer in the same language as the user's question if possible.\n\n" + prompt
+
         llm_text = None
         llm_json = None
+        try:
+            llm_text = call_llm(prompt, model=LLM_MODEL, max_tokens=512)
+            s = (llm_text or "").strip()
+            if s.startswith("```"):
+                start = s.find("{")
+                end = s.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    s = s[start:end+1]
+            try:
+                llm_json = json.loads(s)
+            except Exception:
+                start = s.find("{")
+                end = s.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    candidate = s[start:end+1]
+                    try:
+                        llm_json = json.loads(candidate)
+                    except Exception:
+                        llm_json = None
+                else:
+                    llm_json = None
+        except Exception:
+            llm_text = None
+            llm_json = None
 
-    # Final answer selection
-    if isinstance(llm_json, dict) and "answer" in llm_json:
-        answer = llm_json.get("answer", "").strip()
-        file_candidate = llm_json.get("file")
-        if isinstance(file_candidate, str) and file_candidate not in _known_files:
-            file_candidate = None
-        file_chosen = file_candidate or (best_file if allow_return_file else None)
-    else:
-        chunk_meta = best_chunk["meta"]
-        snippet = chunk_meta.get("text") or chunk_meta.get("md") or ""
-        answer = snippet.strip()
-        if len(answer) > 800:
-            answer = answer[:800].rstrip() + "..."
-        file_chosen = best_file if allow_return_file else None
+        # Final answer selection
+        if isinstance(llm_json, dict) and "answer" in llm_json:
+            answer = llm_json.get("answer", "").strip()
+            file_candidate = llm_json.get("file")
+            # normalize file_candidate
+            if isinstance(file_candidate, str) and file_candidate not in _known_files:
+                file_candidate = None
+            file_chosen = file_candidate or (best_file if allow_return_file else None)
+        else:
+            # fallback: return best_chunk text and choose file only if allowed
+            chunk_meta = best_chunk["meta"]
+            snippet = chunk_meta.get("text") or chunk_meta.get("md") or ""
+            answer = snippet.strip()
+            if len(answer) > 800:
+                answer = answer[:800].rstrip() + "..."
+            file_chosen = best_file if allow_return_file else None
 
-    if answer is None:
-        answer = ""
+        if not answer:
+            answer = "I don't know based on the provided documents."
 
-    score_out = float(best_chunk["score"]) if allow_return_file else None
-    page_out = best_chunk["meta"].get("page") if allow_return_file else None
+        score_out = float(best_chunk["score"]) if allow_return_file else None
+        page_out = best_chunk["meta"].get("page") if allow_return_file else None
 
-    out = {
-        "answer": answer,
-        "file": file_chosen,
-        "page": page_out,
-        "score": score_out,
-        "retrieved": retrieved,
-        "meta_conf": {
-            "agg_score": agg_score,
-            "best_chunk_score": best_chunk_score,
-            "second_best": second_best,
-            "allow_return_file": allow_return_file,
-            "classifier": cls
+        out = {
+            "answer": answer,
+            "file": file_chosen,
+            "page": page_out,
+            "score": score_out,
+            "retrieved": retrieved,
+            "meta_conf": {
+                "agg_score": agg_score,
+                "best_chunk_score": best_chunk_score,
+                "second_best": second_best,
+                "allow_return_file": allow_return_file,
+                "classifier": cls
+            }
         }
-    }
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+
+    # Fallback: treat as factual question if nothing else
+    answer = call_llm(
+        "You are a concise helpful assistant. Answer briefly in the same language as the question if possible.\n\nQuestion: " + q,
+        model=LLM_MODEL,
+        max_tokens=300
+    ).strip()
+    out = {"answer": answer, "file": None, "page": None, "score": None, "retrieved": [], "meta_conf": {"classifier": cls}}
     print(json.dumps(out, ensure_ascii=False, indent=2))
+
 
 if __name__ == "__main__":
     q = QUERY

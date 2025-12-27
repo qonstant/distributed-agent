@@ -38,6 +38,10 @@ deploy-rag:
   tags:
     - vps1
   before_script: *before-vps1
+  # ensure pipeline-level ordering: wait for deploy-bot job to finish first
+  needs:
+    - job: deploy-bot
+      optional: true      # allow deploy-rag to run if deploy-bot is skipped
   script:
     - cd python/rag_api
     - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
@@ -48,6 +52,31 @@ deploy-rag:
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
     - chmod 600 .env
+    #
+    # Wait-for-bot runtime guard: if bot docker files exist in repo root,
+    # wait up to ~60s (adjust attempts/max to taste) for the bot container to be running.
+    #
+    - |
+      if [ -f ../Dockerfile ] && [ -f ../docker-compose.yml ]; then
+        echo "Bot artifacts found in repo root — waiting for ${BOT_CONTAINER_NAME} to be running..."
+        attempts=0
+        max=30
+        sleep_seconds=2
+        while [ $attempts -lt $max ]; do
+          if docker ps --filter "name=${BOT_CONTAINER_NAME}" --filter "status=running" -q >/dev/null 2>&1; then
+            echo "Detected ${BOT_CONTAINER_NAME} running."
+            break
+          fi
+          echo "Waiting for ${BOT_CONTAINER_NAME} to start... ($attempts/$max)"
+          attempts=$((attempts+1))
+          sleep $sleep_seconds
+        done
+        if [ $attempts -ge $max ]; then
+          echo "Timeout waiting for ${BOT_CONTAINER_NAME} — continuing with RAG deploy."
+        fi
+      else
+        echo "No bot Dockerfile/docker-compose at repo root — not waiting."
+      fi
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
     - docker-compose up -d --build
     - 'shred -u .env || rm -f .env || true'

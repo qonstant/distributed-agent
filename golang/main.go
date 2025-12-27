@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -162,6 +163,52 @@ func accessDeniedText() string {
 	return fmt.Sprintf("This bot accepts requests only with subscription.\n\nTo request access, please message @%s.", allowedUsername)
 }
 
+// sanitizeUTF8 ensures the returned string is valid UTF-8 by decoding runes.
+// invalid byte sequences become the Unicode replacement rune (U+FFFD).
+func sanitizeUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	// converting to []rune decodes the string and replaces invalid sequences with RuneError
+	return string([]rune(s))
+}
+
+// trimRunes trims the string to at most max runes without cutting runes
+func trimRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
+}
+
+// safeFilename returns a sanitized filename: valid UTF-8, basename-only,
+// control characters replaced with '_' and trimmed. Falls back to "file".
+func safeFilename(name string) string {
+	name = sanitizeUTF8(name)
+	name = filepath.Base(name) // remove any path components
+	if name == "" {
+		return "file"
+	}
+	// build rune-safe output replacing control chars (except common whitespace) with '_'
+	var out []rune
+	for _, r := range name {
+		if r == '\t' || r == '\n' || r == '\r' {
+			// avoid embedding those in header values: replace with '_'
+			out = append(out, '_')
+		} else if r < 32 || r == 0x7f {
+			out = append(out, '_')
+		} else {
+			out = append(out, r)
+		}
+	}
+	res := strings.TrimSpace(string(out))
+	if res == "" {
+		return "file"
+	}
+	return res
+}
+
 /* ============================
    HANDLERS
    - defaultHandler: now treats message text as a query to local API,
@@ -235,8 +282,8 @@ func defaultHandler(ctx context.Context, b *bot.Bot, u *models.Update) {
 
 	// Send document with caption = answer (Telegram caption limit ~1024)
 	if len(resp.Answer) > 1020 {
-		// trim slightly to be safe
-		resp.Answer = resp.Answer[:1020] + "…"
+		// trim by runes safely
+		resp.Answer = trimRunes(resp.Answer, 1020) + "…"
 	}
 	if err := sendDocumentFromBytes(ctx, u.Message.Chat.ID, fname, data, resp.Answer); err != nil {
 		log.Printf("[defaultHandler] sendDocumentFromBytes failed: %v", err)
@@ -431,9 +478,23 @@ func fetchFileData(ctx context.Context, path string) ([]byte, string, error) {
 
 /* ============================
    Sending single document (attach://)
+   - sanitizes caption and filename to valid UTF-8
 ============================ */
 
 func sendDocumentFromBytes(ctx context.Context, chatID int64, filename string, data []byte, caption string) error {
+	// sanitize caption + filename before using them in multipart
+	caption = sanitizeUTF8(caption)
+	// Telegram caption limit ~1024 — trim by runes to be safe
+	if utf8.RuneCountInString(caption) > 1020 {
+		caption = trimRunes(caption, 1020) + "…"
+	}
+
+	filename = safeFilename(filename)
+
+	// debug log (sanity)
+	log.Printf("[sendDocumentFromBytes] chat=%d filename=%q captionValidUTF8=%v captionPreview=%q",
+		chatID, filename, utf8.ValidString(caption), trimRunes(caption, 200))
+
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 
@@ -494,8 +555,8 @@ func sendDocumentFromBytes(ctx context.Context, chatID int64, filename string, d
 }
 
 /* ============================
-   Existing helper you had: uploadMediaGroupFromS3
-   (left unchanged except minor comment)
+   uploadMediaGroupFromS3
+   - sanitizes filenames before attaching
 ============================ */
 
 func uploadMediaGroupFromS3(ctx context.Context, chatID int64, keys []string) error {
@@ -523,9 +584,13 @@ func uploadMediaGroupFromS3(ctx context.Context, chatID int64, keys []string) er
 		if err != nil {
 			return fmt.Errorf("read object %s: %w", key, err)
 		}
+		bname := filepath.Base(key)
+		if bname == "" {
+			bname = "file"
+		}
 		files = append(files, fileBuf{
 			FieldName: fmt.Sprintf("file%d", i),
-			FileName:  filepath.Base(key),
+			FileName:  safeFilename(bname),
 			Data:      data,
 		})
 	}

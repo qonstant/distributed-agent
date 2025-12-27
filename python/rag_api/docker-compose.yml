@@ -17,6 +17,3 @@ services:
     volumes:
       - rag_out:/app/out
     restart: unless-stopped
-
-volumes:
-  rag_out:

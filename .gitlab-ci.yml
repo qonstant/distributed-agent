@@ -53,32 +53,49 @@ deploy-rag:
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
     - chmod 600 .env
     #
-    # Wait-for-bot runtime guard: if bot docker files exist in repo root,
-    # wait up to ~60s (adjust attempts/max to taste) for the bot container to be running.
+    # If the bot exists in repo root, wait for it to be running/healthy before RAG deploy.
+    # Try health status first (if healthcheck defined), otherwise fallback to 'docker ps' running check.
     #
     - |
       if [ -f ../Dockerfile ] && [ -f ../docker-compose.yml ]; then
-        echo "Bot artifacts found in repo root — waiting for ${BOT_CONTAINER_NAME} to be running..."
+        echo "Bot artifacts found in repo root — waiting for ${BOT_CONTAINER_NAME} to be ready..."
         attempts=0
         max=30
         sleep_seconds=2
         while [ $attempts -lt $max ]; do
-          if docker ps --filter "name=${BOT_CONTAINER_NAME}" --filter "status=running" -q >/dev/null 2>&1; then
-            echo "Detected ${BOT_CONTAINER_NAME} running."
-            break
+          # prefer health status if available
+          health=$(docker inspect --format='{{json .State.Health.Status}}' "${BOT_CONTAINER_NAME}" 2>/dev/null || true)
+          if [ -n "$health" ] && [ "$health" != "null" ]; then
+            # health reported (e.g. "healthy", "starting", "unhealthy")
+            health_clean=$(echo $health | tr -d '"')
+            echo "Health status for ${BOT_CONTAINER_NAME}: $health_clean"
+            if [ "$health_clean" = "healthy" ]; then
+              echo "${BOT_CONTAINER_NAME} is healthy."
+              break
+            fi
+          else
+            # no health info — fallback to seeing if container is running
+            if docker ps --filter "name=${BOT_CONTAINER_NAME}" --filter "status=running" -q >/dev/null 2>&1; then
+              echo "Detected ${BOT_CONTAINER_NAME} running."
+              break
+            fi
+            echo "No health status available and container not running yet."
           fi
-          echo "Waiting for ${BOT_CONTAINER_NAME} to start... ($attempts/$max)"
           attempts=$((attempts+1))
+          echo "Waiting for ${BOT_CONTAINER_NAME} to be ready... ($attempts/$max)"
           sleep $sleep_seconds
         done
         if [ $attempts -ge $max ]; then
-          echo "Timeout waiting for ${BOT_CONTAINER_NAME} — continuing with RAG deploy."
+          echo "Timeout waiting for ${BOT_CONTAINER_NAME} — continuing with RAG deploy (proceeding anyway)."
         fi
       else
         echo "No bot Dockerfile/docker-compose at repo root — not waiting."
       fi
+    #
+    # Remove any existing rag container by name (safe replace)
+    - docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker-compose up -d --build
+    - docker-compose up -d --build --force-recreate --remove-orphans
     - 'shred -u .env || rm -f .env || true'
 
 ################################################################################
@@ -117,7 +134,9 @@ deploy-bot:
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker-compose up -d --build
+    # remove any previously running container with the same name so docker-compose can recreate it cleanly
+    - docker rm -f "${BOT_CONTAINER_NAME}" 2>/dev/null || true
+    - docker-compose up -d --build --force-recreate --remove-orphans
     - 'shred -u .env || rm -f .env || true'
 
 ################################################################################
@@ -146,5 +165,5 @@ deploy-golang:
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker-compose up -d --build
+    - docker-compose up -d --build --force-recreate --remove-orphans
     - 'shred -u .env || rm -f .env || true'

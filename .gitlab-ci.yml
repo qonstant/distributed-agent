@@ -53,7 +53,7 @@ deploy-rag:
     - 'shred -u .env || rm -f .env || true'
 
 ################################################################################
-# BOT (study-bot) — runs only if Dockerfile + docker-compose.yml exist at repo root
+# BOT (study-bot)
 ################################################################################
 build-bot-image:
   stage: build
@@ -65,7 +65,6 @@ build-bot-image:
         - Dockerfile
         - docker-compose.yml
   script:
-    - cd .
     - docker build --no-cache -t "${BOT_IMAGE_NAME}" .
 
 deploy-bot:
@@ -78,7 +77,6 @@ deploy-bot:
         - Dockerfile
         - docker-compose.yml
   script:
-    - cd .
     - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
     - 'echo "OPENAI_API_KEY length: ${#OPENAI_API_KEY}"'
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" > .env'
@@ -92,7 +90,7 @@ deploy-bot:
     - 'shred -u .env || rm -f .env || true'
 
 ################################################################################
-# GOLANG service (uses runner 'vps2')
+# GOLANG service (runs ONLY after deploy-rag)
 ################################################################################
 build-golang-image:
   stage: build
@@ -108,6 +106,9 @@ deploy-golang:
   tags:
     - vps2
   before_script: *before-vps2
+  needs:
+    - job: deploy-rag
+      optional: false
   script:
     - cd golang
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" > .env'

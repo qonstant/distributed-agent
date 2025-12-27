@@ -156,6 +156,12 @@ deploy-golang:
   tags:
     - vps2
   before_script: *before-vps2
+  # === ensure deploy-golang is the very last deploy: wait for the other deploy jobs ===
+  needs:
+    - job: deploy-bot
+      optional: true
+    - job: deploy-rag
+      optional: true
   script:
     - cd golang
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" > .env'

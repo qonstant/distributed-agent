@@ -22,7 +22,7 @@ variables:
   GOLANG_CONTAINER_NAME: "golang-agent"
 
 ################################################################################
-# BUILD STAGE
+# RAG (python/rag_api)
 ################################################################################
 build-rag-image:
   stage: build
@@ -33,6 +33,28 @@ build-rag-image:
     - cd python/rag_api
     - docker build --no-cache -t "${IMAGE_NAME}" .
 
+deploy-rag:
+  stage: deploy
+  tags:
+    - vps1
+  before_script: *before-vps1
+  script:
+    - cd python/rag_api
+    - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
+    - 'echo "OPENAI_API_KEY length: ${#OPENAI_API_KEY}"'
+    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" > .env'
+    - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" >> .env'
+    - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS}" >> .env'
+    - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
+    - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
+    - chmod 600 .env
+    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
+    - docker-compose up -d --build
+    - 'shred -u .env || rm -f .env || true'
+
+################################################################################
+# BOT (study-bot) — runs only if Dockerfile + docker-compose.yml exist at repo root
+################################################################################
 build-bot-image:
   stage: build
   tags:
@@ -46,19 +68,6 @@ build-bot-image:
     - cd .
     - docker build --no-cache -t "${BOT_IMAGE_NAME}" .
 
-build-golang-image:
-  stage: build
-  tags:
-    - vps2
-  before_script: *before-vps2
-  script:
-    - cd golang
-    - docker build --no-cache -t "${GOLANG_IMAGE_NAME}" .
-
-################################################################################
-# DEPLOY STAGE
-################################################################################
-# deploy-bot: only when bot artifacts exist; must wait for bot build
 deploy-bot:
   stage: deploy
   tags:
@@ -68,9 +77,6 @@ deploy-bot:
     - exists:
         - Dockerfile
         - docker-compose.yml
-  needs:
-    - job: build-bot-image
-      optional: false
   script:
     - cd .
     - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
@@ -82,86 +88,26 @@ deploy-bot:
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker rm -f "${BOT_CONTAINER_NAME}" 2>/dev/null || true
-    - docker-compose up -d --build --force-recreate --remove-orphans
+    - docker-compose up -d --build
     - 'shred -u .env || rm -f .env || true'
 
-# deploy-rag: requires rag build, optionally waits for bot build and bot deploy if present
-deploy-rag:
-  stage: deploy
+################################################################################
+# GOLANG service (uses runner 'vps2')
+################################################################################
+build-golang-image:
+  stage: build
   tags:
-    - vps1
-  before_script: *before-vps1
-  # Always consider running deploy-rag (unless you want it gated by repo artifacts).
-  # It will wait for build-rag-image always, and will wait for build-bot-image if that job ran.
-  needs:
-    - job: build-rag-image
-      optional: false     # must wait for rag build
-    - job: build-bot-image
-      optional: true      # if bot build ran, wait for it
-    - job: deploy-bot
-      optional: true      # if deploy-bot runs, wait for it
-
+    - vps2
+  before_script: *before-vps2
   script:
-    - cd python/rag_api
-    - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
-    - 'echo "OPENAI_API_KEY length: ${#OPENAI_API_KEY}"'
-    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" > .env'
-    - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" >> .env'
-    - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS}" >> .env'
-    - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
-    - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
-    - chmod 600 .env
-    - |
-      if [ -f ../Dockerfile ] && [ -f ../docker-compose.yml ]; then
-        echo "Bot artifacts found in repo root — waiting for ${BOT_CONTAINER_NAME} to be ready..."
-        attempts=0
-        max=30
-        sleep_seconds=2
-        while [ $attempts -lt $max ]; do
-          health=$(docker inspect --format='{{json .State.Health.Status}}' "${BOT_CONTAINER_NAME}" 2>/dev/null || true)
-          if [ -n "$health" ] && [ "$health" != "null" ]; then
-            health_clean=$(echo $health | tr -d '"')
-            echo "Health status for ${BOT_CONTAINER_NAME}: $health_clean"
-            if [ "$health_clean" = "healthy" ]; then
-              echo "${BOT_CONTAINER_NAME} is healthy."
-              break
-            fi
-          else
-            if docker ps --filter "name=${BOT_CONTAINER_NAME}" --filter "status=running" -q >/dev/null 2>&1; then
-              echo "Detected ${BOT_CONTAINER_NAME} running."
-              break
-            fi
-            echo "No health status available and container not running yet."
-          fi
-          attempts=$((attempts+1))
-          echo "Waiting for ${BOT_CONTAINER_NAME} to be ready... ($attempts/$max)"
-          sleep $sleep_seconds
-        done
-        if [ $attempts -ge $max ]; then
-          echo "Timeout waiting for ${BOT_CONTAINER_NAME} — continuing with RAG deploy (proceeding anyway)."
-        fi
-      else
-        echo "No bot Dockerfile/docker-compose at repo root — not waiting."
-      fi
-    - docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
-    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker-compose up -d --build --force-recreate --remove-orphans
-    - 'shred -u .env || rm -f .env || true'
+    - cd golang
+    - docker build --no-cache -t "${GOLANG_IMAGE_NAME}" .
 
-# deploy-golang: must wait for its build AND for the other deploy jobs to finish (if they ran)
 deploy-golang:
   stage: deploy
   tags:
     - vps2
   before_script: *before-vps2
-  needs:
-    - job: build-golang-image
-      optional: false   # ensure golang build finished first
-    - job: deploy-bot
-      optional: true    # wait for bot deploy if it ran
-    - job: deploy-rag
-      optional: true    # wait for rag deploy if it ran
   script:
     - cd golang
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" > .env'
@@ -171,5 +117,5 @@ deploy-golang:
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker-compose up -d --build --force-recreate --remove-orphans
+    - docker-compose up -d --build
     - 'shred -u .env || rm -f .env || true'

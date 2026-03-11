@@ -1,90 +1,92 @@
-# Makefile (repo root)
 SHELL := /bin/bash
-.PHONY: help rag build up down rag-up rag-down clean
 
-IMAGE := rag
-RAW_BUILD_ARGS ?= --no-cache
+.PHONY: help \
+	rag-build rag-up rag-down rag-clean \
+	go-build go-up go-down go-clean \
+	migrateup migrateup1 migratedown migratedown1
 
-# --- Detect Dockerfile (priority order) ---
-DOCKERFILE := $(strip $(shell \
-  if [ -f Dockerfile ]; then echo Dockerfile; \
-  elif [ -f python/rag_api/Dockerfile ]; then echo python/rag_api/Dockerfile; \
-  elif [ -f golang/Dockerfile ]; then echo golang/Dockerfile; \
-  else echo ""; fi))
+RAG_IMAGE := rag
+RAG_DOCKERFILE := python/rag_api/Dockerfile
+RAG_BUILD_CTX := python/rag_api
+RAG_COMPOSE_FILE := python/rag_api/docker-compose.yml
 
-# --- Build context: use the directory containing the Dockerfile, or '.' if Dockerfile is root-name ---
-ifeq ($(DOCKERFILE),)
-BUILD_CTX := .
-else
-# if DOCKERFILE contains a slash, use its directory; otherwise use current dir
-ifneq (,$(findstring /,$(DOCKERFILE)))
-BUILD_CTX := $(dir $(DOCKERFILE))
-# strip trailing slash from BUILD_CTX (makes printed output nicer)
-BUILD_CTX := $(patsubst %/,%,$(BUILD_CTX))
-else
-BUILD_CTX := .
-endif
-endif
-
-# --- Collect docker-compose files that actually exist ---
-_COMPOSE_CANDIDATES := docker-compose.yml golang/docker-compose.yml python/rag_api/docker-compose.yml
-COMPOSE_FILES := $(foreach f,$(_COMPOSE_CANDIDATES),$(if $(wildcard $(f)),$(f)))
-COMPOSE_ARGS := $(patsubst %,-f %,$(COMPOSE_FILES))
+GO_IMAGE := distributed-agent-go
+GO_DOCKERFILE := golang/Dockerfile
+GO_BUILD_CTX := golang
+GO_COMPOSE_FILE := golang/docker-compose.yml
+MIGRATIONS_PATH := golang/db/migrations
 
 help:
-	@echo "Usage:"
-	@echo "  make rag up       # build image '$(IMAGE)' then 'docker compose up -d' (if compose files exist)"
-	@echo "  make rag down     # 'docker compose down' (if compose files exist) and remove image '$(IMAGE)'"
-	@echo "  make build        # only build image"
-	@echo "  make clean        # remove image '$(IMAGE)' (force)"
+	@echo "Available commands:"
 	@echo ""
-	@echo "Detected Dockerfile: '$(DOCKERFILE)'"
-	@echo "Build context: '$(BUILD_CTX)'"
-	@echo "Detected compose files: $(COMPOSE_FILES)"
+	@echo "RAG:"
+	@echo "  make rag-build"
+	@echo "  make rag-up"
+	@echo "  make rag-down"
+	@echo "  make rag-clean"
 	@echo ""
-	@echo "Override on command line: e.g."
-	@echo "  make DOCKERFILE=golang/Dockerfile build"
-	@echo "  make DOCKERFILE=python/rag_api/Dockerfile BUILD_CTX=python/rag_api rag up"
+	@echo "Go backend:"
+	@echo "  make go-build"
+	@echo "  make go-up"
+	@echo "  make go-down"
+	@echo "  make go-clean"
+	@echo ""
+	@echo "Migrations:"
+	@echo "  make migrateup"
+	@echo "  make migrateup1"
+	@echo "  make migratedown"
+	@echo "  make migratedown1"
+	@echo ""
+	@echo "Note: DB_URL must be provided through environment variables."
 
-# noop so `make rag up` runs `rag` then `up`
-rag:
-	@true
+# ----------------------------
+# RAG
+# ----------------------------
 
-# build image using Dockerfile and proper build context
-build:
-ifneq ($(DOCKERFILE),)
-	@echo "[make] Building image '$(IMAGE)' using Dockerfile: $(DOCKERFILE) with context: $(BUILD_CTX)"
-	docker build $(RAW_BUILD_ARGS) -t "$(IMAGE)" -f "$(DOCKERFILE)" "$(BUILD_CTX)"
-else
-	@echo "[make] ERROR: No Dockerfile found (checked root, python/rag_api/, golang/)." >&2
-	@exit 1
-endif
+rag-build:
+	docker build --no-cache -t "$(RAG_IMAGE)" -f "$(RAG_DOCKERFILE)" "$(RAG_BUILD_CTX)"
 
-# up: build then docker compose up -d (if any compose files exist)
-up: build
-ifneq ($(COMPOSE_ARGS),)
-	@echo "[make] Starting docker compose: docker compose $(COMPOSE_ARGS) up -d"
-	docker compose $(COMPOSE_ARGS) up -d
-else
-	@echo "[make] WARNING: No docker-compose.yml found (checked root, golang/, python/rag_api/)." >&2
-	@echo "[make] Built image '$(IMAGE)'. Add a docker-compose.yml if you want to start containers." >&2
-endif
+rag-up:
+	docker compose -f "$(RAG_COMPOSE_FILE)" up -d --build
 
-# down: docker compose down (if exists) then remove image
-down:
-ifneq ($(COMPOSE_ARGS),)
-	@echo "[make] Running: docker compose $(COMPOSE_ARGS) down"
-	docker compose $(COMPOSE_ARGS) down
-else
-	@echo "[make] No docker-compose.yml found; skipping 'docker compose down'." >&2
-endif
-	@echo "[make] Removing image: $(IMAGE) (if exists)"
-	-@docker rmi -f "$(IMAGE)" || true
+rag-down:
+	docker compose -f "$(RAG_COMPOSE_FILE)" down
 
-# convenience aliases so user can call `make rag up` and `make rag down` (rag target above is a noop)
-rag-up: up
-rag-down: down
+rag-clean:
+	-docker rmi -f "$(RAG_IMAGE)" || true
 
-clean:
-	@echo "[make] Removing image: $(IMAGE) (if exists)"
-	-@docker rmi -f "$(IMAGE)" || true
+# ----------------------------
+# Go backend
+# ----------------------------
+
+go-build:
+	docker build -t "$(GO_IMAGE)" -f "$(GO_DOCKERFILE)" "$(GO_BUILD_CTX)"
+
+go-up:
+	docker compose -f "$(GO_COMPOSE_FILE)" up -d --build
+
+go-down:
+	docker compose -f "$(GO_COMPOSE_FILE)" down
+
+go-clean:
+	-docker rmi -f "$(GO_IMAGE)" || true
+
+# ----------------------------
+# Database migrations
+# ----------------------------
+
+migrateup:
+	@test -n "$(DB_URL)" || (echo "DB_URL is not set" && exit 1)
+	migrate -path "$(MIGRATIONS_PATH)" -database "$(DB_URL)" -verbose up
+
+migrateup1:
+	@test -n "$(DB_URL)" || (echo "DB_URL is not set" && exit 1)
+	migrate -path "$(MIGRATIONS_PATH)" -database "$(DB_URL)" -verbose up 1
+
+migratedown:
+	@test -n "$(DB_URL)" || (echo "DB_URL is not set" && exit 1)
+	migrate -path "$(MIGRATIONS_PATH)" -database "$(DB_URL)" -verbose down
+
+migratedown1:
+	@test -n "$(DB_URL)" || (echo "DB_URL is not set" && exit 1)
+	migrate -path "$(MIGRATIONS_PATH)" -database "$(DB_URL)" -verbose down 1

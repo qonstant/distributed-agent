@@ -15,6 +15,7 @@ GO_DOCKERFILE := golang/Dockerfile
 GO_BUILD_CTX := golang
 GO_COMPOSE_FILE := golang/docker-compose.yml
 MIGRATIONS_PATH := golang/db/migrations
+ENV_FILE := ./.env
 
 help:
 	@echo "Available commands:"
@@ -76,17 +77,21 @@ go-clean:
 # ----------------------------
 
 migrateup:
-	@test -n "$(DB_URL)" || (echo "DB_URL is not set" && exit 1)
-	migrate -path "$(MIGRATIONS_PATH)" -database "$(DB_URL)" -verbose up
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	test -n "$$DB_URL" || (echo "DB_URL is not set" && exit 1); \
+	migrate -path "$(MIGRATIONS_PATH)" -database "$$DB_URL" -verbose up
 
 migrateup1:
-	@test -n "$(DB_URL)" || (echo "DB_URL is not set" && exit 1)
-	migrate -path "$(MIGRATIONS_PATH)" -database "$(DB_URL)" -verbose up 1
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	test -n "$$DB_URL" || (echo "DB_URL is not set" && exit 1); \
+	migrate -path "$(MIGRATIONS_PATH)" -database "$$DB_URL" -verbose up 1
 
 migratedown:
-	@test -n "$(DB_URL)" || (echo "DB_URL is not set" && exit 1)
-	migrate -path "$(MIGRATIONS_PATH)" -database "$(DB_URL)" -verbose down
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	test -n "$$DB_URL" || (echo "DB_URL is not set" && exit 1); \
+	migrate -path "$(MIGRATIONS_PATH)" -database "$$DB_URL" -verbose down
 
 migratedown1:
-	@test -n "$(DB_URL)" || (echo "DB_URL is not set" && exit 1)
-	migrate -path "$(MIGRATIONS_PATH)" -database "$(DB_URL)" -verbose down 1
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	test -n "$$DB_URL" || (echo "DB_URL is not set" && exit 1); \
+	migrate -path "$(MIGRATIONS_PATH)" -database "$$DB_URL" -verbose down 1

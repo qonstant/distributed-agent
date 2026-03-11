@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: telegram_bot_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+volumes:
+  postgres_data:

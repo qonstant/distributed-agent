@@ -3,6 +3,7 @@ SHELL := /bin/bash
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean \
 	go-build go-up go-down go-clean \
+	db-up db-down \
 	migrateup migrateup1 migratedown migratedown1
 
 RAG_IMAGE := rag
@@ -14,6 +15,7 @@ GO_IMAGE := distributed-agent-go
 GO_DOCKERFILE := golang/Dockerfile
 GO_BUILD_CTX := golang
 GO_COMPOSE_FILE := golang/docker-compose.yml
+DB_COMPOSE_FILE := golang/docker-compose.db.yml
 MIGRATIONS_PATH := golang/db/migrations
 ENV_FILE := ./.env
 
@@ -31,6 +33,10 @@ help:
 	@echo "  make go-up"
 	@echo "  make go-down"
 	@echo "  make go-clean"
+	@echo ""
+	@echo "Database:"
+	@echo "  make db-up"
+	@echo "  make db-down"
 	@echo ""
 	@echo "Migrations:"
 	@echo "  make migrateup"
@@ -71,6 +77,16 @@ go-down:
 
 go-clean:
 	-docker rmi -f "$(GO_IMAGE)" || true
+
+# ----------------------------
+# Database
+# ----------------------------
+
+db-up:
+	docker compose -f "$(DB_COMPOSE_FILE)" up -d
+
+db-down:
+	docker compose -f "$(DB_COMPOSE_FILE)" down -v
 
 # ----------------------------
 # Database migrations

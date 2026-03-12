@@ -132,6 +132,8 @@ prepare-golang-db-files:
     - cp golang/docker-compose.db.yml /opt/golang-db/
     - cp -r golang/db/migrations /opt/golang-db/migrations
     - cp Makefile /opt/golang-db/
+    - sed -i 's|^DB_COMPOSE_FILE := .*|DB_COMPOSE_FILE := docker-compose.db.yml|' /opt/golang-db/Makefile
+    - sed -i 's|^MIGRATIONS_PATH := .*|MIGRATIONS_PATH := migrations|' /opt/golang-db/Makefile
     - 'printf "POSTGRES_SUPERUSER_PASSWORD=%s\n" "${POSTGRES_SUPERUSER_PASSWORD}" > /opt/golang-db/.env'
     - 'printf "DB_URL=%s\n" "${DB_URL}" >> /opt/golang-db/.env'
     - chmod 600 /opt/golang-db/.env

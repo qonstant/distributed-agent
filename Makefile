@@ -83,9 +83,11 @@ go-clean:
 # ----------------------------
 
 db-up:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	docker compose -f "$(DB_COMPOSE_FILE)" up -d
 
 db-down:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	docker compose -f "$(DB_COMPOSE_FILE)" down -v
 
 # ----------------------------

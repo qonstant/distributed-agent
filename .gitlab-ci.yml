@@ -120,3 +120,18 @@ deploy-golang:
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
     - docker-compose up -d --build
     - 'shred -u .env || rm -f .env || true'
+
+prepare-golang-db-files:
+  stage: deploy
+  tags:
+    - vps2
+  before_script: *before-vps2
+  when: manual
+  script:
+    - mkdir -p /opt/golang-db
+    - rm -rf /opt/golang-db/migrations
+    - cp golang/docker-compose.db.yml /opt/golang-db/
+    - cp -r golang/db/migrations /opt/golang-db/migrations
+    - cp Makefile /opt/golang-db/
+    - echo "Copied DB files to /opt/golang-db"
+    - find /opt/golang-db -maxdepth 3 -type f | sort

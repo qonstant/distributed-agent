@@ -133,6 +133,7 @@ prepare-golang-db-files:
     - cp -r golang/db/migrations /opt/golang-db/migrations
     - cp Makefile /opt/golang-db/
     - 'printf "POSTGRES_SUPERUSER_PASSWORD=%s\n" "${POSTGRES_SUPERUSER_PASSWORD}" > /opt/golang-db/.env'
+    - 'printf "DB_URL=%s\n" "${DB_URL}" >> /opt/golang-db/.env'
     - chmod 600 /opt/golang-db/.env
     - echo "Copied DB files to /opt/golang-db"
     - find /opt/golang-db -maxdepth 3 -type f | sort

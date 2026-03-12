@@ -132,5 +132,7 @@ prepare-golang-db-files:
     - cp golang/docker-compose.db.yml /opt/golang-db/
     - cp -r golang/db/migrations /opt/golang-db/migrations
     - cp Makefile /opt/golang-db/
+    - 'printf "POSTGRES_PASSWORD=%s\n" "${POSTGRES_SUPERUSER_PASSWORD}" > /opt/golang-db/.env'
+    - chmod 600 /opt/golang-db/.env
     - echo "Copied DB files to /opt/golang-db"
     - find /opt/golang-db -maxdepth 3 -type f | sort

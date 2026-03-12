@@ -59,7 +59,7 @@ rag-up:
 rag-down:
 	docker compose -f "$(RAG_COMPOSE_FILE)" down
 
-rag-clean:
+rag-clean: 
 	-docker rmi -f "$(RAG_IMAGE)" || true
 
 # ----------------------------

@@ -28,7 +28,7 @@ test-golang:
     - vps2
   before_script: *before-vps2
   script:
-    - make coverage
+    - make coverage-docker
   coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
   artifacts:
     when: always

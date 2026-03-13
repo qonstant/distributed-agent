@@ -5,7 +5,8 @@ SHELL := /bin/bash
 	go-build go-up go-down go-clean \
 	db-up db-down \
 	migrateup migrateup1 migratedown migratedown1 \
-	test test-verbose coverage coverage-html
+	test test-verbose coverage coverage-html \
+	test-docker coverage-docker
 
 RAG_IMAGE := rag
 RAG_DOCKERFILE := python/rag_api/Dockerfile
@@ -19,6 +20,7 @@ GO_COMPOSE_FILE := golang/docker-compose.yml
 GO_DIR := golang
 GO_GOCACHE := $(GO_DIR)/.gocache
 GO_COVERAGE_FILE := $(GO_DIR)/coverage.out
+GO_TOOLCHAIN_IMAGE := golang:1.24
 DB_COMPOSE_FILE := golang/docker-compose.db.yml
 MIGRATIONS_PATH := golang/db/migrations
 ENV_FILE := ./.env
@@ -41,6 +43,8 @@ help:
 	@echo "  make test-verbose"
 	@echo "  make coverage"
 	@echo "  make coverage-html"
+	@echo "  make test-docker"
+	@echo "  make coverage-docker"
 	@echo ""
 	@echo "Database:"
 	@echo "  make db-up"
@@ -100,6 +104,24 @@ coverage-html:
 	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go test -coverpkg=./... -coverprofile=coverage.out ./...
 	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go tool cover -func=coverage.out
 	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go tool cover -html=coverage.out -o coverage.html
+
+test-docker:
+	docker run --rm \
+		-v "$(CURDIR):/workspace" \
+		-w /workspace/"$(GO_DIR)" \
+		--user "$$(id -u):$$(id -g)" \
+		-e GOCACHE=/workspace/"$(GO_DIR)"/.gocache \
+		"$(GO_TOOLCHAIN_IMAGE)" \
+		sh -c 'go test ./...'
+
+coverage-docker:
+	docker run --rm \
+		-v "$(CURDIR):/workspace" \
+		-w /workspace/"$(GO_DIR)" \
+		--user "$$(id -u):$$(id -g)" \
+		-e GOCACHE=/workspace/"$(GO_DIR)"/.gocache \
+		"$(GO_TOOLCHAIN_IMAGE)" \
+		sh -c 'go test -coverpkg=./... -coverprofile=coverage.out ./... && go tool cover -func=coverage.out'
 
 # ----------------------------
 # Database

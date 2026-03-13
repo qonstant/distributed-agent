@@ -30,6 +30,8 @@ chunks.jsonl
 meta.json
 *.npy
 *.faiss
+golang/.gocache/
+golang/coverage.html
 
 
 

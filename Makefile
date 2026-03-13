@@ -4,7 +4,8 @@ SHELL := /bin/bash
 	rag-build rag-up rag-down rag-clean \
 	go-build go-up go-down go-clean \
 	db-up db-down \
-	migrateup migrateup1 migratedown migratedown1
+	migrateup migrateup1 migratedown migratedown1 \
+	test test-verbose coverage coverage-html
 
 RAG_IMAGE := rag
 RAG_DOCKERFILE := python/rag_api/Dockerfile
@@ -15,6 +16,9 @@ GO_IMAGE := distributed-agent-go
 GO_DOCKERFILE := golang/Dockerfile
 GO_BUILD_CTX := golang
 GO_COMPOSE_FILE := golang/docker-compose.yml
+GO_DIR := golang
+GO_GOCACHE := $(GO_DIR)/.gocache
+GO_COVERAGE_FILE := $(GO_DIR)/coverage.out
 DB_COMPOSE_FILE := golang/docker-compose.db.yml
 MIGRATIONS_PATH := golang/db/migrations
 ENV_FILE := ./.env
@@ -33,6 +37,10 @@ help:
 	@echo "  make go-up"
 	@echo "  make go-down"
 	@echo "  make go-clean"
+	@echo "  make test"
+	@echo "  make test-verbose"
+	@echo "  make coverage"
+	@echo "  make coverage-html"
 	@echo ""
 	@echo "Database:"
 	@echo "  make db-up"
@@ -77,6 +85,21 @@ go-down:
 
 go-clean:
 	-docker rmi -f "$(GO_IMAGE)" || true
+
+test:
+	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go test ./...
+
+test-verbose:
+	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go test -v ./...
+
+coverage:
+	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go test -coverpkg=./... -coverprofile=coverage.out ./...
+	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go tool cover -func=coverage.out
+
+coverage-html:
+	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go test -coverpkg=./... -coverprofile=coverage.out ./...
+	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go tool cover -func=coverage.out
+	cd "$(GO_DIR)" && env GOCACHE="$$(pwd)/.gocache" go tool cover -html=coverage.out -o coverage.html
 
 # ----------------------------
 # Database

@@ -1,4 +1,5 @@
 stages:
+  - test
   - build
   - deploy
 
@@ -20,6 +21,19 @@ variables:
   BOT_CONTAINER_NAME: "study-bot"
   GOLANG_IMAGE_NAME: "golang-agent:latest"
   GOLANG_CONTAINER_NAME: "golang-agent"
+
+test-golang:
+  stage: test
+  tags:
+    - vps2
+  before_script: *before-vps2
+  script:
+    - make coverage
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+  artifacts:
+    when: always
+    paths:
+      - golang/coverage.out
 
 ################################################################################
 # RAG (python/rag_api)

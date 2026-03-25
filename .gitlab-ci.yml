@@ -22,11 +22,28 @@ variables:
   GOLANG_IMAGE_NAME: "golang-agent:latest"
   GOLANG_CONTAINER_NAME: "golang-agent"
 
-test-golang:
+test-golang-prod:
   stage: test
   tags:
     - vps2
   before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - make coverage-docker
+  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
+  artifacts:
+    when: always
+    paths:
+      - golang/coverage.out
+
+test-golang-test:
+  stage: test
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
   script:
     - make coverage-docker
   coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
@@ -38,20 +55,35 @@ test-golang:
 ################################################################################
 # RAG (python/rag_api)
 ################################################################################
-build-rag-image:
+build-rag-image-prod:
   stage: build
   tags:
     - vps1
   before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - cd python/rag_api
     - docker build --no-cache -t "${IMAGE_NAME}" .
 
-deploy-rag:
+build-rag-image-test:
+  stage: build
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+  script:
+    - cd python/rag_api
+    - docker build --no-cache -t "${IMAGE_NAME}" .
+
+deploy-rag-prod:
   stage: deploy
   tags:
     - vps1
   before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - cd python/rag_api
     - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
@@ -66,28 +98,64 @@ deploy-rag:
     - docker-compose up -d --build
     - 'shred -u .env || rm -f .env || true'
 
+deploy-rag-test:
+  stage: deploy
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+  script:
+    - cd python/rag_api
+    - 'echo "OPENAI_API_KEY_TEST set? ${OPENAI_API_KEY_TEST:+yes}"'
+    - 'echo "OPENAI_API_KEY_TEST length: ${#OPENAI_API_KEY_TEST}"'
+    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY_TEST}" > .env'
+    - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT_TEST}" >> .env'
+    - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS_TEST}" >> .env'
+    - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
+    - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY_TEST}" >> .env'
+    - chmod 600 .env
+    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
+    - docker-compose up -d --build
+    - 'shred -u .env || rm -f .env || true'
+
 ################################################################################
 # BOT (study-bot)
 ################################################################################
-build-bot-image:
+build-bot-image-prod:
   stage: build
   tags:
     - vps1
   before_script: *before-vps1
   rules:
-    - exists:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
         - Dockerfile
         - docker-compose.yml
   script:
     - docker build --no-cache -t "${BOT_IMAGE_NAME}" .
 
-deploy-bot:
+build-bot-image-test:
+  stage: build
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - Dockerfile
+        - docker-compose.yml
+  script:
+    - docker build --no-cache -t "${BOT_IMAGE_NAME}" .
+
+deploy-bot-prod:
   stage: deploy
   tags:
     - vps1
   before_script: *before-vps1
   rules:
-    - exists:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
         - Dockerfile
         - docker-compose.yml
   script:
@@ -103,25 +171,63 @@ deploy-bot:
     - docker-compose up -d --build
     - 'shred -u .env || rm -f .env || true'
 
+deploy-bot-test:
+  stage: deploy
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - Dockerfile
+        - docker-compose.yml
+  script:
+    - 'echo "OPENAI_API_KEY_TEST set? ${OPENAI_API_KEY_TEST:+yes}"'
+    - 'echo "OPENAI_API_KEY_TEST length: ${#OPENAI_API_KEY_TEST}"'
+    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY_TEST}" > .env'
+    - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT_TEST}" >> .env'
+    - 'printf "S3_BUCKET=%s\n" "${S3_BUCKET_TEST}" >> .env'
+    - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
+    - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY_TEST}" >> .env'
+    - chmod 600 .env
+    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
+    - docker-compose up -d --build
+    - 'shred -u .env || rm -f .env || true'
+
 ################################################################################
 # GOLANG service (runs ONLY after deploy-rag)
 ################################################################################
-build-golang-image:
+build-golang-image-prod:
   stage: build
   tags:
     - vps2
   before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - cd golang
     - docker build --no-cache -t "${GOLANG_IMAGE_NAME}" .
 
-deploy-golang:
+build-golang-image-test:
+  stage: build
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+  script:
+    - cd golang
+    - docker build --no-cache -t "${GOLANG_IMAGE_NAME}" .
+
+deploy-golang-prod:
   stage: deploy
   tags:
     - vps2
   before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
   needs:
-    - job: deploy-rag
+    - job: deploy-rag-prod
       optional: false
   script:
     - cd golang
@@ -130,16 +236,42 @@ deploy-golang:
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" >> .env'
+    - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
     - docker-compose up -d --build
     - 'shred -u .env || rm -f .env || true'
 
-prepare-golang-db-files:
+deploy-golang-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+  needs:
+    - job: deploy-rag-test
+      optional: false
+  script:
+    - cd golang
+    - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT_TEST}" > .env'
+    - 'printf "S3_BUCKET=%s\n" "${S3_BUCKET_TEST}" >> .env'
+    - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
+    - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY_TEST}" >> .env'
+    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY_TEST}" >> .env'
+    - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN_TEST}" >> .env'
+    - chmod 600 .env
+    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
+    - docker-compose up -d --build
+    - 'shred -u .env || rm -f .env || true'
+
+prepare-golang-db-files-prod:
   stage: deploy
   tags:
     - vps2
   before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - mkdir -p /opt/golang-db
     - rm -rf /opt/golang-db/migrations
@@ -150,6 +282,27 @@ prepare-golang-db-files:
     - sed -i 's|^MIGRATIONS_PATH := .*|MIGRATIONS_PATH := migrations|' /opt/golang-db/Makefile
     - 'printf "POSTGRES_SUPERUSER_PASSWORD=%s\n" "${POSTGRES_SUPERUSER_PASSWORD}" > /opt/golang-db/.env'
     - 'printf "DB_URL=%s\n" "${DB_URL}" >> /opt/golang-db/.env'
+    - chmod 600 /opt/golang-db/.env
+    - echo "Copied DB files to /opt/golang-db"
+    - find /opt/golang-db -maxdepth 3 -type f | sort
+
+prepare-golang-db-files-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+  script:
+    - mkdir -p /opt/golang-db
+    - rm -rf /opt/golang-db/migrations
+    - cp golang/docker-compose.db.yml /opt/golang-db/
+    - cp -r golang/db/migrations /opt/golang-db/migrations
+    - cp Makefile /opt/golang-db/
+    - sed -i 's|^DB_COMPOSE_FILE := .*|DB_COMPOSE_FILE := docker-compose.db.yml|' /opt/golang-db/Makefile
+    - sed -i 's|^MIGRATIONS_PATH := .*|MIGRATIONS_PATH := migrations|' /opt/golang-db/Makefile
+    - 'printf "POSTGRES_SUPERUSER_PASSWORD=%s\n" "${POSTGRES_SUPERUSER_PASSWORD_TEST}" > /opt/golang-db/.env'
+    - 'printf "DB_URL=%s\n" "${DB_URL_TEST}" >> /opt/golang-db/.env'
     - chmod 600 /opt/golang-db/.env
     - echo "Copied DB files to /opt/golang-db"
     - find /opt/golang-db -maxdepth 3 -type f | sort

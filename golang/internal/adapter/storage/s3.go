@@ -26,7 +26,7 @@ func NewS3Store(ctx context.Context, cfg config.S3Config) (*S3Store, error) {
 		Secure: cfg.UseSSL,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("minio.New: %w", err)
+		return nil, fmt.Errorf("garage.New: %w", err)
 	}
 
 	ok, err := client.BucketExists(ctx, cfg.Bucket)

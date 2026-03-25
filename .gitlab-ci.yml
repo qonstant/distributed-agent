@@ -129,7 +129,7 @@ build-bot-image-prod:
   before_script: *before-vps1
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-    - exists:
+      exists:
         - Dockerfile
         - docker-compose.yml
   script:
@@ -142,7 +142,7 @@ build-bot-image-test:
   before_script: *before-vps1
   rules:
     - if: '$CI_COMMIT_BRANCH == "test"'
-    - exists:
+      exists:
         - Dockerfile
         - docker-compose.yml
   script:
@@ -155,7 +155,7 @@ deploy-bot-prod:
   before_script: *before-vps1
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-    - exists:
+      exists:
         - Dockerfile
         - docker-compose.yml
   script:
@@ -178,7 +178,7 @@ deploy-bot-test:
   before_script: *before-vps1
   rules:
     - if: '$CI_COMMIT_BRANCH == "test"'
-    - exists:
+      exists:
         - Dockerfile
         - docker-compose.yml
   script:
@@ -304,4 +304,3 @@ prepare-golang-db-files-test:
     - chmod 600 /opt/golang-db/.env
     - echo "Copied DB files to /opt/golang-db"
     - find /opt/golang-db -maxdepth 3 -type f | sort
-    

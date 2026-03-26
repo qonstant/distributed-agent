@@ -115,3 +115,5 @@ secrets.json
 
 # Optional: add large media files to Git LFS instead of git
 # See .gitattributes for LFS rules (example below)
+
+*.venv

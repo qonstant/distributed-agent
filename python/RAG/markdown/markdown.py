@@ -2,9 +2,13 @@
 """
 markdown.py
 
-Single-file converter: PDF/DOCX/TXT/MD -> Markdown.
+Convert PDF/DOCX/TXT/MD files to Markdown.
 Images are NOT saved; any image encountered is replaced with a simple placeholder:
     [image]
+
+Supports:
+  - single-file conversion
+  - batch conversion for all supported files in a directory tree
 
 This variant adds an optional `--doc-prefix` (short `-d`) CLI argument that will be
 prepended to the `source_file` value written into the markdown frontmatter.
@@ -12,6 +16,7 @@ prepended to the `source_file` value written into the markdown frontmatter.
 Run:
     python markdown.py input.pdf -o output.md --doc-prefix italy
     python markdown.py input.pdf -o output.md -d italy
+    python markdown.py ./docs -o ./docs_md -d italy
 
 Example:
     python markdown.py residence_permit_ru.pdf -o residence_permit_ru.md -d italy
@@ -26,6 +31,8 @@ import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, List, Dict, Any
+
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 
 # ------------------ Utilities ------------------
 def ensure_dir(p: Path) -> Path:
@@ -273,6 +280,10 @@ def pdf_to_md_pdfplumber_flat(src: Path, dst: Path, leading_slash: bool = True, 
     return True
 
 def txt_or_md_copy(src: Path, dst: Path, verbose: bool = False) -> bool:
+    if src.resolve() == dst.resolve():
+        if verbose:
+            print(f"[txt_or_md_copy] source and destination are the same file, skipping copy: {src}")
+        return True
     shutil.copyfile(src, dst)
     if verbose:
         print(f"[txt_or_md_copy] copied {src} -> {dst}")
@@ -361,12 +372,73 @@ def convert_to_markdown(src: str, dst: Optional[str] = None, leading_slash: bool
         print(f"[convert_to_markdown] final markdown: {final}")
     return final
 
+def _is_relative_to(path: Path, base: Path) -> bool:
+    try:
+        path.resolve().relative_to(base.resolve())
+        return True
+    except ValueError:
+        return False
+
+def _iter_supported_files(src_dir: Path, output_dir: Optional[Path] = None) -> List[Path]:
+    files: List[Path] = []
+    resolved_output_dir = output_dir.resolve() if output_dir else None
+    for path in sorted(src_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+        if resolved_output_dir and _is_relative_to(path, resolved_output_dir):
+            continue
+        files.append(path)
+    return files
+
+def convert_directory_to_markdown(
+    src_dir: str,
+    dst_dir: Optional[str] = None,
+    doc_prefix: Optional[str] = None,
+    leading_slash: bool = True,
+    verbose: bool = False,
+    rasterize_pages: bool = False,
+) -> Tuple[List[Path], List[Tuple[Path, Exception]]]:
+    src_root = Path(src_dir)
+    if not src_root.exists():
+        raise FileNotFoundError(src_dir)
+    if not src_root.is_dir():
+        raise NotADirectoryError(src_dir)
+
+    dst_root = Path(dst_dir) if dst_dir else src_root
+    ensure_dir(dst_root)
+
+    converted: List[Path] = []
+    errors: List[Tuple[Path, Exception]] = []
+    files = _iter_supported_files(src_root, dst_root if _is_relative_to(dst_root, src_root) else None)
+
+    for src_path in files:
+        rel_path = src_path.relative_to(src_root)
+        out_path = dst_root / rel_path.with_suffix(".md")
+        try:
+            out_md = convert_to_markdown(
+                str(src_path),
+                str(out_path),
+                leading_slash=leading_slash,
+                verbose=verbose,
+                rasterize_pages=rasterize_pages,
+            )
+            update_frontmatter_source(out_md, src_path.name, doc_prefix, verbose=verbose)
+            converted.append(out_md)
+            print(f"Converted: {src_path} -> {out_md}")
+        except Exception as exc:
+            errors.append((src_path, exc))
+            print(f"ERROR: {src_path}: {exc}", file=sys.stderr)
+
+    return converted, errors
+
 # ------------------ CLI ------------------
 if __name__ == "__main__":
     import argparse
-    p = argparse.ArgumentParser(description="Convert PDF/DOCX/TXT -> Markdown; images replaced with placeholder.")
-    p.add_argument("input", help="input file (pdf, docx, md, txt)")
-    p.add_argument("-o", "--output", required=True, help="output markdown file path")
+    p = argparse.ArgumentParser(description="Convert PDF/DOCX/TXT/MD files to Markdown; images replaced with placeholder.")
+    p.add_argument("input", help="input file or directory")
+    p.add_argument("-o", "--output", help="output markdown file path for a file, or output directory for a directory input")
     p.add_argument("-d", "--doc-prefix", dest="doc_prefix", default=None, help="optional path/prefix to prepend to source_file in frontmatter (e.g. 'italy')")
     p.add_argument("--no-leading-slash", action="store_true", help="ignored in this mode (kept for compatibility)")
     p.add_argument("--verbose", action="store_true", help="print debug logs")
@@ -374,16 +446,30 @@ if __name__ == "__main__":
     args = p.parse_args()
     lead = not args.no_leading_slash
     try:
-        out_md = convert_to_markdown(args.input, args.output, leading_slash=lead, verbose=args.verbose, rasterize_pages=args.rasterize_pages)
-        print("Converted to:", out_md)
-        # update frontmatter source_file with doc-prefix (if provided)
-        try:
-            original_src_name = Path(args.input).name
-            update_frontmatter_source(Path(out_md), original_src_name, args.doc_prefix, verbose=args.verbose)
-            if args.verbose:
-                print("[main] frontmatter updated (if needed).")
-        except Exception as e:
-            print("[post-convert] frontmatter update failed:", e)
+        input_path = Path(args.input)
+        if input_path.is_dir():
+            converted, errors = convert_directory_to_markdown(
+                args.input,
+                args.output,
+                doc_prefix=args.doc_prefix,
+                leading_slash=lead,
+                verbose=args.verbose,
+                rasterize_pages=args.rasterize_pages,
+            )
+            print(f"Converted {len(converted)} file(s).")
+            if errors:
+                print(f"Failed on {len(errors)} file(s).", file=sys.stderr)
+                sys.exit(1)
+        else:
+            out_md = convert_to_markdown(args.input, args.output, leading_slash=lead, verbose=args.verbose, rasterize_pages=args.rasterize_pages)
+            print("Converted to:", out_md)
+            try:
+                original_src_name = Path(args.input).name
+                update_frontmatter_source(Path(out_md), original_src_name, args.doc_prefix, verbose=args.verbose)
+                if args.verbose:
+                    print("[main] frontmatter updated (if needed).")
+            except Exception as e:
+                print("[post-convert] frontmatter update failed:", e)
     except Exception as e:
         print("ERROR:", e)
         sys.exit(1)

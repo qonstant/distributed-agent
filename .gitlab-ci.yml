@@ -93,9 +93,28 @@ deploy-rag-prod:
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
+    - 'printf "S3_USE_SSL=%s\n" "${S3_USE_SSL}" >> .env'
+    - 'printf "S3_VERIFY=%s\n" "${S3_VERIFY}" >> .env'
+    - 'printf "RELEASE_PREFIX=%s\n" "${RELEASE_PREFIX}" >> .env'
     - chmod 600 .env
-    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
+    - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build
+    - sleep 3
+    - 'docker logs "${CONTAINER_NAME}" --tail 30 || true'
+    - |
+      docker exec "${CONTAINER_NAME}" python - <<'PY' || true
+      import json
+      from collections import Counter
+      from pathlib import Path
+
+      meta = json.loads(Path("/app/out/meta.json").read_text())
+      counts = Counter((m.get("source_file") or m.get("filename") or "unknown") for m in meta.values())
+
+      print(f"[rag] total chunks: {len(meta)}")
+      print(f"[rag] total files: {len(counts)}")
+      for name, count in sorted(counts.items()):
+          print(f"[rag] {count:3d}  {name}")
+      PY
     - 'shred -u .env || rm -f .env || true'
 
 deploy-rag-test:
@@ -114,9 +133,28 @@ deploy-rag-test:
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS_TEST}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY_TEST}" >> .env'
+    - 'printf "S3_USE_SSL=%s\n" "${S3_USE_SSL_TEST}" >> .env'
+    - 'printf "S3_VERIFY=%s\n" "${S3_VERIFY_TEST}" >> .env'
+    - 'printf "RELEASE_PREFIX=%s\n" "${RELEASE_PREFIX_TEST}" >> .env'
     - chmod 600 .env
-    - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
+    - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build
+    - sleep 3
+    - 'docker logs "${CONTAINER_NAME}" --tail 30 || true'
+    - |
+      docker exec "${CONTAINER_NAME}" python - <<'PY' || true
+      import json
+      from collections import Counter
+      from pathlib import Path
+
+      meta = json.loads(Path("/app/out/meta.json").read_text())
+      counts = Counter((m.get("source_file") or m.get("filename") or "unknown") for m in meta.values())
+
+      print(f"[rag] total chunks: {len(meta)}")
+      print(f"[rag] total files: {len(counts)}")
+      for name, count in sorted(counts.items()):
+          print(f"[rag] {count:3d}  {name}")
+      PY
     - 'shred -u .env || rm -f .env || true'
 
 ################################################################################
@@ -306,3 +344,4 @@ prepare-golang-db-files-test:
     - chmod 600 /opt/golang-db/.env
     - echo "Copied DB files to /opt/golang-db"
     - find /opt/golang-db -maxdepth 3 -type f | sort
+    

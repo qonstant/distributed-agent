@@ -25,16 +25,28 @@ func (f fakeAttachmentResolver) Resolve(ctx context.Context, refs []qa.Attachmen
 	return f.resolveFn(ctx, refs)
 }
 
+type fakeAccessDirectory struct {
+	findFn func(context.Context, int64) (access.Record, bool, error)
+}
+
+func (f fakeAccessDirectory) FindByTelegramID(ctx context.Context, telegramID int64) (access.Record, bool, error) {
+	return f.findFn(ctx, telegramID)
+}
+
 func TestAskQuestionExecute(t *testing.T) {
 	t.Parallel()
 
-	authorizedUser := access.User{Username: "allowed"}
+	authorizedUser := access.User{TelegramID: 42, Username: "allowed"}
 
 	t.Run("rejects unauthorized user", func(t *testing.T) {
 		t.Parallel()
 
 		uc := AskQuestion{
-			Policy: access.NewPolicy("allowed"),
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{}, false, nil
+				},
+			}),
 			Answers: fakeAnswerSource{
 				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
 					t.Fatal("Ask should not be called")
@@ -49,7 +61,7 @@ func TestAskQuestionExecute(t *testing.T) {
 			},
 		}
 
-		_, err := uc.Execute(context.Background(), access.User{Username: "denied"}, "hello")
+		_, err := uc.Execute(context.Background(), access.User{TelegramID: 77, Username: "denied"}, "hello")
 		if !errors.Is(err, access.ErrUnauthorized) {
 			t.Fatalf("Execute() error = %v, want %v", err, access.ErrUnauthorized)
 		}
@@ -60,7 +72,14 @@ func TestAskQuestionExecute(t *testing.T) {
 
 		asked := false
 		uc := AskQuestion{
-			Policy: access.NewPolicy("allowed"),
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(_ context.Context, telegramID int64) (access.Record, bool, error) {
+					if got, want := telegramID, authorizedUser.TelegramID; got != want {
+						t.Fatalf("FindByTelegramID() telegramID = %d, want %d", got, want)
+					}
+					return access.Record{TelegramID: telegramID, HasAccess: true}, true, nil
+				},
+			}),
 			Answers: fakeAnswerSource{
 				askFn: func(_ context.Context, question qa.Question) (qa.DraftResponse, error) {
 					asked = true
@@ -98,7 +117,11 @@ func TestAskQuestionExecute(t *testing.T) {
 
 		var gotRefs []qa.AttachmentRef
 		uc := AskQuestion{
-			Policy: access.NewPolicy("allowed"),
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+				},
+			}),
 			Answers: fakeAnswerSource{
 				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
 					return qa.DraftResponse{
@@ -136,7 +159,11 @@ func TestAskQuestionExecute(t *testing.T) {
 
 		wantErr := errors.New("answer source failed")
 		uc := AskQuestion{
-			Policy: access.NewPolicy("allowed"),
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+				},
+			}),
 			Answers: fakeAnswerSource{
 				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
 					return qa.DraftResponse{}, wantErr
@@ -160,7 +187,11 @@ func TestAskQuestionExecute(t *testing.T) {
 		t.Parallel()
 
 		uc := AskQuestion{
-			Policy: access.NewPolicy("allowed"),
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+				},
+			}),
 			Answers: fakeAnswerSource{
 				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
 					t.Fatal("Ask should not be called")
@@ -186,7 +217,11 @@ func TestAskQuestionExecute(t *testing.T) {
 
 		wantErr := errors.New("resolve failed")
 		uc := AskQuestion{
-			Policy: access.NewPolicy("allowed"),
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+				},
+			}),
 			Answers: fakeAnswerSource{
 				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
 					return qa.DraftResponse{

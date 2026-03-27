@@ -1,13 +1,17 @@
 package usecase
 
-import "github.com/qonstant/distributed-agent/internal/domain/access"
+import (
+	"context"
+
+	"github.com/qonstant/distributed-agent/internal/domain/access"
+)
 
 type GetHelpMessage struct {
 	Policy access.Policy
 }
 
-func (uc GetHelpMessage) Execute(user access.User) (string, error) {
-	if err := uc.Policy.Authorize(user); err != nil {
+func (uc GetHelpMessage) Execute(ctx context.Context, user access.User) (string, error) {
+	if err := uc.Policy.Authorize(ctx, user); err != nil {
 		return "", err
 	}
 

@@ -110,7 +110,7 @@ func (h *Handlers) HandleStart(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 
-	text, err := h.start.Execute(userFromUpdate(update))
+	text, err := h.start.Execute(ctx, userFromUpdate(update))
 	if err != nil {
 		if h.handleAccessError(ctx, b, update.Message.Chat.ID, err) {
 			return
@@ -127,7 +127,7 @@ func (h *Handlers) HandleHelp(ctx context.Context, b *bot.Bot, update *models.Up
 		return
 	}
 
-	text, err := h.help.Execute(userFromUpdate(update))
+	text, err := h.help.Execute(ctx, userFromUpdate(update))
 	if err != nil {
 		if h.handleAccessError(ctx, b, update.Message.Chat.ID, err) {
 			return
@@ -184,6 +184,7 @@ func userFromUpdate(update *models.Update) access.User {
 	}
 
 	return access.User{
+		TelegramID:  int64(update.Message.From.ID),
 		Username:    update.Message.From.Username,
 		DisplayName: displayName(update),
 	}

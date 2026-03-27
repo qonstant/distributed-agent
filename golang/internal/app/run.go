@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/qonstant/distributed-agent/internal/adapter/localapi"
+	"github.com/qonstant/distributed-agent/internal/adapter/postgres"
 	"github.com/qonstant/distributed-agent/internal/adapter/storage"
 	telegramadapter "github.com/qonstant/distributed-agent/internal/adapter/telegram"
 	"github.com/qonstant/distributed-agent/internal/application/usecase"
@@ -28,7 +29,13 @@ func Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	policy := access.NewPolicy(cfg.AllowedUsername)
+	accessDirectory, err := postgres.NewAccessDirectory(cfg.DBURL)
+	if err != nil {
+		return fmt.Errorf("failed to initialize access directory: %w", err)
+	}
+	defer accessDirectory.Close()
+
+	policy := access.NewPolicy(accessDirectory)
 
 	s3Store, err := storage.NewS3Store(context.Background(), cfg.S3)
 	if err != nil {
@@ -66,10 +73,7 @@ func Run() error {
 			Title:          cfg.SampleAlbumTitle,
 		},
 		presenter,
-		fmt.Sprintf(
-			"This bot accepts requests only with subscription.\n\nTo request access, please message @%s.",
-			policy.AllowedUsername(),
-		),
+		"This bot accepts requests only for users with active access.\n\nPlease contact an administrator to request access.",
 	)
 
 	b, err := bot.New(cfg.TelegramToken, bot.WithDefaultHandler(handlers.HandleDefault))
@@ -79,7 +83,7 @@ func Run() error {
 
 	handlers.Register(b)
 
-	log.Printf("Bot started (only answering username: @%s)", policy.AllowedUsername())
+	log.Printf("Bot started (access control: %s)", policy.AccessMode())
 	go b.Start(ctx)
 
 	<-ctx.Done()

@@ -12,7 +12,7 @@ import (
 
 type Config struct {
 	TelegramToken        string
-	AllowedUsername      string
+	DBURL                string
 	LocalAPIURL          string
 	DocRoot              string
 	SampleAlbumTitle     string
@@ -34,7 +34,7 @@ func Load() (Config, error) {
 
 	cfg := Config{
 		TelegramToken:    strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		AllowedUsername:  normalizeUsername(defaultString(os.Getenv("ALLOWED_USERNAME"), "chupapimunyao")),
+		DBURL:            strings.TrimSpace(os.Getenv("DB_URL")),
 		LocalAPIURL:      defaultString(os.Getenv("LOCAL_API_URL"), "http://127.0.0.1:8080/query"),
 		DocRoot:          strings.TrimSpace(os.Getenv("DOC_ROOT")),
 		SampleAlbumTitle: defaultString(os.Getenv("SAMPLE_ALBUM_TITLE"), "📄 Residence permit documents"),
@@ -58,6 +58,9 @@ func Load() (Config, error) {
 	if cfg.TelegramToken == "" {
 		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is missing")
 	}
+	if cfg.DBURL == "" {
+		return Config{}, fmt.Errorf("DB_URL is missing")
+	}
 
 	return cfg, nil
 }
@@ -68,10 +71,6 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func normalizeUsername(value string) string {
-	return strings.TrimPrefix(strings.TrimSpace(value), "@")
 }
 
 func parseCSV(value string) []string {

@@ -15,7 +15,7 @@ type AskQuestion struct {
 }
 
 func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string) (qa.Response, error) {
-	if err := uc.Policy.Authorize(user); err != nil {
+	if err := uc.Policy.Authorize(ctx, user); err != nil {
 		return qa.Response{}, err
 	}
 

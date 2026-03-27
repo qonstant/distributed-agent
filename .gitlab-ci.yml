@@ -274,6 +274,7 @@ deploy-golang-prod:
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" >> .env'
+    - 'printf "DB_URL=%s\n" "${DB_URL}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
@@ -297,6 +298,7 @@ deploy-golang-test:
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY_TEST}" >> .env'
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY_TEST}" >> .env'
+    - 'printf "DB_URL=%s\n" "${DB_URL_TEST}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN_TEST}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'

@@ -46,7 +46,6 @@ class QueryService:
         print(
             f"[query] classifier -> intent={intent} lang={language} "
             f"explain={classification.explain}"
-            f"This is test"
         )
 
         if intent in ("GREETING", "CHIT_CHAT"):

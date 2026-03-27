@@ -43,14 +43,18 @@ def _create_s3_client(settings: Settings) -> Optional[Any]:
 
 def _get_release_prefix_from_s3(s3: Any, settings: Settings) -> Optional[str]:
     if settings.release_prefix:
+        print(f"[s3] using configured release prefix: {settings.release_prefix.rstrip('/')}")
         return settings.release_prefix.rstrip("/")
     key = "releases/current"
     try:
         response = s3.get_object(Bucket=settings.s3_bucket_vectors, Key=key)
         body = response["Body"].read().decode("utf-8")
         prefix = body.strip()
+        if prefix:
+            print(f"[s3] resolved release prefix from {key}: {prefix.rstrip('/')}")
         return prefix.rstrip("/") if prefix else None
-    except Exception:
+    except Exception as exc:
+        print(f"[s3] no release prefix found at {key}: {exc}")
         return None
 
 
@@ -81,8 +85,8 @@ def ensure_local_artifacts(settings: Settings) -> None:
             )
             print("[s3] downloaded artifacts from prefix", prefix)
             return
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[s3] failed to download artifacts from prefix {prefix}: {exc}")
 
     try:
         s3.download_file(settings.s3_bucket_vectors, "meta.json", str(settings.meta_json_path))
@@ -92,5 +96,5 @@ def ensure_local_artifacts(settings: Settings) -> None:
             str(settings.faiss_index_path),
         )
         print("[s3] downloaded artifacts from bucket root")
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[s3] failed to download artifacts from bucket root: {exc}")

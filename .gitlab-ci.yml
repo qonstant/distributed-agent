@@ -77,48 +77,6 @@ build-rag-image-test:
     - cd python/rag_api
     - docker build --no-cache -t "${IMAGE_NAME}" .
 
-publish-rag-artifacts-prod:
-  stage: build
-  tags:
-    - vps1
-  before_script: *before-vps1
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-  script:
-    - >
-      docker run --rm
-      -v "$PWD:/workspace"
-      -w /workspace/python/RAG
-      -e S3_ENDPOINT="${S3_ENDPOINT}"
-      -e S3_BUCKET_VECTORS="${S3_BUCKET_VECTORS}"
-      -e S3_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID}"
-      -e S3_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY}"
-      -e S3_USE_SSL="${S3_USE_SSL}"
-      -e RELEASE_PREFIX="${CI_COMMIT_SHA}"
-      python:3.11-slim
-      sh -lc 'python -m pip install --no-cache-dir boto3 >/dev/null && python upload_artifacts.py --source-dir /workspace/python/RAG/out'
-
-publish-rag-artifacts-test:
-  stage: build
-  tags:
-    - vps1-test
-  before_script: *before-vps1
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "test"'
-  script:
-    - >
-      docker run --rm
-      -v "$PWD:/workspace"
-      -w /workspace/python/RAG
-      -e S3_ENDPOINT="${S3_ENDPOINT_TEST}"
-      -e S3_BUCKET_VECTORS="${S3_BUCKET_VECTORS_TEST}"
-      -e S3_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID_TEST}"
-      -e S3_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY_TEST}"
-      -e S3_USE_SSL="${S3_USE_SSL_TEST}"
-      -e RELEASE_PREFIX="${CI_COMMIT_SHA}"
-      python:3.11-slim
-      sh -lc 'python -m pip install --no-cache-dir boto3 >/dev/null && python upload_artifacts.py --source-dir /workspace/python/RAG/out'
-
 deploy-rag-prod:
   stage: deploy
   tags:
@@ -135,7 +93,6 @@ deploy-rag-prod:
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
-    - 'printf "RELEASE_PREFIX=%s\n" "${CI_COMMIT_SHA}" >> .env'
     - chmod 600 .env
     - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build
@@ -157,7 +114,6 @@ deploy-rag-test:
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS_TEST}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY_TEST}" >> .env'
-    - 'printf "RELEASE_PREFIX=%s\n" "${CI_COMMIT_SHA}" >> .env'
     - chmod 600 .env
     - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build

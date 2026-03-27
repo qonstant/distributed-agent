@@ -93,6 +93,9 @@ deploy-rag-prod:
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
+    - 'printf "S3_USE_SSL=%s\n" "${S3_USE_SSL}" >> .env'
+    - 'printf "S3_VERIFY=%s\n" "${S3_VERIFY}" >> .env'
+    - 'printf "RELEASE_PREFIX=%s\n" "${RELEASE_PREFIX}" >> .env'
     - chmod 600 .env
     - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build
@@ -130,6 +133,9 @@ deploy-rag-test:
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS_TEST}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY_TEST}" >> .env'
+    - 'printf "S3_USE_SSL=%s\n" "${S3_USE_SSL_TEST}" >> .env'
+    - 'printf "S3_VERIFY=%s\n" "${S3_VERIFY_TEST}" >> .env'
+    - 'printf "RELEASE_PREFIX=%s\n" "${RELEASE_PREFIX_TEST}" >> .env'
     - chmod 600 .env
     - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build

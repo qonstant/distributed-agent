@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 from rag_service.infrastructure.config import Settings
+
+REQUIRED_ARTIFACTS = ("meta.json", "index.faiss")
 
 
 def _create_s3_client(settings: Settings) -> Optional[Any]:
@@ -58,43 +61,72 @@ def _get_release_prefix_from_s3(s3: Any, settings: Settings) -> Optional[str]:
         return None
 
 
-def ensure_local_artifacts(settings: Settings) -> None:
-    need_meta = not settings.meta_json_path.exists()
-    need_index = not settings.faiss_index_path.exists()
-    if not (need_meta or need_index):
-        print("[startup] local artifacts present, skipping S3 download")
-        return
+def _download_to_temp(s3: Any, bucket: str, key: str, target_path: Path) -> Path:
+    tmp_path = target_path.with_name(f".{target_path.name}.download")
+    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+    if tmp_path.exists():
+        tmp_path.unlink()
+    s3.download_file(bucket, key, str(tmp_path))
+    return tmp_path
 
+
+def _download_required_artifacts(s3: Any, settings: Settings, prefix: Optional[str]) -> bool:
+    key_prefix = f"{prefix.rstrip('/')}/" if prefix else ""
+    label = f"prefix {prefix}" if prefix else "bucket root"
+    downloaded: dict[str, Path] = {}
+
+    try:
+        for filename, target_path in (
+            ("meta.json", settings.meta_json_path),
+            ("index.faiss", settings.faiss_index_path),
+        ):
+            key = f"{key_prefix}{filename}"
+            downloaded[filename] = _download_to_temp(s3, settings.s3_bucket_vectors, key, target_path)
+    except Exception as exc:
+        for tmp_path in downloaded.values():
+            if tmp_path.exists():
+                tmp_path.unlink()
+        print(f"[s3] failed to download required artifacts from {label}: {exc}")
+        return False
+
+    for filename, tmp_path in downloaded.items():
+        target_path = settings.out_dir / filename
+        tmp_path.replace(target_path)
+
+    for filename in settings.optional_artifacts:
+        key = f"{key_prefix}{filename}"
+        target_path = settings.out_dir / filename
+        try:
+            s3.download_file(settings.s3_bucket_vectors, key, str(target_path))
+        except Exception as exc:
+            print(f"[s3] optional artifact not downloaded from {key}: {exc}")
+
+    print(f"[s3] downloaded artifacts from {label}")
+    return True
+
+
+def _have_local_required_artifacts(settings: Settings) -> bool:
+    return all((settings.out_dir / filename).exists() for filename in REQUIRED_ARTIFACTS)
+
+
+def ensure_local_artifacts(settings: Settings) -> None:
     s3 = _create_s3_client(settings)
     if s3 is None:
+        if _have_local_required_artifacts(settings):
+            print("[startup] S3 client not available; using existing local artifacts")
+            return
         print("[s3] S3 client not available; expecting local out/ to contain artifacts.")
         return
 
     prefix = _get_release_prefix_from_s3(s3, settings)
-    if prefix:
-        try:
-            s3.download_file(
-                settings.s3_bucket_vectors,
-                f"{prefix}/meta.json",
-                str(settings.meta_json_path),
-            )
-            s3.download_file(
-                settings.s3_bucket_vectors,
-                f"{prefix}/index.faiss",
-                str(settings.faiss_index_path),
-            )
-            print("[s3] downloaded artifacts from prefix", prefix)
-            return
-        except Exception as exc:
-            print(f"[s3] failed to download artifacts from prefix {prefix}: {exc}")
+    if prefix and _download_required_artifacts(s3, settings, prefix):
+        return
 
-    try:
-        s3.download_file(settings.s3_bucket_vectors, "meta.json", str(settings.meta_json_path))
-        s3.download_file(
-            settings.s3_bucket_vectors,
-            "index.faiss",
-            str(settings.faiss_index_path),
-        )
-        print("[s3] downloaded artifacts from bucket root")
-    except Exception as exc:
-        print(f"[s3] failed to download artifacts from bucket root: {exc}")
+    if _download_required_artifacts(s3, settings, prefix=None):
+        return
+
+    if _have_local_required_artifacts(settings):
+        print("[startup] S3 refresh failed; using existing local artifacts")
+        return
+
+    print("[startup] required artifacts are missing locally and could not be downloaded from S3")

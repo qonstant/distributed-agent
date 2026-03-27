@@ -117,3 +117,5 @@ secrets.json
 # See .gitattributes for LFS rules (example below)
 
 *.venv
+*.csv
+__pycache__

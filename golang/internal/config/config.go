@@ -38,12 +38,7 @@ func Load() (Config, error) {
 		LocalAPIURL:      defaultString(os.Getenv("LOCAL_API_URL"), "http://127.0.0.1:8080/query"),
 		DocRoot:          strings.TrimSpace(os.Getenv("DOC_ROOT")),
 		SampleAlbumTitle: defaultString(os.Getenv("SAMPLE_ALBUM_TITLE"), "📄 Residence permit documents"),
-		SampleAttachmentKeys: parseCSV(
-			defaultString(
-				os.Getenv("SAMPLE_ATTACHMENT_KEYS"),
-				"residence_permit/residence_permit_page11_img9.png,residence_permit/residence_permit_page2_img1.png,residence_permit/residence_permit_page2_img2.png",
-			),
-		),
+		SampleAttachmentKeys: parseCSV(os.Getenv("SAMPLE_ATTACHMENT_KEYS")),
 		S3: S3Config{
 			Endpoint:        strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
 			AccessKeyID:     strings.TrimSpace(os.Getenv("S3_ACCESS_KEY_ID")),

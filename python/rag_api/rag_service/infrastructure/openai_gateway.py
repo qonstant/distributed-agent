@@ -1,0 +1,188 @@
+from __future__ import annotations
+
+import json
+from typing import Any, Dict, Optional
+
+import numpy as np
+from openai import OpenAI
+
+from rag_service.domain.models import Classification, normalize_intent
+from rag_service.infrastructure.config import Settings
+
+
+class OpenAIGateway:
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._client = OpenAI(api_key=settings.openai_api_key)
+
+    def embed_text(self, text: str) -> np.ndarray:
+        response = self._client.embeddings.create(model=self._settings.embed_model, input=[text])
+        item = response.data[0]
+        embedding = getattr(item, "embedding", None) or (
+            item.get("embedding") if isinstance(item, dict) else None
+        )
+        if embedding is None:
+            raise RuntimeError("Failed to parse embedding response")
+        return np.array(embedding, dtype=np.float32)
+
+    def classify_query(self, query: str) -> Classification:
+        prompt = (
+            "You are a compact intent classifier and language detector. Given the user's single input below, "
+            "return a JSON object with EXACTLY three keys:\n"
+            " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"GUIDANCE\",\"DOCUMENT_REQUEST\",\"OTHER\"]\n"
+            " - \"explain\": one short sentence explaining why\n"
+            " - \"language\": the detected language name or two-letter code (e.g. \"Russian\" or \"ru\")\n\n"
+            "Definitions/examples:\n"
+            " - GREETING: short hello/goodbye messages (no docs needed)\n"
+            " - CHIT_CHAT: small talk / thanks / compliment (no docs)\n"
+            " - FACTUAL_QUESTION: generic factual question where no document retrieval is needed (e.g., \"What is AI?\")\n"
+            " - GUIDANCE: user asks for step-by-step guidance, procedures or how-to that should be answered using documents if available, but may be synthesized from top-K excerpts (do NOT invent facts)\n"
+            " - DOCUMENT_REQUEST: user explicitly requests a document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n"
+            " - OTHER: none of the above\n\n"
+            "Respond ONLY with valid JSON (no extra text). Example:\n"
+            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for residency\",\"language\":\"ru\"}\n\n"
+            f"User input: {json.dumps(query)}\n"
+        )
+        try:
+            response = self._client.responses.create(
+                model=self._settings.class_model,
+                input=prompt,
+                max_output_tokens=120,
+                temperature=0.0,
+            )
+            raw_text = self._resp_to_text(response) or ""
+            parsed = self._extract_json(raw_text) or {
+                "intent": "OTHER",
+                "explain": raw_text,
+                "language": "",
+            }
+            return Classification(
+                intent=normalize_intent(parsed.get("intent", "")),
+                explain=str(parsed.get("explain") or ""),
+                language=str(parsed.get("language") or "").strip(),
+            )
+        except Exception as exc:
+            print("[classify] classifier error:", exc)
+            return Classification(intent="OTHER", explain=f"classifier error: {exc}", language="")
+
+    def generate_greeting_reply(self, user_text: str, language_hint: str) -> str:
+        lang_instruction = (
+            f"in {language_hint}"
+            if language_hint
+            else "in the same language as the user"
+        )
+        prompt = (
+            f"The user wrote: {json.dumps(user_text)}\n\n"
+            f"Produce a single short friendly reply ({lang_instruction}). Keep it to one short sentence (<=20 words). "
+            "Do NOT include file paths or any extra commentary. Return only the reply text."
+        )
+        try:
+            response = self._client.responses.create(
+                model=self._settings.llm_model,
+                input=prompt,
+                max_output_tokens=50,
+                temperature=0.0,
+            )
+            text = self._resp_to_text(response).strip()
+            if text.startswith("```"):
+                text = text.strip("` \n")
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    return stripped
+            return text
+        except Exception as exc:
+            print("[greeting] generation failed:", exc)
+            return "Hi — how can I help you today?"
+
+    def answer_factual(self, query: str, language_hint: str) -> str:
+        lang_instruction = (
+            f"Answer in {language_hint}."
+            if language_hint
+            else "Answer in the same language as the user."
+        )
+        prompt = (
+            f"You are a concise helpful assistant. {lang_instruction} "
+            "Answer the user question briefly (1-2 short paragraphs). Do NOT include any file paths or suggest internal document locations.\n\n"
+            f"Question: {query}\n\nAnswer:"
+        )
+        try:
+            response = self._client.responses.create(
+                model=self._settings.llm_model,
+                input=prompt,
+                max_output_tokens=400,
+                temperature=0.0,
+            )
+            return self._resp_to_text(response).strip()
+        except Exception as exc:
+            print("[factual] LLM error:", exc)
+            return f"(LLM error: {exc})"
+
+    def generate_json_response(self, prompt: str, max_tokens: int = 512) -> Optional[Dict[str, Any]]:
+        try:
+            response = self._client.responses.create(
+                model=self._settings.llm_model,
+                input=prompt,
+                max_output_tokens=max_tokens,
+                temperature=0.0,
+            )
+            text = self._resp_to_text(response)
+            return self._extract_json(text)
+        except Exception as exc:
+            print("[synth] LLM synth failed:", exc)
+            return None
+
+    @staticmethod
+    def _extract_json(text: str) -> Optional[Dict[str, Any]]:
+        stripped = (text or "").strip()
+        if stripped.startswith("```"):
+            start = stripped.find("{")
+            end = stripped.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                stripped = stripped[start : end + 1]
+        try:
+            parsed = json.loads(stripped)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            start = stripped.find("{")
+            end = stripped.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    parsed = json.loads(stripped[start : end + 1])
+                    return parsed if isinstance(parsed, dict) else None
+                except Exception:
+                    return None
+            return None
+
+    @staticmethod
+    def _resp_to_text(resp: Any) -> str:
+        if isinstance(resp, str):
+            return resp
+        try:
+            if hasattr(resp, "output_text") and resp.output_text:
+                return resp.output_text
+        except Exception:
+            pass
+        output = getattr(resp, "output", None) or (resp.get("output") if isinstance(resp, dict) else None)
+        if isinstance(output, list):
+            parts = []
+            for node in output:
+                if isinstance(node, dict):
+                    content = node.get("content")
+                    if isinstance(content, list):
+                        for item in content:
+                            if isinstance(item, dict) and item.get("type") == "output_text":
+                                parts.append(item.get("text", ""))
+                            elif isinstance(item, str):
+                                parts.append(item)
+                    elif isinstance(content, str):
+                        parts.append(content)
+                elif isinstance(node, str):
+                    parts.append(node)
+            return "".join(parts).strip()
+        if isinstance(output, str):
+            return output.strip()
+        try:
+            return json.dumps(resp, default=str)
+        except Exception:
+            return str(resp)

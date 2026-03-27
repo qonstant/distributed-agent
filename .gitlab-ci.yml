@@ -96,6 +96,22 @@ deploy-rag-prod:
     - chmod 600 .env
     - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build
+    - sleep 3
+    - 'docker logs "${CONTAINER_NAME}" --tail 30 || true'
+    - |
+      docker exec "${CONTAINER_NAME}" python - <<'PY' || true
+      import json
+      from collections import Counter
+      from pathlib import Path
+
+      meta = json.loads(Path("/app/out/meta.json").read_text())
+      counts = Counter((m.get("source_file") or m.get("filename") or "unknown") for m in meta.values())
+
+      print(f"[rag] total chunks: {len(meta)}")
+      print(f"[rag] total files: {len(counts)}")
+      for name, count in sorted(counts.items()):
+          print(f"[rag] {count:3d}  {name}")
+      PY
     - 'shred -u .env || rm -f .env || true'
 
 deploy-rag-test:
@@ -117,6 +133,22 @@ deploy-rag-test:
     - chmod 600 .env
     - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build
+    - sleep 3
+    - 'docker logs "${CONTAINER_NAME}" --tail 30 || true'
+    - |
+      docker exec "${CONTAINER_NAME}" python - <<'PY' || true
+      import json
+      from collections import Counter
+      from pathlib import Path
+
+      meta = json.loads(Path("/app/out/meta.json").read_text())
+      counts = Counter((m.get("source_file") or m.get("filename") or "unknown") for m in meta.values())
+
+      print(f"[rag] total chunks: {len(meta)}")
+      print(f"[rag] total files: {len(counts)}")
+      for name, count in sorted(counts.items()):
+          print(f"[rag] {count:3d}  {name}")
+      PY
     - 'shred -u .env || rm -f .env || true'
 
 ################################################################################

@@ -44,6 +44,19 @@ def _create_s3_client(settings: Settings) -> Optional[Any]:
         return None
 
 
+def _is_not_found_error(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    if isinstance(response, dict):
+        error = response.get("Error") or {}
+        code = str(error.get("Code") or "").strip()
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if code in {"404", "NoSuchKey", "NotFound"} or status == 404:
+            return True
+
+    message = str(exc).lower()
+    return any(token in message for token in ("nosuchkey", "not found", "key not found", "(404)"))
+
+
 def _get_release_prefix_from_s3(s3: Any, settings: Settings) -> Optional[str]:
     if settings.release_prefix:
         print(f"[s3] using configured release prefix: {settings.release_prefix.rstrip('/')}")
@@ -57,7 +70,10 @@ def _get_release_prefix_from_s3(s3: Any, settings: Settings) -> Optional[str]:
             print(f"[s3] resolved release prefix from {key}: {prefix.rstrip('/')}")
         return prefix.rstrip("/") if prefix else None
     except Exception as exc:
-        print(f"[s3] no release prefix found at {key}: {exc}")
+        if _is_not_found_error(exc):
+            print(f"[s3] release pointer {key} not found; using bucket root artifacts")
+        else:
+            print(f"[s3] failed to resolve release prefix from {key}: {exc}")
         return None
 
 
@@ -99,7 +115,10 @@ def _download_required_artifacts(s3: Any, settings: Settings, prefix: Optional[s
         try:
             s3.download_file(settings.s3_bucket_vectors, key, str(target_path))
         except Exception as exc:
-            print(f"[s3] optional artifact not downloaded from {key}: {exc}")
+            if _is_not_found_error(exc):
+                print(f"[s3] optional artifact missing at {key}; continuing")
+            else:
+                print(f"[s3] failed to download optional artifact from {key}: {exc}")
 
     print(f"[s3] downloaded artifacts from {label}")
     return True

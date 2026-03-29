@@ -44,6 +44,9 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 		t.Parallel()
 
 		delegateCalled := false
+		var refreshedKey string
+		var refreshedValue string
+		var refreshedTTL time.Duration
 		store := fakeStore{
 			getFn: func(_ context.Context, key string) (string, bool, error) {
 				if got, want := key, "access:telegram:42"; got != want {
@@ -51,8 +54,10 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 				}
 				return `{"found":true,"record":{"TelegramID":42,"IsBlocked":false,"HasAccess":true}}`, true, nil
 			},
-			setFn: func(context.Context, string, string, time.Duration) error {
-				t.Fatal("Set should not be called on cache hit")
+			setFn: func(_ context.Context, key, value string, ttl time.Duration) error {
+				refreshedKey = key
+				refreshedValue = value
+				refreshedTTL = ttl
 				return nil
 			},
 		}
@@ -79,6 +84,15 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 		}
 		if delegateCalled {
 			t.Fatal("delegate was called on cache hit")
+		}
+		if got, want := refreshedKey, "access:telegram:42"; got != want {
+			t.Fatalf("Set() key = %q, want %q", got, want)
+		}
+		if got, want := refreshedTTL, time.Minute; got != want {
+			t.Fatalf("Set() ttl = %v, want %v", got, want)
+		}
+		if refreshedValue == "" {
+			t.Fatal("Set() value was empty")
 		}
 	})
 

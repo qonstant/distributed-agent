@@ -64,6 +64,7 @@ func (d *CachedAccessDirectory) FindByTelegramID(ctx context.Context, telegramID
 				if !entry.Found {
 					return access.Record{}, false, nil
 				}
+				d.writeCacheEntry(ctx, key, entry)
 				return entry.Record, true, nil
 			}
 		}
@@ -74,18 +75,28 @@ func (d *CachedAccessDirectory) FindByTelegramID(ctx context.Context, telegramID
 		return access.Record{}, false, err
 	}
 
-	if d.store != nil {
-		entry := cacheEntry{Found: found, Record: record}
-		if payload, marshalErr := json.Marshal(entry); marshalErr == nil {
-			ttl := d.negativeTTL
-			if found {
-				ttl = d.ttl
-			}
-			if ttl > 0 {
-				_ = d.store.Set(ctx, key, string(payload), ttl)
-			}
-		}
-	}
+	d.writeCacheEntry(ctx, key, cacheEntry{Found: found, Record: record})
 
 	return record, found, nil
+}
+
+func (d *CachedAccessDirectory) writeCacheEntry(ctx context.Context, key string, entry cacheEntry) {
+	if d.store == nil {
+		return
+	}
+
+	ttl := d.negativeTTL
+	if entry.Found {
+		ttl = d.ttl
+	}
+	if ttl <= 0 {
+		return
+	}
+
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+
+	_ = d.store.Set(ctx, key, string(payload), ttl)
 }

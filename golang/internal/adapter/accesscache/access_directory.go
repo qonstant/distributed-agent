@@ -61,10 +61,10 @@ func (d *CachedAccessDirectory) FindByTelegramID(ctx context.Context, telegramID
 		if err == nil && found {
 			var entry cacheEntry
 			if json.Unmarshal([]byte(value), &entry) == nil {
+				d.writeCacheEntry(ctx, key, entry)
 				if !entry.Found {
 					return access.Record{}, false, nil
 				}
-				d.writeCacheEntry(ctx, key, entry)
 				return entry.Record, true, nil
 			}
 		}

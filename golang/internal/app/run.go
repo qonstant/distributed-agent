@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/go-telegram/bot"
+	"github.com/qonstant/distributed-agent/internal/adapter/accesscache"
 	"github.com/qonstant/distributed-agent/internal/adapter/localapi"
 	"github.com/qonstant/distributed-agent/internal/adapter/postgres"
 	"github.com/qonstant/distributed-agent/internal/adapter/storage"
@@ -35,7 +36,26 @@ func Run() error {
 	}
 	defer accessDirectory.Close()
 
-	policy := access.NewPolicy(accessDirectory)
+	var directory access.Directory = accessDirectory
+	if cfg.Redis.URL != "" {
+		redisStore, err := accesscache.NewRedisStore(cfg.Redis.URL)
+		if err != nil {
+			log.Printf("Redis access cache warning (continuing without cache): %v", err)
+		} else {
+			defer redisStore.Close()
+			directory = accesscache.NewCachedAccessDirectory(directory, redisStore, accesscache.CachedAccessDirectoryConfig{
+				TTL:         cfg.Redis.AccessCacheTTL,
+				NegativeTTL: cfg.Redis.NegativeCacheTTL,
+			})
+			log.Printf(
+				"Access cache enabled (redis, ttl=%s negative_ttl=%s)",
+				cfg.Redis.AccessCacheTTL,
+				cfg.Redis.NegativeCacheTTL,
+			)
+		}
+	}
+
+	policy := access.NewPolicy(directory)
 
 	s3Store, err := storage.NewS3Store(context.Background(), cfg.S3)
 	if err != nil {

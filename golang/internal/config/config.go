@@ -17,7 +17,14 @@ type Config struct {
 	DocRoot              string
 	SampleAlbumTitle     string
 	SampleAttachmentKeys []string
+	Redis                RedisConfig
 	S3                   S3Config
+}
+
+type RedisConfig struct {
+	URL               string
+	AccessCacheTTL    time.Duration
+	NegativeCacheTTL  time.Duration
 }
 
 type S3Config struct {
@@ -35,10 +42,15 @@ func Load() (Config, error) {
 	cfg := Config{
 		TelegramToken:    strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		DBURL:            strings.TrimSpace(os.Getenv("DB_URL")),
-		LocalAPIURL:      defaultString(os.Getenv("LOCAL_API_URL"), "http://127.0.0.1:8080/query"),
+		LocalAPIURL:      strings.TrimSpace(os.Getenv("LOCAL_API_URL")),
 		DocRoot:          strings.TrimSpace(os.Getenv("DOC_ROOT")),
 		SampleAlbumTitle: defaultString(os.Getenv("SAMPLE_ALBUM_TITLE"), "📄 Residence permit documents"),
 		SampleAttachmentKeys: parseCSV(os.Getenv("SAMPLE_ATTACHMENT_KEYS")),
+		Redis: RedisConfig{
+			URL:              strings.TrimSpace(os.Getenv("REDIS_URL")),
+			AccessCacheTTL:   parseDurationEnv("ACCESS_CACHE_TTL", 5*time.Minute),
+			NegativeCacheTTL: parseDurationEnv("ACCESS_CACHE_NEGATIVE_TTL", time.Minute),
+		},
 		S3: S3Config{
 			Endpoint:        strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
 			AccessKeyID:     strings.TrimSpace(os.Getenv("S3_ACCESS_KEY_ID")),
@@ -61,6 +73,9 @@ func Load() (Config, error) {
 	if cfg.DBURL == "" {
 		return Config{}, fmt.Errorf("DB_URL is missing")
 	}
+	if cfg.LocalAPIURL == "" {
+		return Config{}, fmt.Errorf("LOCAL_API_URL is missing")
+	}
 
 	return cfg, nil
 }
@@ -71,6 +86,18 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func parseDurationEnv(name string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return duration
 }
 
 func parseCSV(value string) []string {

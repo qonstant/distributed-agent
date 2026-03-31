@@ -11,10 +11,12 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/qonstant/distributed-agent/internal/adapter/accesscache"
+	"github.com/qonstant/distributed-agent/internal/adapter/chatmemory"
 	"github.com/qonstant/distributed-agent/internal/adapter/localapi"
 	"github.com/qonstant/distributed-agent/internal/adapter/postgres"
 	"github.com/qonstant/distributed-agent/internal/adapter/storage"
 	telegramadapter "github.com/qonstant/distributed-agent/internal/adapter/telegram"
+	"github.com/qonstant/distributed-agent/internal/application/port"
 	"github.com/qonstant/distributed-agent/internal/application/usecase"
 	"github.com/qonstant/distributed-agent/internal/config"
 	"github.com/qonstant/distributed-agent/internal/domain/access"
@@ -37,6 +39,7 @@ func Run() error {
 	defer accessDirectory.Close()
 
 	var directory access.Directory = accessDirectory
+	var memory port.ConversationMemory
 	if cfg.Redis.URL != "" {
 		redisStore, err := accesscache.NewRedisStore(cfg.Redis.URL)
 		if err != nil {
@@ -51,6 +54,22 @@ func Run() error {
 				"Access cache enabled (redis, ttl=%s negative_ttl=%s)",
 				cfg.Redis.AccessCacheTTL,
 				cfg.Redis.NegativeCacheTTL,
+			)
+		}
+
+		memoryStore, err := chatmemory.NewRedisStore(cfg.Redis.URL)
+		if err != nil {
+			log.Printf("Redis conversation memory warning (continuing without memory): %v", err)
+		} else {
+			defer memoryStore.Close()
+			memory = chatmemory.New(memoryStore, chatmemory.Config{
+				TTL:      cfg.Redis.ConversationMemoryTTL,
+				MaxItems: int64(cfg.Redis.ConversationMemoryMaxItems),
+			})
+			log.Printf(
+				"Conversation memory enabled (redis, ttl=%s max_items=%d)",
+				cfg.Redis.ConversationMemoryTTL,
+				cfg.Redis.ConversationMemoryMaxItems,
 			)
 		}
 	}
@@ -85,6 +104,7 @@ func Run() error {
 			Policy:      policy,
 			Answers:     answerSource,
 			Attachments: resolver,
+			Memory:      memory,
 		},
 		usecase.GetSampleAttachments{
 			Policy:         policy,

@@ -10,11 +10,19 @@ import (
 )
 
 type fakeAnswerSource struct {
-	askFn func(context.Context, qa.Question) (qa.DraftResponse, error)
+	askFn            func(context.Context, qa.Question) (qa.DraftResponse, error)
+	askWithHistoryFn func(context.Context, qa.Question, []qa.ConversationMessage) (qa.DraftResponse, error)
 }
 
 func (f fakeAnswerSource) Ask(ctx context.Context, question qa.Question) (qa.DraftResponse, error) {
 	return f.askFn(ctx, question)
+}
+
+func (f fakeAnswerSource) AskWithHistory(ctx context.Context, question qa.Question, history []qa.ConversationMessage) (qa.DraftResponse, error) {
+	if f.askWithHistoryFn != nil {
+		return f.askWithHistoryFn(ctx, question, history)
+	}
+	return f.Ask(ctx, question)
 }
 
 type fakeAttachmentResolver struct {
@@ -31,6 +39,19 @@ type fakeAccessDirectory struct {
 
 func (f fakeAccessDirectory) FindByTelegramID(ctx context.Context, telegramID int64) (access.Record, bool, error) {
 	return f.findFn(ctx, telegramID)
+}
+
+type fakeConversationMemory struct {
+	contextFn      func(context.Context, int64) (qa.ConversationContext, error)
+	rememberTurnFn func(context.Context, int64, string, string, string) error
+}
+
+func (f fakeConversationMemory) Context(ctx context.Context, ownerID int64) (qa.ConversationContext, error) {
+	return f.contextFn(ctx, ownerID)
+}
+
+func (f fakeConversationMemory) RememberTurn(ctx context.Context, ownerID int64, conversationID, userText, assistantText string) error {
+	return f.rememberTurnFn(ctx, ownerID, conversationID, userText, assistantText)
 }
 
 func TestAskQuestionExecute(t *testing.T) {
@@ -242,6 +263,133 @@ func TestAskQuestionExecute(t *testing.T) {
 		response, err := uc.Execute(context.Background(), authorizedUser, "hello")
 		if !errors.Is(err, wantErr) {
 			t.Fatalf("Execute() error = %v, want %v", err, wantErr)
+		}
+		if got, want := response.Text, "answer"; got != want {
+			t.Fatalf("response.Text = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("passes history to contextual answer source and remembers turn", func(t *testing.T) {
+		t.Parallel()
+
+		history := []qa.ConversationMessage{
+			{Role: qa.ConversationRoleUser, Text: "old question", Timestamp: 1},
+			{Role: qa.ConversationRoleAssistant, Text: "old answer", Timestamp: 2},
+		}
+
+		var remembered struct {
+			ownerID        int64
+			conversationID string
+			userText       string
+			assistantText  string
+		}
+
+		uc := AskQuestion{
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+				},
+			}),
+			Answers: fakeAnswerSource{
+				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
+					t.Fatal("Ask should not be called when AskWithHistory is available")
+					return qa.DraftResponse{}, nil
+				},
+				askWithHistoryFn: func(_ context.Context, question qa.Question, gotHistory []qa.ConversationMessage) (qa.DraftResponse, error) {
+					if got, want := question.Text, "hello"; got != want {
+						t.Fatalf("question.Text = %q, want %q", got, want)
+					}
+					if len(gotHistory) != len(history) {
+						t.Fatalf("len(history) = %d, want %d", len(gotHistory), len(history))
+					}
+					for i := range history {
+						if gotHistory[i] != history[i] {
+							t.Fatalf("history[%d] = %+v, want %+v", i, gotHistory[i], history[i])
+						}
+					}
+					return qa.DraftResponse{Text: "new answer"}, nil
+				},
+			},
+			Attachments: fakeAttachmentResolver{
+				resolveFn: func(context.Context, []qa.AttachmentRef) ([]qa.Attachment, error) {
+					t.Fatal("Resolve should not be called")
+					return nil, nil
+				},
+			},
+			Memory: fakeConversationMemory{
+				contextFn: func(_ context.Context, ownerID int64) (qa.ConversationContext, error) {
+					if got, want := ownerID, authorizedUser.TelegramID; got != want {
+						t.Fatalf("Context() ownerID = %d, want %d", got, want)
+					}
+					return qa.ConversationContext{
+						ID:       "conv-1",
+						Messages: history,
+					}, nil
+				},
+				rememberTurnFn: func(_ context.Context, ownerID int64, conversationID, userText, assistantText string) error {
+					remembered.ownerID = ownerID
+					remembered.conversationID = conversationID
+					remembered.userText = userText
+					remembered.assistantText = assistantText
+					return nil
+				},
+			},
+		}
+
+		response, err := uc.Execute(context.Background(), authorizedUser, "hello")
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if got, want := response.Text, "new answer"; got != want {
+			t.Fatalf("response.Text = %q, want %q", got, want)
+		}
+		if got, want := remembered.ownerID, authorizedUser.TelegramID; got != want {
+			t.Fatalf("remembered.ownerID = %d, want %d", got, want)
+		}
+		if got, want := remembered.conversationID, "conv-1"; got != want {
+			t.Fatalf("remembered.conversationID = %q, want %q", got, want)
+		}
+		if got, want := remembered.userText, "hello"; got != want {
+			t.Fatalf("remembered.userText = %q, want %q", got, want)
+		}
+		if got, want := remembered.assistantText, "new answer"; got != want {
+			t.Fatalf("remembered.assistantText = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("continues when conversation memory is unavailable", func(t *testing.T) {
+		t.Parallel()
+
+		uc := AskQuestion{
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+				},
+			}),
+			Answers: fakeAnswerSource{
+				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
+					return qa.DraftResponse{Text: "answer"}, nil
+				},
+			},
+			Attachments: fakeAttachmentResolver{
+				resolveFn: func(context.Context, []qa.AttachmentRef) ([]qa.Attachment, error) {
+					t.Fatal("Resolve should not be called")
+					return nil, nil
+				},
+			},
+			Memory: fakeConversationMemory{
+				contextFn: func(context.Context, int64) (qa.ConversationContext, error) {
+					return qa.ConversationContext{}, errors.New("redis unavailable")
+				},
+				rememberTurnFn: func(context.Context, int64, string, string, string) error {
+					return errors.New("redis unavailable")
+				},
+			},
+		}
+
+		response, err := uc.Execute(context.Background(), authorizedUser, "hello")
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
 		}
 		if got, want := response.Text, "answer"; got != want {
 			t.Fatalf("response.Text = %q, want %q", got, want)

@@ -111,7 +111,7 @@ class QueryServiceTests(unittest.TestCase):
             QueryResult(
                 answer=(
                     "Use this sample.\n\n"
-                    "I already sent this file earlier in the conversation: docs/application.pdf. "
+                    "I already sent this file earlier in the conversation: application.pdf. "
                     "You can find it above in the chat. If you want, I can resend it."
                 ),
                 file=None,

@@ -93,6 +93,22 @@ def _duplicate_file_note(file_label: str, language: str) -> str:
     )
 
 
+def _attachment_display_label(
+    attachment: Optional[ConversationAttachment],
+    file_chosen: Optional[str],
+) -> str:
+    if attachment is not None:
+        name = (attachment.name or "").strip()
+        if name:
+            return name
+
+        source = (attachment.source or "").strip()
+        if source:
+            return _basename(source)
+
+    return _basename(file_chosen or "")
+
+
 def _merge_answer_with_duplicate_note(answer: str, note: str) -> str:
     base = (answer or "").strip()
     if not base:
@@ -199,7 +215,7 @@ class QueryService:
 
             previous_attachment = _find_previously_sent_attachment(history, file_chosen)
             if previous_attachment and not _looks_like_resend_request(normalized_query):
-                file_label = (previous_attachment.source or file_chosen or previous_attachment.name).strip()
+                file_label = _attachment_display_label(previous_attachment, file_chosen)
                 answer = _merge_answer_with_duplicate_note(
                     answer,
                     _duplicate_file_note(file_label, language),

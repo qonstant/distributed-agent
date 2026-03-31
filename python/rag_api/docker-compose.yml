@@ -4,12 +4,12 @@ services:
   rag-api:
     image: rag:latest
     container_name: rag-container
-    ports:
-      - "127.0.0.1:8080:8000"
+    command: ["uvicorn", "rag_api:app", "--host", "127.0.0.1", "--port", "8080", "--workers", "1"]
     env_file:
       - .env
     volumes:
       - rag_out:/app/out
+    network_mode: "host"
     restart: unless-stopped
 
 volumes:

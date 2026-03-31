@@ -12,9 +12,13 @@ import (
 func TestGetStartMessageExecute(t *testing.T) {
 	t.Parallel()
 
-	uc := GetStartMessage{Policy: access.NewPolicy("allowed")}
+	uc := GetStartMessage{Policy: access.NewPolicy(fakeAccessDirectory{
+		findFn: func(context.Context, int64) (access.Record, bool, error) {
+			return access.Record{TelegramID: 42, HasAccess: true}, true, nil
+		},
+	})}
 
-	text, err := uc.Execute(access.User{Username: "allowed"})
+	text, err := uc.Execute(context.Background(), access.User{TelegramID: 42, Username: "allowed"})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -26,8 +30,12 @@ func TestGetStartMessageExecute(t *testing.T) {
 func TestGetHelpMessageExecuteRejectsUnauthorizedUser(t *testing.T) {
 	t.Parallel()
 
-	uc := GetHelpMessage{Policy: access.NewPolicy("allowed")}
-	_, err := uc.Execute(access.User{Username: "denied"})
+	uc := GetHelpMessage{Policy: access.NewPolicy(fakeAccessDirectory{
+		findFn: func(context.Context, int64) (access.Record, bool, error) {
+			return access.Record{}, false, nil
+		},
+	})}
+	_, err := uc.Execute(context.Background(), access.User{TelegramID: 77, Username: "denied"})
 	if !errors.Is(err, access.ErrUnauthorized) {
 		t.Fatalf("Execute() error = %v, want %v", err, access.ErrUnauthorized)
 	}
@@ -40,7 +48,11 @@ func TestGetSampleAttachmentsExecute(t *testing.T) {
 	wantAttachments := []qa.Attachment{{Name: "photo.png", Kind: qa.AttachmentPhoto, Content: []byte("img")}}
 
 	uc := GetSampleAttachments{
-		Policy:         access.NewPolicy("allowed"),
+		Policy: access.NewPolicy(fakeAccessDirectory{
+			findFn: func(context.Context, int64) (access.Record, bool, error) {
+				return access.Record{TelegramID: 42, HasAccess: true}, true, nil
+			},
+		}),
 		AttachmentRefs: refs,
 		Attachments: fakeAttachmentResolver{
 			resolveFn: func(_ context.Context, gotRefs []qa.AttachmentRef) ([]qa.Attachment, error) {
@@ -53,7 +65,7 @@ func TestGetSampleAttachmentsExecute(t *testing.T) {
 		Title: "Album title",
 	}
 
-	response, err := uc.Execute(context.Background(), access.User{Username: "allowed"})
+	response, err := uc.Execute(context.Background(), access.User{TelegramID: 42, Username: "allowed"})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}

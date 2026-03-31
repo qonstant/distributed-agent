@@ -16,7 +16,7 @@ type GetSampleAttachments struct {
 }
 
 func (uc GetSampleAttachments) Execute(ctx context.Context, user access.User) (qa.Response, error) {
-	if err := uc.Policy.Authorize(user); err != nil {
+	if err := uc.Policy.Authorize(ctx, user); err != nil {
 		return qa.Response{}, err
 	}
 

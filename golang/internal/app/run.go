@@ -10,9 +10,13 @@ import (
 	"syscall"
 
 	"github.com/go-telegram/bot"
+	"github.com/qonstant/distributed-agent/internal/adapter/accesscache"
+	"github.com/qonstant/distributed-agent/internal/adapter/chatmemory"
 	"github.com/qonstant/distributed-agent/internal/adapter/localapi"
+	"github.com/qonstant/distributed-agent/internal/adapter/postgres"
 	"github.com/qonstant/distributed-agent/internal/adapter/storage"
 	telegramadapter "github.com/qonstant/distributed-agent/internal/adapter/telegram"
+	"github.com/qonstant/distributed-agent/internal/application/port"
 	"github.com/qonstant/distributed-agent/internal/application/usecase"
 	"github.com/qonstant/distributed-agent/internal/config"
 	"github.com/qonstant/distributed-agent/internal/domain/access"
@@ -28,7 +32,49 @@ func Run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	policy := access.NewPolicy(cfg.AllowedUsername)
+	accessDirectory, err := postgres.NewAccessDirectory(cfg.DBURL)
+	if err != nil {
+		return fmt.Errorf("failed to initialize access directory: %w", err)
+	}
+	defer accessDirectory.Close()
+
+	var directory access.Directory = accessDirectory
+	var memory port.ConversationMemory
+	if cfg.Redis.URL != "" {
+		redisStore, err := accesscache.NewRedisStore(cfg.Redis.URL)
+		if err != nil {
+			log.Printf("Redis access cache warning (continuing without cache): %v", err)
+		} else {
+			defer redisStore.Close()
+			directory = accesscache.NewCachedAccessDirectory(directory, redisStore, accesscache.CachedAccessDirectoryConfig{
+				TTL:         cfg.Redis.AccessCacheTTL,
+				NegativeTTL: cfg.Redis.NegativeCacheTTL,
+			})
+			log.Printf(
+				"Access cache enabled (redis, ttl=%s negative_ttl=%s)",
+				cfg.Redis.AccessCacheTTL,
+				cfg.Redis.NegativeCacheTTL,
+			)
+		}
+
+		memoryStore, err := chatmemory.NewRedisStore(cfg.Redis.URL)
+		if err != nil {
+			log.Printf("Redis conversation memory warning (continuing without memory): %v", err)
+		} else {
+			defer memoryStore.Close()
+			memory = chatmemory.New(memoryStore, chatmemory.Config{
+				TTL:      cfg.Redis.ConversationMemoryTTL,
+				MaxItems: int64(cfg.Redis.ConversationMemoryMaxItems),
+			})
+			log.Printf(
+				"Conversation memory enabled (redis, ttl=%s max_items=%d)",
+				cfg.Redis.ConversationMemoryTTL,
+				cfg.Redis.ConversationMemoryMaxItems,
+			)
+		}
+	}
+
+	policy := access.NewPolicy(directory)
 
 	s3Store, err := storage.NewS3Store(context.Background(), cfg.S3)
 	if err != nil {
@@ -58,6 +104,7 @@ func Run() error {
 			Policy:      policy,
 			Answers:     answerSource,
 			Attachments: resolver,
+			Memory:      memory,
 		},
 		usecase.GetSampleAttachments{
 			Policy:         policy,
@@ -66,10 +113,7 @@ func Run() error {
 			Title:          cfg.SampleAlbumTitle,
 		},
 		presenter,
-		fmt.Sprintf(
-			"This bot accepts requests only with subscription.\n\nTo request access, please message @%s.",
-			policy.AllowedUsername(),
-		),
+		"This bot accepts requests only for users with active access.\n\nPlease contact an administrator to request access.",
 	)
 
 	b, err := bot.New(cfg.TelegramToken, bot.WithDefaultHandler(handlers.HandleDefault))
@@ -79,7 +123,7 @@ func Run() error {
 
 	handlers.Register(b)
 
-	log.Printf("Bot started (only answering username: @%s)", policy.AllowedUsername())
+	log.Printf("Bot started (access control: %s)", policy.AccessMode())
 	go b.Start(ctx)
 
 	<-ctx.Done()

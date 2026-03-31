@@ -42,6 +42,7 @@ class ArtifactsTests(unittest.TestCase):
     def make_settings(self, out_dir: Path, *, release_prefix: str | None = None) -> Settings:
         return Settings(
             openai_api_key="test-key",
+            redis_url=None,
             s3_endpoint="s3.example.internal",
             s3_access_key="key",
             s3_secret="secret",

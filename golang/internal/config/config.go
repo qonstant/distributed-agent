@@ -12,12 +12,21 @@ import (
 
 type Config struct {
 	TelegramToken        string
-	AllowedUsername      string
+	DBURL                string
 	LocalAPIURL          string
 	DocRoot              string
 	SampleAlbumTitle     string
 	SampleAttachmentKeys []string
+	Redis                RedisConfig
 	S3                   S3Config
+}
+
+type RedisConfig struct {
+	URL                        string
+	AccessCacheTTL             time.Duration
+	NegativeCacheTTL           time.Duration
+	ConversationMemoryTTL      time.Duration
+	ConversationMemoryMaxItems int
 }
 
 type S3Config struct {
@@ -33,12 +42,19 @@ func Load() (Config, error) {
 	_ = godotenv.Load(".env", "golang/.env")
 
 	cfg := Config{
-		TelegramToken:    strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
-		AllowedUsername:  normalizeUsername(defaultString(os.Getenv("ALLOWED_USERNAME"), "chupapimunyao")),
-		LocalAPIURL:      defaultString(os.Getenv("LOCAL_API_URL"), "http://127.0.0.1:8080/query"),
-		DocRoot:          strings.TrimSpace(os.Getenv("DOC_ROOT")),
-		SampleAlbumTitle: defaultString(os.Getenv("SAMPLE_ALBUM_TITLE"), "📄 Residence permit documents"),
+		TelegramToken:        strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
+		DBURL:                strings.TrimSpace(os.Getenv("DB_URL")),
+		LocalAPIURL:          strings.TrimSpace(os.Getenv("LOCAL_API_URL")),
+		DocRoot:              strings.TrimSpace(os.Getenv("DOC_ROOT")),
+		SampleAlbumTitle:     defaultString(os.Getenv("SAMPLE_ALBUM_TITLE"), "📄 Residence permit documents"),
 		SampleAttachmentKeys: parseCSV(os.Getenv("SAMPLE_ATTACHMENT_KEYS")),
+		Redis: RedisConfig{
+			URL:                        strings.TrimSpace(os.Getenv("REDIS_URL")),
+			AccessCacheTTL:             parseDurationEnv("ACCESS_CACHE_TTL", 5*time.Minute),
+			NegativeCacheTTL:           parseDurationEnv("ACCESS_CACHE_NEGATIVE_TTL", time.Minute),
+			ConversationMemoryTTL:      parseDurationEnv("CONVERSATION_MEMORY_TTL", 2*time.Hour),
+			ConversationMemoryMaxItems: parseIntEnv("CONVERSATION_MEMORY_MAX_ITEMS", 8),
+		},
 		S3: S3Config{
 			Endpoint:        strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
 			AccessKeyID:     strings.TrimSpace(os.Getenv("S3_ACCESS_KEY_ID")),
@@ -58,6 +74,12 @@ func Load() (Config, error) {
 	if cfg.TelegramToken == "" {
 		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is missing")
 	}
+	if cfg.DBURL == "" {
+		return Config{}, fmt.Errorf("DB_URL is missing")
+	}
+	if cfg.LocalAPIURL == "" {
+		return Config{}, fmt.Errorf("LOCAL_API_URL is missing")
+	}
 
 	return cfg, nil
 }
@@ -70,8 +92,30 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
-func normalizeUsername(value string) string {
-	return strings.TrimPrefix(strings.TrimSpace(value), "@")
+func parseDurationEnv(name string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return duration
+}
+
+func parseIntEnv(name string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+
+	return parsed
 }
 
 func parseCSV(value string) []string {

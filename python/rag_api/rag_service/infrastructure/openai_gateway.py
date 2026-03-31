@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from openai import OpenAI
 
-from rag_service.domain.models import Classification, normalize_intent
+from rag_service.domain.models import Classification, ConversationMessage, normalize_intent
 from rag_service.infrastructure.config import Settings
 
 
@@ -25,9 +25,14 @@ class OpenAIGateway:
             raise RuntimeError("Failed to parse embedding response")
         return np.array(embedding, dtype=np.float32)
 
-    def classify_query(self, query: str) -> Classification:
+    def classify_query(
+        self,
+        query: str,
+        history: Optional[List[ConversationMessage]] = None,
+    ) -> Classification:
+        history_block = self._history_block(history)
         prompt = (
-            "You are a compact intent classifier and language detector. Given the user's single input below, "
+            "You are a compact intent classifier and language detector. Given the user's latest input and optional recent conversation context below, "
             "return a JSON object with EXACTLY three keys:\n"
             " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"GUIDANCE\",\"DOCUMENT_REQUEST\",\"OTHER\"]\n"
             " - \"explain\": one short sentence explaining why\n"
@@ -41,7 +46,8 @@ class OpenAIGateway:
             " - OTHER: none of the above\n\n"
             "Respond ONLY with valid JSON (no extra text). Example:\n"
             "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for residency\",\"language\":\"ru\"}\n\n"
-            f"User input: {json.dumps(query)}\n"
+            f"{history_block}"
+            f"Latest user input: {json.dumps(query)}\n"
         )
         try:
             response = self._client.responses.create(
@@ -65,13 +71,20 @@ class OpenAIGateway:
             print("[classify] classifier error:", exc)
             return Classification(intent="OTHER", explain=f"classifier error: {exc}", language="")
 
-    def generate_greeting_reply(self, user_text: str, language_hint: str) -> str:
+    def generate_greeting_reply(
+        self,
+        user_text: str,
+        language_hint: str,
+        history: Optional[List[ConversationMessage]] = None,
+    ) -> str:
         lang_instruction = (
             f"in {language_hint}"
             if language_hint
             else "in the same language as the user"
         )
+        history_block = self._history_block(history)
         prompt = (
+            f"{history_block}"
             f"The user wrote: {json.dumps(user_text)}\n\n"
             f"Produce a single short friendly reply ({lang_instruction}). Keep it to one short sentence (<=20 words). "
             "Do NOT include file paths or any extra commentary. Return only the reply text."
@@ -95,15 +108,22 @@ class OpenAIGateway:
             print("[greeting] generation failed:", exc)
             return "Hi — how can I help you today?"
 
-    def answer_factual(self, query: str, language_hint: str) -> str:
+    def answer_factual(
+        self,
+        query: str,
+        language_hint: str,
+        history: Optional[List[ConversationMessage]] = None,
+    ) -> str:
         lang_instruction = (
             f"Answer in {language_hint}."
             if language_hint
             else "Answer in the same language as the user."
         )
+        history_block = self._history_block(history)
         prompt = (
+            f"{history_block}"
             f"You are a concise helpful assistant. {lang_instruction} "
-            "Answer the user question briefly (1-2 short paragraphs). Do NOT include any file paths or suggest internal document locations.\n\n"
+            "Answer the user question briefly (1-2 short paragraphs). Use recent conversation context when it is relevant. Do NOT include any file paths or suggest internal document locations.\n\n"
             f"Question: {query}\n\nAnswer:"
         )
         try:
@@ -117,6 +137,39 @@ class OpenAIGateway:
         except Exception as exc:
             print("[factual] LLM error:", exc)
             return f"(LLM error: {exc})"
+
+    def rewrite_query_with_history(
+        self,
+        query: str,
+        history: Optional[List[ConversationMessage]] = None,
+    ) -> str:
+        if not history:
+            return query
+
+        history_block = self._history_block(history)
+        prompt = (
+            "Rewrite the latest user message into a standalone search query for document retrieval. "
+            "Use the recent conversation only to resolve references like 'it', 'that form', 'the previous one'. "
+            "If the latest user message is already standalone, return it unchanged. Return plain text only.\n\n"
+            f"{history_block}"
+            f"Latest user message: {json.dumps(query)}\n"
+            "Standalone query:"
+        )
+        try:
+            response = self._client.responses.create(
+                model=self._settings.class_model,
+                input=prompt,
+                max_output_tokens=120,
+                temperature=0.0,
+            )
+            text = self._resp_to_text(response).strip().strip("` \n")
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped:
+                    return stripped
+        except Exception as exc:
+            print("[rewrite] query rewrite failed:", exc)
+        return query
 
     def generate_json_response(self, prompt: str, max_tokens: int = 512) -> Optional[Dict[str, Any]]:
         try:
@@ -186,3 +239,14 @@ class OpenAIGateway:
             return json.dumps(resp, default=str)
         except Exception:
             return str(resp)
+
+    @staticmethod
+    def _history_block(history: Optional[List[ConversationMessage]]) -> str:
+        if not history:
+            return ""
+
+        lines = ["Recent conversation context (oldest to newest):"]
+        for message in history:
+            lines.append(f"{message.role}: {message.text}")
+        lines.append("")
+        return "\n".join(lines) + "\n"

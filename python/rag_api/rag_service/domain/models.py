@@ -35,6 +35,13 @@ class RetrievedHit:
 
 
 @dataclass(frozen=True)
+class ConversationMessage:
+    role: str
+    text: str
+    ts: int = 0
+
+
+@dataclass(frozen=True)
 class QueryResult:
     answer: str
     file: Optional[str]

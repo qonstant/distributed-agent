@@ -12,10 +12,11 @@ type AskQuestion struct {
 	Policy      access.Policy
 	Answers     port.AnswerSource
 	Attachments port.AttachmentResolver
+	Memory      port.ConversationMemory
 }
 
 func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string) (qa.Response, error) {
-	if err := uc.Policy.Authorize(user); err != nil {
+	if err := uc.Policy.Authorize(ctx, user); err != nil {
 		return qa.Response{}, err
 	}
 
@@ -24,9 +25,20 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		return qa.Response{}, err
 	}
 
-	draft, err := uc.Answers.Ask(ctx, question)
+	conversation := qa.ConversationContext{}
+	if uc.Memory != nil {
+		if loaded, err := uc.Memory.Context(ctx, user.TelegramID); err == nil {
+			conversation = loaded
+		}
+	}
+
+	draft, err := askDraft(ctx, uc.Answers, question, conversation.ID)
 	if err != nil {
 		return qa.Response{}, err
+	}
+
+	if uc.Memory != nil {
+		_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text)
 	}
 
 	response := qa.Response{Text: draft.Text}
@@ -41,4 +53,17 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 
 	response.Attachments = attachments
 	return response, nil
+}
+
+func askDraft(
+	ctx context.Context,
+	answers port.AnswerSource,
+	question qa.Question,
+	conversationID string,
+) (qa.DraftResponse, error) {
+	if contextual, ok := answers.(port.ConversationAwareAnswerSource); ok {
+		return contextual.AskWithConversation(ctx, question, conversationID)
+	}
+
+	return answers.Ask(ctx, question)
 }

@@ -18,6 +18,11 @@ type Client struct {
 	httpClient *http.Client
 }
 
+type queryRequest struct {
+	Query          string `json:"query"`
+	ConversationID string `json:"conversation_id,omitempty"`
+}
+
 func NewClient(apiURL string) *Client {
 	return &Client{
 		apiURL: apiURL,
@@ -28,7 +33,18 @@ func NewClient(apiURL string) *Client {
 }
 
 func (c *Client) Ask(ctx context.Context, question qa.Question) (qa.DraftResponse, error) {
-	body := map[string]string{"query": question.Text}
+	return c.ask(ctx, question, "")
+}
+
+func (c *Client) AskWithConversation(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
+	return c.ask(ctx, question, conversationID)
+}
+
+func (c *Client) ask(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
+	body := queryRequest{
+		Query:          question.Text,
+		ConversationID: strings.TrimSpace(conversationID),
+	}
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return qa.DraftResponse{}, fmt.Errorf("marshal query: %w", err)

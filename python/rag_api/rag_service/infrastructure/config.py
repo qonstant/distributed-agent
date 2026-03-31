@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 @dataclass(frozen=True)
 class Settings:
     openai_api_key: str
+    redis_url: Optional[str]
     s3_endpoint: Optional[str]
     s3_access_key: Optional[str]
     s3_secret: Optional[str]
@@ -25,6 +26,8 @@ class Settings:
     embed_model: str = "text-embedding-3-small"
     llm_model: str = "gpt-4o-mini"
     class_model: str = "gpt-4o-mini"
+    conversation_key_prefix: str = "chat:conv:"
+    conversation_max_items: int = 8
 
 
 def load_settings() -> Settings:
@@ -43,9 +46,15 @@ def load_settings() -> Settings:
 
     llm_model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     class_model = os.getenv("CLASS_MODEL", llm_model)
+    conversation_max_items_raw = os.getenv("CONVERSATION_MEMORY_MAX_ITEMS", "8")
+    try:
+        conversation_max_items = max(1, int(conversation_max_items_raw))
+    except ValueError:
+        conversation_max_items = 8
 
     return Settings(
         openai_api_key=openai_api_key,
+        redis_url=os.getenv("REDIS_URL"),
         s3_endpoint=os.getenv("S3_ENDPOINT"),
         s3_access_key=os.getenv("S3_ACCESS_KEY_ID") or os.getenv("S3_ACCESS_KEY"),
         s3_secret=os.getenv("S3_SECRET_ACCESS_KEY") or os.getenv("S3_SECRET"),
@@ -59,4 +68,6 @@ def load_settings() -> Settings:
         optional_artifacts=["embeddings.npy", "ids.npy", "chunks.jsonl", "manifest.json"],
         llm_model=llm_model,
         class_model=class_model,
+        conversation_key_prefix=os.getenv("CONVERSATION_MEMORY_KEY_PREFIX", "chat:conv:"),
+        conversation_max_items=conversation_max_items,
     )

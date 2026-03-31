@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
-from rag_service.domain.models import RetrievedHit
+from rag_service.domain.models import ConversationMessage, RetrievedHit
 
 
 def _excerpt_from_hit(hit: RetrievedHit) -> str:
@@ -10,15 +10,38 @@ def _excerpt_from_hit(hit: RetrievedHit) -> str:
     return text[:1600].replace("\n", " ").strip()
 
 
-def prepare_document_request_prompt(query: str, top_chunks: List[RetrievedHit]) -> str:
+def _history_lines(history: Optional[List[ConversationMessage]]) -> List[str]:
+    if not history:
+        return []
+
+    lines = [
+        "Recent conversation context (oldest to newest). Use it only to resolve references in the latest query.",
+        "",
+    ]
+    for message in history:
+        lines.append(f"{message.role}: {message.text}")
+    lines.append("")
+    return lines
+
+
+def prepare_document_request_prompt(
+    query: str,
+    top_chunks: List[RetrievedHit],
+    history: Optional[List[ConversationMessage]] = None,
+) -> str:
     lines = [
         "You are a strict document retriever. Use ONLY the excerpts below; do NOT invent or generalize beyond them.",
         "User query:",
         query,
         "",
+    ]
+    lines.extend(_history_lines(history))
+    lines.extend(
+        [
         "Below are document excerpts (file + page + excerpt). If one of the documents is the requested template or sample, choose it.",
         "",
-    ]
+        ]
+    )
     for index, hit in enumerate(top_chunks, start=1):
         source_file = hit.meta.get("source_file") or hit.meta.get("filename") or "unknown"
         page = hit.meta.get("page")
@@ -38,15 +61,24 @@ def prepare_document_request_prompt(query: str, top_chunks: List[RetrievedHit]) 
     return "\n".join(lines)
 
 
-def prepare_guidance_prompt(query: str, top_chunks: List[RetrievedHit]) -> str:
+def prepare_guidance_prompt(
+    query: str,
+    top_chunks: List[RetrievedHit],
+    history: Optional[List[ConversationMessage]] = None,
+) -> str:
     lines = [
         "You are an assistant that gives practical guidance using ONLY the provided document excerpts. Do NOT invent facts.",
         "User query:",
         query,
         "",
+    ]
+    lines.extend(_history_lines(history))
+    lines.extend(
+        [
         "Here are top document excerpts (file + page + excerpt):",
         "",
-    ]
+        ]
+    )
     for index, hit in enumerate(top_chunks, start=1):
         source_file = hit.meta.get("source_file") or hit.meta.get("filename") or "unknown"
         page = hit.meta.get("page")

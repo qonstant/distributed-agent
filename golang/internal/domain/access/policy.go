@@ -1,27 +1,40 @@
 package access
 
-import "strings"
+import (
+	"context"
+	"strings"
+	"time"
+)
 
 type Policy struct {
-	allowedUsername string
+	directory Directory
+	now       func() time.Time
 }
 
-func NewPolicy(allowedUsername string) Policy {
-	return Policy{allowedUsername: normalizeUsername(allowedUsername)}
+func NewPolicy(directory Directory) Policy {
+	return Policy{
+		directory: directory,
+		now:       time.Now,
+	}
 }
 
-func (p Policy) Authorize(user User) error {
-	if normalizeUsername(user.Username) == "" {
+func (p Policy) Authorize(ctx context.Context, user User) error {
+	if user.TelegramID == 0 {
 		return ErrUnauthorized
 	}
-	if !strings.EqualFold(normalizeUsername(user.Username), p.allowedUsername) {
+
+	record, found, err := p.directory.FindByTelegramID(ctx, user.TelegramID)
+	if err != nil {
+		return err
+	}
+	if !found || !record.Allows(p.now()) {
 		return ErrUnauthorized
 	}
 	return nil
 }
 
-func (p Policy) AllowedUsername() string {
-	return p.allowedUsername
+func (p Policy) AccessMode() string {
+	return "users table"
 }
 
 func normalizeUsername(value string) string {

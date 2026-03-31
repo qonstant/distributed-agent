@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from rag_service.domain.models import QueryResult, RetrievedHit
-from rag_service.infrastructure.openai_gateway import OpenAIGateway
+from rag_service.domain.models import ConversationMessage, QueryResult, RetrievedHit
 from rag_service.infrastructure.prompts import (
     prepare_document_request_prompt,
     prepare_guidance_prompt,
 )
+
+if TYPE_CHECKING:
+    from rag_service.infrastructure.openai_gateway import OpenAIGateway
 
 
 def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Optional[RetrievedHit]]:
@@ -26,13 +28,15 @@ def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Opti
 
 
 class QueryService:
-    def __init__(self, gateway: OpenAIGateway, store) -> None:
+    def __init__(self, gateway: "OpenAIGateway", store, conversation_memory=None) -> None:
         self._gateway = gateway
         self._store = store
+        self._conversation_memory = conversation_memory
 
     def handle_query(
         self,
         query: str,
+        conversation_id: Optional[str] = None,
         raw_k: Optional[int] = None,
         top_for_llm: Optional[int] = None,
     ) -> QueryResult:
@@ -40,7 +44,8 @@ class QueryService:
         if not normalized_query:
             raise ValueError("query is empty")
 
-        classification = self._gateway.classify_query(normalized_query)
+        history = self._load_history(conversation_id)
+        classification = self._gateway.classify_query(normalized_query, history=history)
         intent = classification.intent
         language = classification.language or ""
         print(
@@ -49,16 +54,20 @@ class QueryService:
         )
 
         if intent in ("GREETING", "CHIT_CHAT"):
-            greeting = self._gateway.generate_greeting_reply(normalized_query, language)
+            greeting = self._gateway.generate_greeting_reply(normalized_query, language, history=history)
             return QueryResult(answer=greeting, file=None)
 
         if intent == "FACTUAL_QUESTION":
-            answer = self._gateway.answer_factual(normalized_query, language)
+            answer = self._gateway.answer_factual(normalized_query, language, history=history)
             return QueryResult(answer=answer, file=None)
 
         if intent in ("GUIDANCE", "DOCUMENT_REQUEST"):
+            retrieval_query = normalized_query
+            if history:
+                retrieval_query = self._gateway.rewrite_query_with_history(normalized_query, history)
+
             try:
-                query_embedding = self._gateway.embed_text(normalized_query)
+                query_embedding = self._gateway.embed_text(retrieval_query)
             except Exception as exc:  # pragma: no cover - exercised through API behavior
                 raise RuntimeError(f"embedding failed: {exc}") from exc
 
@@ -78,9 +87,9 @@ class QueryService:
             top_chunks = results[:top_n]
 
             if intent == "DOCUMENT_REQUEST":
-                prompt = prepare_document_request_prompt(normalized_query, top_chunks)
+                prompt = prepare_document_request_prompt(normalized_query, top_chunks, history=history)
             else:
-                prompt = prepare_guidance_prompt(normalized_query, top_chunks)
+                prompt = prepare_guidance_prompt(normalized_query, top_chunks, history=history)
 
             if language:
                 prompt = f"Answer in the same language as detected: {language}\n\n" + prompt
@@ -115,5 +124,16 @@ class QueryService:
 
             return QueryResult(answer=answer, file=file_chosen)
 
-        answer = self._gateway.answer_factual(normalized_query, language)
+        answer = self._gateway.answer_factual(normalized_query, language, history=history)
         return QueryResult(answer=answer, file=None)
+
+    def _load_history(self, conversation_id: Optional[str]) -> List[ConversationMessage]:
+        if not conversation_id or self._conversation_memory is None:
+            return []
+
+        history = self._conversation_memory.load_messages(conversation_id)
+        if history:
+            print(
+                f"[memory] loaded {len(history)} messages for conversation_id={conversation_id}"
+            )
+        return history

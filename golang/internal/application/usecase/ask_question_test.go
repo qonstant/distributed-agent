@@ -10,17 +10,17 @@ import (
 )
 
 type fakeAnswerSource struct {
-	askFn            func(context.Context, qa.Question) (qa.DraftResponse, error)
-	askWithHistoryFn func(context.Context, qa.Question, []qa.ConversationMessage) (qa.DraftResponse, error)
+	askFn                 func(context.Context, qa.Question) (qa.DraftResponse, error)
+	askWithConversationFn func(context.Context, qa.Question, string) (qa.DraftResponse, error)
 }
 
 func (f fakeAnswerSource) Ask(ctx context.Context, question qa.Question) (qa.DraftResponse, error) {
 	return f.askFn(ctx, question)
 }
 
-func (f fakeAnswerSource) AskWithHistory(ctx context.Context, question qa.Question, history []qa.ConversationMessage) (qa.DraftResponse, error) {
-	if f.askWithHistoryFn != nil {
-		return f.askWithHistoryFn(ctx, question, history)
+func (f fakeAnswerSource) AskWithConversation(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
+	if f.askWithConversationFn != nil {
+		return f.askWithConversationFn(ctx, question, conversationID)
 	}
 	return f.Ask(ctx, question)
 }
@@ -269,13 +269,8 @@ func TestAskQuestionExecute(t *testing.T) {
 		}
 	})
 
-	t.Run("passes history to contextual answer source and remembers turn", func(t *testing.T) {
+	t.Run("passes conversation id to answer source and remembers turn", func(t *testing.T) {
 		t.Parallel()
-
-		history := []qa.ConversationMessage{
-			{Role: qa.ConversationRoleUser, Text: "old question", Timestamp: 1},
-			{Role: qa.ConversationRoleAssistant, Text: "old answer", Timestamp: 2},
-		}
 
 		var remembered struct {
 			ownerID        int64
@@ -292,20 +287,15 @@ func TestAskQuestionExecute(t *testing.T) {
 			}),
 			Answers: fakeAnswerSource{
 				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
-					t.Fatal("Ask should not be called when AskWithHistory is available")
+					t.Fatal("Ask should not be called when AskWithConversation is available")
 					return qa.DraftResponse{}, nil
 				},
-				askWithHistoryFn: func(_ context.Context, question qa.Question, gotHistory []qa.ConversationMessage) (qa.DraftResponse, error) {
+				askWithConversationFn: func(_ context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
 					if got, want := question.Text, "hello"; got != want {
 						t.Fatalf("question.Text = %q, want %q", got, want)
 					}
-					if len(gotHistory) != len(history) {
-						t.Fatalf("len(history) = %d, want %d", len(gotHistory), len(history))
-					}
-					for i := range history {
-						if gotHistory[i] != history[i] {
-							t.Fatalf("history[%d] = %+v, want %+v", i, gotHistory[i], history[i])
-						}
+					if got, want := conversationID, "conv-1"; got != want {
+						t.Fatalf("conversationID = %q, want %q", got, want)
 					}
 					return qa.DraftResponse{Text: "new answer"}, nil
 				},
@@ -321,10 +311,7 @@ func TestAskQuestionExecute(t *testing.T) {
 					if got, want := ownerID, authorizedUser.TelegramID; got != want {
 						t.Fatalf("Context() ownerID = %d, want %d", got, want)
 					}
-					return qa.ConversationContext{
-						ID:       "conv-1",
-						Messages: history,
-					}, nil
+					return qa.ConversationContext{ID: "conv-1"}, nil
 				},
 				rememberTurnFn: func(_ context.Context, ownerID int64, conversationID, userText, assistantText string) error {
 					remembered.ownerID = ownerID

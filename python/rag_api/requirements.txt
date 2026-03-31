@@ -7,3 +7,4 @@ openai
 pydantic
 PyYAML
 boto3
+redis

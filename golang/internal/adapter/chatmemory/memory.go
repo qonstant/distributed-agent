@@ -15,7 +15,6 @@ type Store interface {
 	Get(ctx context.Context, key string) (string, bool, error)
 	Set(ctx context.Context, key, value string, ttl time.Duration) error
 	Exists(ctx context.Context, key string) (bool, error)
-	LRange(ctx context.Context, key string, start, stop int64) ([]string, error)
 	AppendConversationTurn(ctx context.Context, key, userPayload, assistantPayload string, maxItems int64, ttl time.Duration) error
 }
 
@@ -85,15 +84,7 @@ func (m *Memory) Context(ctx context.Context, ownerID int64) (qa.ConversationCon
 		return qa.ConversationContext{ID: m.newConversationID(ownerID)}, nil
 	}
 
-	payloads, err := m.store.LRange(ctx, messagesKey, 0, m.maxItems-1)
-	if err != nil {
-		return qa.ConversationContext{}, err
-	}
-
-	return qa.ConversationContext{
-		ID:       conversationID,
-		Messages: decodeMessages(payloads),
-	}, nil
+	return qa.ConversationContext{ID: conversationID}, nil
 }
 
 func (m *Memory) RememberTurn(ctx context.Context, ownerID int64, conversationID, userText, assistantText string) error {
@@ -137,23 +128,6 @@ func marshalMessage(role, text string, now time.Time) (string, error) {
 		return "", err
 	}
 	return string(payload), nil
-}
-
-func decodeMessages(payloads []string) []qa.ConversationMessage {
-	if len(payloads) == 0 {
-		return nil
-	}
-
-	messages := make([]qa.ConversationMessage, 0, len(payloads))
-	for i := len(payloads) - 1; i >= 0; i-- {
-		var message qa.ConversationMessage
-		if json.Unmarshal([]byte(payloads[i]), &message) != nil {
-			continue
-		}
-		messages = append(messages, message)
-	}
-
-	return messages
 }
 
 func (m *Memory) activeConversationKey(ownerID int64) string {

@@ -32,7 +32,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		}
 	}
 
-	draft, err := askDraft(ctx, uc.Answers, question, conversation.Messages)
+	draft, err := askDraft(ctx, uc.Answers, question, conversation.ID)
 	if err != nil {
 		return qa.Response{}, err
 	}
@@ -59,10 +59,10 @@ func askDraft(
 	ctx context.Context,
 	answers port.AnswerSource,
 	question qa.Question,
-	history []qa.ConversationMessage,
+	conversationID string,
 ) (qa.DraftResponse, error) {
-	if contextual, ok := answers.(port.ContextualAnswerSource); ok {
-		return contextual.AskWithHistory(ctx, question, history)
+	if contextual, ok := answers.(port.ConversationAwareAnswerSource); ok {
+		return contextual.AskWithConversation(ctx, question, conversationID)
 	}
 
 	return answers.Ask(ctx, question)

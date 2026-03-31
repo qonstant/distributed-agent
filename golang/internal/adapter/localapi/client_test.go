@@ -33,12 +33,15 @@ func TestClientAsk(t *testing.T) {
 				t.Fatalf("Content-Type = %q, want %q", got, want)
 			}
 
-			var body map[string]string
+			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("Decode() error = %v", err)
 			}
 			if got, want := body["query"], "hello"; got != want {
 				t.Fatalf("query = %q, want %q", got, want)
+			}
+			if _, ok := body["conversation_id"]; ok {
+				t.Fatal("conversation_id should be omitted for Ask()")
 			}
 
 			payload := `{"answer":"world","file":"docs/file.pdf"}`
@@ -63,6 +66,38 @@ func TestClientAsk(t *testing.T) {
 		}
 		if got, want := response.AttachmentRefs[0].Kind, qa.AttachmentDocument; got != want {
 			t.Fatalf("response.AttachmentRefs[0].Kind = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("sends conversation id when available", func(t *testing.T) {
+		t.Parallel()
+
+		client := NewClient("http://local-api.test/query")
+		client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+			if got, want := body["query"], "hello"; got != want {
+				t.Fatalf("query = %q, want %q", got, want)
+			}
+			if got, want := body["conversation_id"], "conv-1"; got != want {
+				t.Fatalf("conversation_id = %q, want %q", got, want)
+			}
+
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"answer":"world","file":""}`)),
+				Header:     make(http.Header),
+			}, nil
+		})}
+
+		response, err := client.AskWithConversation(context.Background(), qa.Question{Text: "hello"}, "conv-1")
+		if err != nil {
+			t.Fatalf("AskWithConversation() error = %v", err)
+		}
+		if got, want := response.Text, "world"; got != want {
+			t.Fatalf("response.Text = %q, want %q", got, want)
 		}
 	})
 

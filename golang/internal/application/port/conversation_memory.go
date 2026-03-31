@@ -11,6 +11,6 @@ type ConversationMemory interface {
 	RememberTurn(ctx context.Context, ownerID int64, conversationID, userText, assistantText string) error
 }
 
-type ContextualAnswerSource interface {
-	AskWithHistory(ctx context.Context, question qa.Question, history []qa.ConversationMessage) (qa.DraftResponse, error)
+type ConversationAwareAnswerSource interface {
+	AskWithConversation(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error)
 }

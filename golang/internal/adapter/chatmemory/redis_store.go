@@ -60,17 +60,6 @@ func (s *RedisStore) Exists(ctx context.Context, key string) (bool, error) {
 	return count > 0, nil
 }
 
-func (s *RedisStore) LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
-	values, err := s.client.LRange(ctx, key, start, stop).Result()
-	if err == redislib.Nil {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return values, nil
-}
-
 func (s *RedisStore) AppendConversationTurn(
 	ctx context.Context,
 	key, userPayload, assistantPayload string,

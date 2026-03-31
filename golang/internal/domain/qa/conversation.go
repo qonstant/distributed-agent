@@ -12,6 +12,5 @@ type ConversationMessage struct {
 }
 
 type ConversationContext struct {
-	ID       string
-	Messages []ConversationMessage
+	ID string
 }

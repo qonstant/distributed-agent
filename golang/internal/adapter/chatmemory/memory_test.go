@@ -39,22 +39,6 @@ func (f *fakeStore) Exists(_ context.Context, key string) (bool, error) {
 	return ok, nil
 }
 
-func (f *fakeStore) LRange(_ context.Context, key string, start, stop int64) ([]string, error) {
-	values := f.lists[key]
-	if len(values) == 0 || start >= int64(len(values)) {
-		return nil, nil
-	}
-	if stop >= int64(len(values)) {
-		stop = int64(len(values) - 1)
-	}
-
-	out := make([]string, 0, stop-start+1)
-	for i := start; i <= stop; i++ {
-		out = append(out, values[i])
-	}
-	return out, nil
-}
-
 func (f *fakeStore) AppendConversationTurn(
 	_ context.Context,
 	key, userPayload, assistantPayload string,
@@ -92,9 +76,6 @@ func TestMemoryRememberTurnAndContext(t *testing.T) {
 	if conversation.ID == "" {
 		t.Fatal("Context().ID is empty")
 	}
-	if len(conversation.Messages) != 0 {
-		t.Fatalf("len(Context().Messages) = %d, want 0", len(conversation.Messages))
-	}
 
 	if err := memory.RememberTurn(ctx, 42, conversation.ID, "hello", "world"); err != nil {
 		t.Fatalf("RememberTurn() error = %v", err)
@@ -116,21 +97,6 @@ func TestMemoryRememberTurnAndContext(t *testing.T) {
 	}
 	if got, want := reloaded.ID, conversation.ID; got != want {
 		t.Fatalf("Context().ID = %q, want %q", got, want)
-	}
-	if len(reloaded.Messages) != 2 {
-		t.Fatalf("len(Context().Messages) = %d, want 2", len(reloaded.Messages))
-	}
-	if got, want := reloaded.Messages[0].Role, "user"; got != want {
-		t.Fatalf("messages[0].Role = %q, want %q", got, want)
-	}
-	if got, want := reloaded.Messages[0].Text, "hello"; got != want {
-		t.Fatalf("messages[0].Text = %q, want %q", got, want)
-	}
-	if got, want := reloaded.Messages[1].Role, "assistant"; got != want {
-		t.Fatalf("messages[1].Role = %q, want %q", got, want)
-	}
-	if got, want := reloaded.Messages[1].Text, "world"; got != want {
-		t.Fatalf("messages[1].Text = %q, want %q", got, want)
 	}
 }
 
@@ -170,24 +136,11 @@ func TestMemoryKeepsOnlyLatestEightMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Context() error = %v", err)
 	}
-	if len(reloaded.Messages) != 8 {
-		t.Fatalf("len(Context().Messages) = %d, want 8", len(reloaded.Messages))
+	if got := reloaded.ID; got != conversation.ID {
+		t.Fatalf("Context().ID = %q, want %q", got, conversation.ID)
 	}
-
-	wantTexts := []string{
-		"user-2",
-		"assistant-2",
-		"user-3",
-		"assistant-3",
-		"user-4",
-		"assistant-4",
-		"user-5",
-		"assistant-5",
-	}
-	for i, want := range wantTexts {
-		if got := reloaded.Messages[i].Text; got != want {
-			t.Fatalf("messages[%d].Text = %q, want %q", i, got, want)
-		}
+	if len(store.lists[memory.messagesKey(conversation.ID)]) != 8 {
+		t.Fatalf("len(list) = %d, want 8", len(store.lists[memory.messagesKey(conversation.ID)]))
 	}
 }
 

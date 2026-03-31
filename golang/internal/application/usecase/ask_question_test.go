@@ -43,15 +43,20 @@ func (f fakeAccessDirectory) FindByTelegramID(ctx context.Context, telegramID in
 
 type fakeConversationMemory struct {
 	contextFn      func(context.Context, int64) (qa.ConversationContext, error)
-	rememberTurnFn func(context.Context, int64, string, string, string) error
+	rememberTurnFn func(context.Context, int64, string, string, string, []qa.ConversationAttachment) error
 }
 
 func (f fakeConversationMemory) Context(ctx context.Context, ownerID int64) (qa.ConversationContext, error) {
 	return f.contextFn(ctx, ownerID)
 }
 
-func (f fakeConversationMemory) RememberTurn(ctx context.Context, ownerID int64, conversationID, userText, assistantText string) error {
-	return f.rememberTurnFn(ctx, ownerID, conversationID, userText, assistantText)
+func (f fakeConversationMemory) RememberTurn(
+	ctx context.Context,
+	ownerID int64,
+	conversationID, userText, assistantText string,
+	assistantAttachments []qa.ConversationAttachment,
+) error {
+	return f.rememberTurnFn(ctx, ownerID, conversationID, userText, assistantText, assistantAttachments)
 }
 
 func TestAskQuestionExecute(t *testing.T) {
@@ -237,6 +242,7 @@ func TestAskQuestionExecute(t *testing.T) {
 		t.Parallel()
 
 		wantErr := errors.New("resolve failed")
+		remembered := false
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
 				findFn: func(context.Context, int64) (access.Record, bool, error) {
@@ -258,6 +264,15 @@ func TestAskQuestionExecute(t *testing.T) {
 					return nil, wantErr
 				},
 			},
+			Memory: fakeConversationMemory{
+				contextFn: func(context.Context, int64) (qa.ConversationContext, error) {
+					return qa.ConversationContext{ID: "conv-fail"}, nil
+				},
+				rememberTurnFn: func(context.Context, int64, string, string, string, []qa.ConversationAttachment) error {
+					remembered = true
+					return nil
+				},
+			},
 		}
 
 		response, err := uc.Execute(context.Background(), authorizedUser, "hello")
@@ -266,6 +281,9 @@ func TestAskQuestionExecute(t *testing.T) {
 		}
 		if got, want := response.Text, "answer"; got != want {
 			t.Fatalf("response.Text = %q, want %q", got, want)
+		}
+		if remembered {
+			t.Fatal("RememberTurn() should not be called when attachment resolution fails")
 		}
 	})
 
@@ -313,11 +331,19 @@ func TestAskQuestionExecute(t *testing.T) {
 					}
 					return qa.ConversationContext{ID: "conv-1"}, nil
 				},
-				rememberTurnFn: func(_ context.Context, ownerID int64, conversationID, userText, assistantText string) error {
+				rememberTurnFn: func(
+					_ context.Context,
+					ownerID int64,
+					conversationID, userText, assistantText string,
+					assistantAttachments []qa.ConversationAttachment,
+				) error {
 					remembered.ownerID = ownerID
 					remembered.conversationID = conversationID
 					remembered.userText = userText
 					remembered.assistantText = assistantText
+					if len(assistantAttachments) != 0 {
+						t.Fatalf("assistantAttachments = %#v, want empty", assistantAttachments)
+					}
 					return nil
 				},
 			},
@@ -368,7 +394,7 @@ func TestAskQuestionExecute(t *testing.T) {
 				contextFn: func(context.Context, int64) (qa.ConversationContext, error) {
 					return qa.ConversationContext{}, errors.New("redis unavailable")
 				},
-				rememberTurnFn: func(context.Context, int64, string, string, string) error {
+				rememberTurnFn: func(context.Context, int64, string, string, string, []qa.ConversationAttachment) error {
 					return errors.New("redis unavailable")
 				},
 			},
@@ -380,6 +406,71 @@ func TestAskQuestionExecute(t *testing.T) {
 		}
 		if got, want := response.Text, "answer"; got != want {
 			t.Fatalf("response.Text = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("remembers resolved attachment metadata", func(t *testing.T) {
+		t.Parallel()
+
+		var rememberedAttachments []qa.ConversationAttachment
+		uc := AskQuestion{
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+				},
+			}),
+			Answers: fakeAnswerSource{
+				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
+					return qa.DraftResponse{
+						Text: "Here is the sample.",
+						AttachmentRefs: []qa.AttachmentRef{
+							{Source: "docs/sample.pdf", Kind: qa.AttachmentDocument},
+							{Source: "photos/example.png", Kind: qa.AttachmentPhoto},
+						},
+					}, nil
+				},
+			},
+			Attachments: fakeAttachmentResolver{
+				resolveFn: func(context.Context, []qa.AttachmentRef) ([]qa.Attachment, error) {
+					return []qa.Attachment{
+						{Name: "sample.pdf", Kind: qa.AttachmentDocument, Content: []byte("pdf")},
+						{Name: "example.png", Kind: qa.AttachmentPhoto, Content: []byte("img")},
+					}, nil
+				},
+			},
+			Memory: fakeConversationMemory{
+				contextFn: func(context.Context, int64) (qa.ConversationContext, error) {
+					return qa.ConversationContext{ID: "conv-2"}, nil
+				},
+				rememberTurnFn: func(
+					_ context.Context,
+					_ int64,
+					_ string,
+					_ string,
+					_ string,
+					assistantAttachments []qa.ConversationAttachment,
+				) error {
+					rememberedAttachments = append([]qa.ConversationAttachment(nil), assistantAttachments...)
+					return nil
+				},
+			},
+		}
+
+		response, err := uc.Execute(context.Background(), authorizedUser, "send sample")
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if len(response.Attachments) != 2 {
+			t.Fatalf("len(response.Attachments) = %d, want 2", len(response.Attachments))
+		}
+		if len(rememberedAttachments) != 2 {
+			t.Fatalf("len(rememberedAttachments) = %d, want 2", len(rememberedAttachments))
+		}
+		if got, want := rememberedAttachments[0], (qa.ConversationAttachment{Name: "sample.pdf", Kind: qa.AttachmentDocument}); got != want {
+			t.Fatalf("rememberedAttachments[0] = %#v, want %#v", got, want)
+		}
+		if got, want := rememberedAttachments[1], (qa.ConversationAttachment{Name: "example.png", Kind: qa.AttachmentPhoto}); got != want {
+			t.Fatalf("rememberedAttachments[1] = %#v, want %#v", got, want)
 		}
 	})
 }

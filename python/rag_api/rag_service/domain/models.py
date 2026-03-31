@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 SUPPORTED_INTENTS = {
     "GREETING",
@@ -35,10 +35,17 @@ class RetrievedHit:
 
 
 @dataclass(frozen=True)
+class ConversationAttachment:
+    name: str
+    kind: str
+
+
+@dataclass(frozen=True)
 class ConversationMessage:
     role: str
     text: str
     ts: int = 0
+    attachments: List[ConversationAttachment] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

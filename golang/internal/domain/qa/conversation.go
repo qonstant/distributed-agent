@@ -6,9 +6,15 @@ const (
 )
 
 type ConversationMessage struct {
-	Role      string `json:"role"`
-	Text      string `json:"text"`
-	Timestamp int64  `json:"ts"`
+	Role        string                   `json:"role"`
+	Text        string                   `json:"text"`
+	Timestamp   int64                    `json:"ts"`
+	Attachments []ConversationAttachment `json:"attachments,omitempty"`
+}
+
+type ConversationAttachment struct {
+	Name string         `json:"name"`
+	Kind AttachmentKind `json:"kind"`
 }
 
 type ConversationContext struct {

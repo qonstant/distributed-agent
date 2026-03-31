@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from rag_service.domain.models import ConversationMessage, RetrievedHit
+from rag_service.domain.models import ConversationAttachment, ConversationMessage, RetrievedHit
 
 
 def _excerpt_from_hit(hit: RetrievedHit) -> str:
@@ -10,16 +10,36 @@ def _excerpt_from_hit(hit: RetrievedHit) -> str:
     return text[:1600].replace("\n", " ").strip()
 
 
-def _history_lines(history: Optional[List[ConversationMessage]]) -> List[str]:
+def _attachment_summary(attachments: Optional[List[ConversationAttachment]]) -> str:
+    if not attachments:
+        return ""
+
+    parts: List[str] = []
+    for attachment in attachments:
+        name = (attachment.name or "").strip()
+        kind = (attachment.kind or "document").strip() or "document"
+        if not name:
+            continue
+        parts.append(f"{kind}({name})")
+
+    if not parts:
+        return ""
+
+    return "attachments sent: " + ", ".join(parts)
+
+
+def build_history_lines(history: Optional[List[ConversationMessage]], header: str) -> List[str]:
     if not history:
         return []
 
-    lines = [
-        "Recent conversation context (oldest to newest). Use it only to resolve references in the latest query.",
-        "",
-    ]
+    lines = [header, ""]
     for message in history:
-        lines.append(f"{message.role}: {message.text}")
+        text = (message.text or "").strip()
+        line = f"{message.role}: {text}" if text else f"{message.role}:"
+        attachment_summary = _attachment_summary(message.attachments)
+        if attachment_summary:
+            line = f"{line} [{attachment_summary}]"
+        lines.append(line)
     lines.append("")
     return lines
 
@@ -35,7 +55,12 @@ def prepare_document_request_prompt(
         query,
         "",
     ]
-    lines.extend(_history_lines(history))
+    lines.extend(
+        build_history_lines(
+            history,
+            "Recent conversation context (oldest to newest). Use it only to resolve references in the latest query.",
+        )
+    )
     lines.extend(
         [
         "Below are document excerpts (file + page + excerpt). If one of the documents is the requested template or sample, choose it.",
@@ -72,7 +97,12 @@ def prepare_guidance_prompt(
         query,
         "",
     ]
-    lines.extend(_history_lines(history))
+    lines.extend(
+        build_history_lines(
+            history,
+            "Recent conversation context (oldest to newest). Use it only to resolve references in the latest query.",
+        )
+    )
     lines.extend(
         [
         "Here are top document excerpts (file + page + excerpt):",

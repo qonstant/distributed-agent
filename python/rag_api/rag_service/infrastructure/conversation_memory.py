@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import List
 
-from rag_service.domain.models import ConversationMessage
+from rag_service.domain.models import ConversationAttachment, ConversationMessage
 
 
 class RedisConversationMemory:
@@ -45,6 +45,25 @@ class RedisConversationMemory:
             except Exception:
                 ts = 0
 
-            messages.append(ConversationMessage(role=role, text=text, ts=ts))
+            attachments = []
+            for item in parsed.get("attachments") or []:
+                if not isinstance(item, dict):
+                    continue
+
+                name = str(item.get("name") or "").strip()
+                kind = str(item.get("kind") or "").strip()
+                if not name:
+                    continue
+
+                attachments.append(ConversationAttachment(name=name, kind=kind or "document"))
+
+            messages.append(
+                ConversationMessage(
+                    role=role,
+                    text=text,
+                    ts=ts,
+                    attachments=attachments,
+                )
+            )
 
         return messages

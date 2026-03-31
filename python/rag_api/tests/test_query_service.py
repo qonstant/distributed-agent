@@ -5,7 +5,13 @@ import unittest
 import numpy as np
 
 from rag_service.application.query_service import QueryService
-from rag_service.domain.models import Classification, ConversationMessage, QueryResult, RetrievedHit
+from rag_service.domain.models import (
+    Classification,
+    ConversationAttachment,
+    ConversationMessage,
+    QueryResult,
+    RetrievedHit,
+)
 from rag_service.infrastructure.prompts import prepare_document_request_prompt
 
 
@@ -103,7 +109,14 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIn("user: Send me the residence permit sample", gateway.generated_prompts[0])
 
     def test_document_prompt_helper_includes_history(self) -> None:
-        history = [ConversationMessage(role="user", text="previous message", ts=1)]
+        history = [
+            ConversationMessage(
+                role="assistant",
+                text="I sent the sample.",
+                ts=1,
+                attachments=[ConversationAttachment(name="application.pdf", kind="document")],
+            )
+        ]
         prompt = prepare_document_request_prompt(
             "send that one again",
             [RetrievedHit(score=1.0, nid=1, meta={"source_file": "doc.pdf", "page": 1, "text": "excerpt"})],
@@ -111,7 +124,8 @@ class QueryServiceTests(unittest.TestCase):
         )
 
         self.assertIn("Recent conversation context", prompt)
-        self.assertIn("user: previous message", prompt)
+        self.assertIn("assistant: I sent the sample.", prompt)
+        self.assertIn("attachments sent: document(application.pdf)", prompt)
 
 
 if __name__ == "__main__":

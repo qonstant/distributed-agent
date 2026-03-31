@@ -8,6 +8,7 @@ from openai import OpenAI
 
 from rag_service.domain.models import Classification, ConversationMessage, normalize_intent
 from rag_service.infrastructure.config import Settings
+from rag_service.infrastructure.prompts import build_history_lines
 
 
 class OpenAIGateway:
@@ -245,8 +246,7 @@ class OpenAIGateway:
         if not history:
             return ""
 
-        lines = ["Recent conversation context (oldest to newest):"]
-        for message in history:
-            lines.append(f"{message.role}: {message.text}")
-        lines.append("")
+        lines = build_history_lines(history, "Recent conversation context (oldest to newest):")
+        if not lines:
+            return ""
         return "\n".join(lines) + "\n"

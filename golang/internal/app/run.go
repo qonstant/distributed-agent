@@ -63,13 +63,15 @@ func Run() error {
 		} else {
 			defer memoryStore.Close()
 			memory = chatmemory.New(memoryStore, chatmemory.Config{
-				TTL:      cfg.Redis.ConversationMemoryTTL,
-				MaxItems: int64(cfg.Redis.ConversationMemoryMaxItems),
+				TTL:               cfg.Redis.ConversationMemoryTTL,
+				MaxItems:          int64(cfg.Redis.ConversationMemoryMaxItems),
+				AssistantMaxChars: cfg.Redis.ConversationMemoryAssistantMaxChars,
 			})
 			log.Printf(
-				"Conversation memory enabled (redis, ttl=%s max_items=%d)",
+				"Conversation memory enabled (redis, ttl=%s max_items=%d assistant_max_chars=%d)",
 				cfg.Redis.ConversationMemoryTTL,
 				cfg.Redis.ConversationMemoryMaxItems,
+				cfg.Redis.ConversationMemoryAssistantMaxChars,
 			)
 		}
 	}

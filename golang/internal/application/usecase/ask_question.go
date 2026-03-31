@@ -37,12 +37,12 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		return qa.Response{}, err
 	}
 
-	if uc.Memory != nil {
-		_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text)
-	}
-
 	response := qa.Response{Text: draft.Text}
+	var memoryAttachments []qa.ConversationAttachment
 	if len(draft.AttachmentRefs) == 0 {
+		if uc.Memory != nil {
+			_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text, nil)
+		}
 		return response, nil
 	}
 
@@ -52,6 +52,10 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 	}
 
 	response.Attachments = attachments
+	memoryAttachments = toConversationAttachments(attachments)
+	if uc.Memory != nil {
+		_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text, memoryAttachments)
+	}
 	return response, nil
 }
 
@@ -66,4 +70,31 @@ func askDraft(
 	}
 
 	return answers.Ask(ctx, question)
+}
+
+func toConversationAttachments(attachments []qa.Attachment) []qa.ConversationAttachment {
+	if len(attachments) == 0 {
+		return nil
+	}
+
+	out := make([]qa.ConversationAttachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		if attachment.Name == "" {
+			continue
+		}
+
+		kind := attachment.Kind
+		if kind == "" {
+			kind = qa.AttachmentDocument
+		}
+
+		out = append(out, qa.ConversationAttachment{
+			Name: attachment.Name,
+			Kind: kind,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

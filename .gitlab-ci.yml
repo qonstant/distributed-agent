@@ -88,7 +88,9 @@ deploy-rag-prod:
     - cd python/rag_api
     - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
     - 'echo "OPENAI_API_KEY length: ${#OPENAI_API_KEY}"'
+    - 'echo "REDIS_URL set? ${REDIS_URL:+yes}"'
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" > .env'
+    - 'printf "REDIS_URL=%s\n" "${REDIS_URL}" >> .env'
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" >> .env'
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
@@ -128,7 +130,9 @@ deploy-rag-test:
     - cd python/rag_api
     - 'echo "OPENAI_API_KEY_TEST set? ${OPENAI_API_KEY_TEST:+yes}"'
     - 'echo "OPENAI_API_KEY_TEST length: ${#OPENAI_API_KEY_TEST}"'
+    - 'echo "REDIS_URL_TEST set? ${REDIS_URL_TEST:+yes}"'
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY_TEST}" > .env'
+    - 'printf "REDIS_URL=%s\n" "${REDIS_URL_TEST}" >> .env'
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT_TEST}" >> .env'
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS_TEST}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'

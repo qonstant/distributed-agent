@@ -89,10 +89,8 @@ deploy-rag-prod:
     - 'echo "OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"'
     - 'echo "OPENAI_API_KEY length: ${#OPENAI_API_KEY}"'
     - 'echo "REDIS_URL set? ${REDIS_URL:+yes}"'
-    - 'RAG_REDIS_URL="${REDIS_URL}"; RAG_REDIS_URL="${RAG_REDIS_URL/127.0.0.1/host.docker.internal}"; RAG_REDIS_URL="${RAG_REDIS_URL/localhost/host.docker.internal}"; export RAG_REDIS_URL'
-    - 'echo "RAG_REDIS_URL prepared? ${RAG_REDIS_URL:+yes}"'
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" > .env'
-    - 'printf "REDIS_URL=%s\n" "${RAG_REDIS_URL}" >> .env'
+    - 'printf "REDIS_URL=%s\n" "${REDIS_URL}" >> .env'
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" >> .env'
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
@@ -105,6 +103,18 @@ deploy-rag-prod:
     - docker-compose up -d --build
     - sleep 3
     - 'docker logs "${CONTAINER_NAME}" --tail 30 || true'
+    - |
+      docker exec "${CONTAINER_NAME}" python - <<'PY' || true
+      import os
+      print(f"[rag] REDIS_URL set? {'yes' if os.getenv('REDIS_URL') else 'no'}")
+      if os.getenv("REDIS_URL"):
+          import redis
+          try:
+              ok = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=True).ping()
+              print(f"[rag] redis ping: {ok}")
+          except Exception as exc:
+              print(f"[rag] redis ping failed: {exc}")
+      PY
     - |
       docker exec "${CONTAINER_NAME}" python - <<'PY' || true
       import json
@@ -133,10 +143,8 @@ deploy-rag-test:
     - 'echo "OPENAI_API_KEY_TEST set? ${OPENAI_API_KEY_TEST:+yes}"'
     - 'echo "OPENAI_API_KEY_TEST length: ${#OPENAI_API_KEY_TEST}"'
     - 'echo "REDIS_URL_TEST set? ${REDIS_URL_TEST:+yes}"'
-    - 'RAG_REDIS_URL="${REDIS_URL_TEST}"; RAG_REDIS_URL="${RAG_REDIS_URL/127.0.0.1/host.docker.internal}"; RAG_REDIS_URL="${RAG_REDIS_URL/localhost/host.docker.internal}"; export RAG_REDIS_URL'
-    - 'echo "RAG_REDIS_URL prepared? ${RAG_REDIS_URL:+yes}"'
     - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY_TEST}" > .env'
-    - 'printf "REDIS_URL=%s\n" "${RAG_REDIS_URL}" >> .env'
+    - 'printf "REDIS_URL=%s\n" "${REDIS_URL_TEST}" >> .env'
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT_TEST}" >> .env'
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS_TEST}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
@@ -149,6 +157,18 @@ deploy-rag-test:
     - docker-compose up -d --build
     - sleep 3
     - 'docker logs "${CONTAINER_NAME}" --tail 30 || true'
+    - |
+      docker exec "${CONTAINER_NAME}" python - <<'PY' || true
+      import os
+      print(f"[rag] REDIS_URL set? {'yes' if os.getenv('REDIS_URL') else 'no'}")
+      if os.getenv("REDIS_URL"):
+          import redis
+          try:
+              ok = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=True).ping()
+              print(f"[rag] redis ping: {ok}")
+          except Exception as exc:
+              print(f"[rag] redis ping failed: {exc}")
+      PY
     - |
       docker exec "${CONTAINER_NAME}" python - <<'PY' || true
       import json

@@ -246,8 +246,8 @@ func TestMemoryStoresAssistantAttachments(t *testing.T) {
 		"send it again",
 		"Here is the file.",
 		[]qa.ConversationAttachment{
-			{Name: "sample.pdf", Kind: qa.AttachmentDocument},
-			{Name: "example.png", Kind: qa.AttachmentPhoto},
+			{Source: "docs/sample.pdf", Name: "sample.pdf", Kind: qa.AttachmentDocument},
+			{Source: "photos/example.png", Name: "example.png", Kind: qa.AttachmentPhoto},
 		},
 	)
 	if err != nil {
@@ -266,10 +266,10 @@ func TestMemoryStoresAssistantAttachments(t *testing.T) {
 	if len(assistant.Attachments) != 2 {
 		t.Fatalf("len(assistant.Attachments) = %d, want 2", len(assistant.Attachments))
 	}
-	if got, want := assistant.Attachments[0], (qa.ConversationAttachment{Name: "sample.pdf", Kind: qa.AttachmentDocument}); got != want {
+	if got, want := assistant.Attachments[0], (qa.ConversationAttachment{Source: "docs/sample.pdf", Name: "sample.pdf", Kind: qa.AttachmentDocument}); got != want {
 		t.Fatalf("assistant.Attachments[0] = %#v, want %#v", got, want)
 	}
-	if got, want := assistant.Attachments[1], (qa.ConversationAttachment{Name: "example.png", Kind: qa.AttachmentPhoto}); got != want {
+	if got, want := assistant.Attachments[1], (qa.ConversationAttachment{Source: "photos/example.png", Name: "example.png", Kind: qa.AttachmentPhoto}); got != want {
 		t.Fatalf("assistant.Attachments[1] = %#v, want %#v", got, want)
 	}
 }

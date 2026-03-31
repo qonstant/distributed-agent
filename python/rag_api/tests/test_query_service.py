@@ -86,7 +86,12 @@ class QueryServiceTests(unittest.TestCase):
     def test_document_request_rewrites_retrieval_query_and_includes_history_in_prompt(self) -> None:
         history = [
             ConversationMessage(role="user", text="Send me the residence permit sample", ts=1),
-            ConversationMessage(role="assistant", text="I can help with that.", ts=2),
+            ConversationMessage(
+                role="assistant",
+                text="I can help with that.",
+                ts=2,
+                attachments=[ConversationAttachment(name="application.pdf", kind="document", source="docs/application.pdf")],
+            ),
         ]
         gateway = FakeGateway(Classification(intent="DOCUMENT_REQUEST", explain="follow-up request", language="en"))
         memory = FakeConversationMemory(history)
@@ -101,12 +106,46 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("Send that one again", conversation_id="conv-1")
 
-        self.assertEqual(result, QueryResult(answer="Use this sample.", file="docs/application.pdf"))
+        self.assertEqual(
+            result,
+            QueryResult(
+                answer=(
+                    "Use this sample.\n\n"
+                    "I already sent this file earlier in the conversation: docs/application.pdf. "
+                    "You can find it above in the chat. If you want, I can resend it."
+                ),
+                file=None,
+            ),
+        )
         self.assertEqual(gateway.rewrite_calls, [("Send that one again", history)])
         self.assertEqual(gateway.embedded_queries, ["residence permit application sample"])
         self.assertEqual(len(gateway.generated_prompts), 1)
         self.assertIn("Recent conversation context", gateway.generated_prompts[0])
         self.assertIn("user: Send me the residence permit sample", gateway.generated_prompts[0])
+
+    def test_document_request_resends_same_file_when_user_explicitly_asks(self) -> None:
+        history = [
+            ConversationMessage(
+                role="assistant",
+                text="I already sent the sample.",
+                ts=2,
+                attachments=[ConversationAttachment(name="application.pdf", kind="document", source="docs/application.pdf")],
+            )
+        ]
+        gateway = FakeGateway(Classification(intent="DOCUMENT_REQUEST", explain="resend request", language="en"))
+        memory = FakeConversationMemory(history)
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "docs/application.pdf", "page": 1, "text": "sample document excerpt"},
+            )
+        ]
+        service = QueryService(gateway, FakeStore(results), conversation_memory=memory)
+
+        result = service.handle_query("Please resend the file", conversation_id="conv-1")
+
+        self.assertEqual(result, QueryResult(answer="Use this sample.", file="docs/application.pdf"))
 
     def test_document_prompt_helper_includes_history(self) -> None:
         history = [
@@ -114,7 +153,7 @@ class QueryServiceTests(unittest.TestCase):
                 role="assistant",
                 text="I sent the sample.",
                 ts=1,
-                attachments=[ConversationAttachment(name="application.pdf", kind="document")],
+                attachments=[ConversationAttachment(name="application.pdf", kind="document", source="docs/application.pdf")],
             )
         ]
         prompt = prepare_document_request_prompt(
@@ -125,7 +164,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertIn("Recent conversation context", prompt)
         self.assertIn("assistant: I sent the sample.", prompt)
-        self.assertIn("attachments sent: document(application.pdf)", prompt)
+        self.assertIn("attachments sent: document(docs/application.pdf)", prompt)
 
 
 if __name__ == "__main__":

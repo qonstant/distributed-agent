@@ -16,11 +16,11 @@ def _attachment_summary(attachments: Optional[List[ConversationAttachment]]) -> 
 
     parts: List[str] = []
     for attachment in attachments:
-        name = (attachment.name or "").strip()
+        label = (attachment.source or attachment.name or "").strip()
         kind = (attachment.kind or "document").strip() or "document"
-        if not name:
+        if not label:
             continue
-        parts.append(f"{kind}({name})")
+        parts.append(f"{kind}({label})")
 
     if not parts:
         return ""

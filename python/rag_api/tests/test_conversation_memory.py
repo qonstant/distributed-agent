@@ -20,7 +20,7 @@ class RedisConversationMemoryTests(unittest.TestCase):
         memory = RedisConversationMemory.__new__(RedisConversationMemory)
         memory._client = FakeRedisClient(
             [
-                '{"role":"assistant","text":"Here is the file.","ts":2,"attachments":[{"name":"sample.pdf","kind":"document"}]}',
+                '{"role":"assistant","text":"Here is the file.","ts":2,"attachments":[{"name":"sample.pdf","kind":"document","source":"docs/sample.pdf"}]}',
                 '{"role":"user","text":"Send the sample again","ts":1}',
             ]
         )
@@ -36,6 +36,7 @@ class RedisConversationMemoryTests(unittest.TestCase):
         self.assertEqual(len(history[1].attachments), 1)
         self.assertEqual(history[1].attachments[0].name, "sample.pdf")
         self.assertEqual(history[1].attachments[0].kind, "document")
+        self.assertEqual(history[1].attachments[0].source, "docs/sample.pdf")
 
 
 if __name__ == "__main__":

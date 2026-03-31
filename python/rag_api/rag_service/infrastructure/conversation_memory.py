@@ -50,12 +50,19 @@ class RedisConversationMemory:
                 if not isinstance(item, dict):
                     continue
 
+                source = str(item.get("source") or "").strip()
                 name = str(item.get("name") or "").strip()
                 kind = str(item.get("kind") or "").strip()
-                if not name:
+                if not name and not source:
                     continue
 
-                attachments.append(ConversationAttachment(name=name, kind=kind or "document"))
+                attachments.append(
+                    ConversationAttachment(
+                        name=name,
+                        kind=kind or "document",
+                        source=source,
+                    )
+                )
 
             messages.append(
                 ConversationMessage(

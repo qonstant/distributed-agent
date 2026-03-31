@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -170,17 +171,25 @@ func normalizeAttachments(attachments []qa.ConversationAttachment) []qa.Conversa
 
 	normalized := make([]qa.ConversationAttachment, 0, len(attachments))
 	for _, attachment := range attachments {
+		source := strings.TrimSpace(attachment.Source)
 		name := strings.TrimSpace(attachment.Name)
 		kind := attachment.Kind
-		if name == "" {
+		if name == "" && source != "" {
+			name = path.Base(source)
+		}
+		if name == "." || name == "/" {
+			name = ""
+		}
+		if name == "" && source == "" {
 			continue
 		}
 		if kind == "" {
 			kind = qa.AttachmentDocument
 		}
 		normalized = append(normalized, qa.ConversationAttachment{
-			Name: name,
-			Kind: kind,
+			Source: source,
+			Name:   name,
+			Kind:   kind,
 		})
 	}
 	if len(normalized) == 0 {

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from rag_service.domain.models import ConversationMessage, QueryResult, RetrievedHit
+from rag_service.domain.models import ConversationAttachment, ConversationMessage, QueryResult, RetrievedHit
 from rag_service.infrastructure.prompts import (
     prepare_document_request_prompt,
     prepare_guidance_prompt,
@@ -25,6 +25,81 @@ def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Opti
         return None, None
     best_file = max(file_sum.items(), key=lambda item: item[1])[0]
     return best_file, best_chunk_for_file[best_file]
+
+
+def _basename(value: str) -> str:
+    normalized = (value or "").strip().rstrip("/")
+    if not normalized:
+        return ""
+    return normalized.rsplit("/", 1)[-1]
+
+
+def _looks_like_resend_request(query: str) -> bool:
+    value = (query or "").strip().lower()
+    if not value:
+        return False
+
+    phrases = (
+        "resend",
+        "re-send",
+        "send it again",
+        "send that again",
+        "send the file again",
+        "send again",
+        "one more time",
+        "again please",
+        "пришли еще раз",
+        "отправь еще раз",
+        "перешли еще раз",
+        "снова отправь",
+        "повтори отправку",
+    )
+    return any(phrase in value for phrase in phrases)
+
+
+def _find_previously_sent_attachment(
+    history: List[ConversationMessage],
+    file_chosen: Optional[str],
+) -> Optional[ConversationAttachment]:
+    target_source = (file_chosen or "").strip()
+    if not target_source:
+        return None
+
+    target_name = _basename(target_source)
+    for message in reversed(history):
+        if message.role != "assistant":
+            continue
+        for attachment in message.attachments:
+            source = (attachment.source or "").strip()
+            name = (attachment.name or "").strip()
+            if source and source == target_source:
+                return attachment
+            if not source and name and name == target_name:
+                return attachment
+    return None
+
+
+def _duplicate_file_note(file_label: str, language: str) -> str:
+    normalized_language = (language or "").strip().lower()
+    if normalized_language in {"ru", "russian", "русский"}:
+        return (
+            f"Я уже отправлял этот файл ранее в этом диалоге: {file_label}. "
+            "Его можно найти выше в переписке. Если хотите, я могу отправить его еще раз."
+        )
+
+    return (
+        f"I already sent this file earlier in the conversation: {file_label}. "
+        "You can find it above in the chat. If you want, I can resend it."
+    )
+
+
+def _merge_answer_with_duplicate_note(answer: str, note: str) -> str:
+    base = (answer or "").strip()
+    if not base:
+        return note
+    if note in base:
+        return base
+    return f"{base}\n\n{note}"
 
 
 class QueryService:
@@ -121,6 +196,16 @@ class QueryService:
                 answer = "I don't know based on the provided documents."
             if len(answer) > 1600:
                 answer = answer[:1600].rstrip() + "..."
+
+            previous_attachment = _find_previously_sent_attachment(history, file_chosen)
+            if previous_attachment and not _looks_like_resend_request(normalized_query):
+                file_label = (previous_attachment.source or file_chosen or previous_attachment.name).strip()
+                answer = _merge_answer_with_duplicate_note(
+                    answer,
+                    _duplicate_file_note(file_label, language),
+                )
+                print(f"[memory] skipping duplicate attachment resend for file={file_label}")
+                file_chosen = None
 
             return QueryResult(answer=answer, file=file_chosen)
 

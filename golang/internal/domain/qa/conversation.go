@@ -13,8 +13,9 @@ type ConversationMessage struct {
 }
 
 type ConversationAttachment struct {
-	Name string         `json:"name"`
-	Kind AttachmentKind `json:"kind"`
+	Source string         `json:"source,omitempty"`
+	Name   string         `json:"name"`
+	Kind   AttachmentKind `json:"kind"`
 }
 
 type ConversationContext struct {

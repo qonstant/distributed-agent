@@ -38,6 +38,7 @@ class RetrievedHit:
 class ConversationAttachment:
     name: str
     kind: str
+    source: str = ""
 
 
 @dataclass(frozen=True)

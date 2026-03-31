@@ -466,10 +466,10 @@ func TestAskQuestionExecute(t *testing.T) {
 		if len(rememberedAttachments) != 2 {
 			t.Fatalf("len(rememberedAttachments) = %d, want 2", len(rememberedAttachments))
 		}
-		if got, want := rememberedAttachments[0], (qa.ConversationAttachment{Name: "sample.pdf", Kind: qa.AttachmentDocument}); got != want {
+		if got, want := rememberedAttachments[0], (qa.ConversationAttachment{Source: "docs/sample.pdf", Name: "sample.pdf", Kind: qa.AttachmentDocument}); got != want {
 			t.Fatalf("rememberedAttachments[0] = %#v, want %#v", got, want)
 		}
-		if got, want := rememberedAttachments[1], (qa.ConversationAttachment{Name: "example.png", Kind: qa.AttachmentPhoto}); got != want {
+		if got, want := rememberedAttachments[1], (qa.ConversationAttachment{Source: "photos/example.png", Name: "example.png", Kind: qa.AttachmentPhoto}); got != want {
 			t.Fatalf("rememberedAttachments[1] = %#v, want %#v", got, want)
 		}
 	})

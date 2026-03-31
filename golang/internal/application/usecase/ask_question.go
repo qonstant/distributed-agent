@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"context"
+	"path"
+	"strings"
 
 	"github.com/qonstant/distributed-agent/internal/application/port"
 	"github.com/qonstant/distributed-agent/internal/domain/access"
@@ -52,7 +54,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 	}
 
 	response.Attachments = attachments
-	memoryAttachments = toConversationAttachments(attachments)
+	memoryAttachments = toConversationAttachments(draft.AttachmentRefs, attachments)
 	if uc.Memory != nil {
 		_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text, memoryAttachments)
 	}
@@ -72,25 +74,41 @@ func askDraft(
 	return answers.Ask(ctx, question)
 }
 
-func toConversationAttachments(attachments []qa.Attachment) []qa.ConversationAttachment {
-	if len(attachments) == 0 {
+func toConversationAttachments(refs []qa.AttachmentRef, attachments []qa.Attachment) []qa.ConversationAttachment {
+	if len(refs) == 0 {
 		return nil
 	}
 
-	out := make([]qa.ConversationAttachment, 0, len(attachments))
-	for _, attachment := range attachments {
-		if attachment.Name == "" {
+	out := make([]qa.ConversationAttachment, 0, len(refs))
+	for idx, ref := range refs {
+		source := strings.TrimSpace(ref.Source)
+		if source == "" {
 			continue
 		}
 
-		kind := attachment.Kind
+		name := path.Base(source)
+		if idx < len(attachments) && strings.TrimSpace(attachments[idx].Name) != "" {
+			name = strings.TrimSpace(attachments[idx].Name)
+		}
+		if name == "." || name == "/" {
+			name = ""
+		}
+
+		kind := ref.Kind
+		if idx < len(attachments) && attachments[idx].Kind != "" {
+			kind = attachments[idx].Kind
+		}
 		if kind == "" {
 			kind = qa.AttachmentDocument
 		}
+		if name == "" {
+			continue
+		}
 
 		out = append(out, qa.ConversationAttachment{
-			Name: attachment.Name,
-			Kind: kind,
+			Source: source,
+			Name:   name,
+			Kind:   kind,
 		})
 	}
 	if len(out) == 0 {

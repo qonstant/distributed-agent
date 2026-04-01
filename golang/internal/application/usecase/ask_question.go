@@ -59,7 +59,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 
 	if updatedName, updated := classifiedPreferredName(draft.Classification); updated {
 		preferredName = updatedName
-		draft.Text = preferredNameAcknowledgement(preferredName)
+		draft.Text = preferredNameAcknowledgement(preferredName, detectedLanguage(draft.Classification))
 	} else if preferredName == "" {
 		draft.Text = mergePreferredNamePrompt(draft.Text)
 	}
@@ -240,6 +240,13 @@ func classifiedPreferredName(classification *qa.MessageClassification) (string, 
 	return name, true
 }
 
+func detectedLanguage(classification *qa.MessageClassification) string {
+	if classification == nil {
+		return ""
+	}
+	return strings.TrimSpace(classification.DetectedLanguage)
+}
+
 func normalizePreferredName(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.Trim(value, " \t\n\r.,!?;:\"'()[]{}")
@@ -276,7 +283,19 @@ func normalizePreferredName(value string) string {
 	return value
 }
 
-func preferredNameAcknowledgement(name string) string {
+func preferredNameAcknowledgement(name, language string) string {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "ru", "russian", "русский":
+		if strings.TrimSpace(name) == "" {
+			return "Приятно познакомиться! Я это запомню."
+		}
+		return fmt.Sprintf("Приятно познакомиться, %s! Буду звать тебя так.", name)
+	case "kk", "kazakh", "қазақ", "қазақша":
+		if strings.TrimSpace(name) == "" {
+			return "Танысқаныма қуаныштымын! Мұны есте сақтаймын."
+		}
+		return fmt.Sprintf("Танысқаныма қуаныштымын, %s! Сені осылай атаймын.", name)
+	}
 	if strings.TrimSpace(name) == "" {
 		return "Nice to meet you! I'll remember that."
 	}

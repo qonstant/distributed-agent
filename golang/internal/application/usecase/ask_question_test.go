@@ -202,6 +202,7 @@ func TestAskQuestionExecute(t *testing.T) {
 							Intent:        "CHIT_CHAT",
 							ProfileAction: "set_preferred_name",
 							PreferredName: "Test User",
+							DetectedLanguage: "en",
 						},
 					}, nil
 				},
@@ -254,6 +255,7 @@ func TestAskQuestionExecute(t *testing.T) {
 							Intent:        "CHIT_CHAT",
 							ProfileAction: "set_preferred_name",
 							PreferredName: "Heisenberg",
+							DetectedLanguage: "ru",
 						},
 					}, nil
 				},
@@ -279,7 +281,7 @@ func TestAskQuestionExecute(t *testing.T) {
 		if !asked {
 			t.Fatal("Ask should be called so the classifier can detect the rename")
 		}
-		if got, want := response.Text, "Nice to meet you, Heisenberg! I'll call you that."; got != want {
+		if got, want := response.Text, "Приятно познакомиться, Heisenberg! Буду звать тебя так."; got != want {
 			t.Fatalf("response.Text = %q, want %q", got, want)
 		}
 		if got, want := published.User.Username, "Heisenberg"; got != want {

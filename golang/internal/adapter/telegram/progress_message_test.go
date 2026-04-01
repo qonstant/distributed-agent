@@ -96,13 +96,37 @@ func TestProgressFactsForText(t *testing.T) {
 func TestRenderProgressText(t *testing.T) {
 	t.Parallel()
 
-	english := renderProgressText(thinkingFramesLatin, europeFactsLatin, 1)
-	if english != "Thinking..\n\nThe Bologna Process helped align degree structures across much of Europe into bachelor-master-doctorate cycles.\nSource: Bologna Process" {
+	english := renderProgressText(thinkingFramesLatin, europeFactsLatin[1], 1)
+	if english != "Thinking..\n\n<b>Interesting fact:</b>\n<blockquote>There is a Victor Hugo Street in every town in France.</blockquote>\n<i>Source: France</i>" {
 		t.Fatalf("english progress text = %q", english)
 	}
 
-	russian := renderProgressText(thinkingFramesCyrillic, europeFactsCyrillic, 2)
-	if russian != "Думаю...\n\nПрограмма Erasmus+ поддерживает учебную мобильность и обмены между многими европейскими странами.\nИсточник: Erasmus+" {
+	russian := renderProgressText(thinkingFramesCyrillic, europeFactsCyrillic[2], 2)
+	if russian != "Думаю...\n\n<b>Интересный факт:</b>\n<blockquote>Риму, который называют Вечным городом, почти 3 000 лет, а столицей Италии он стал в 1871 году.</blockquote>\n<i>Источник: Италия</i>" {
 		t.Fatalf("russian progress text = %q", russian)
+	}
+}
+
+func TestPickProgressFact(t *testing.T) {
+	t.Parallel()
+
+	got := pickProgressFact(europeFactsLatin, 4)
+	if got != europeFactsLatin[4] {
+		t.Fatalf("pickProgressFact(...) = %#v, want %#v", got, europeFactsLatin[4])
+	}
+}
+
+func TestRenderProgressTextKeepsSameFactAcrossSteps(t *testing.T) {
+	t.Parallel()
+
+	fact := europeFactsLatin[0]
+	first := renderProgressText(thinkingFramesLatin, fact, 0)
+	second := renderProgressText(thinkingFramesLatin, fact, 2)
+
+	if first != "Thinking.\n\n<b>Interesting fact:</b>\n<blockquote>The national anthem of Spain has no words.</blockquote>\n<i>Source: Spain</i>" {
+		t.Fatalf("first progress text = %q", first)
+	}
+	if second != "Thinking...\n\n<b>Interesting fact:</b>\n<blockquote>The national anthem of Spain has no words.</blockquote>\n<i>Source: Spain</i>" {
+		t.Fatalf("second progress text = %q", second)
 	}
 }

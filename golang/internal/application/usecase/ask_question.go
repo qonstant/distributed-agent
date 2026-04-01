@@ -14,7 +14,7 @@ import (
 	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
 
-const preferredNamePrompt = "By the way, how should I call you? You can say: \"Call me Alex\"."
+const preferredNamePromptEnglish = "By the way, how should I call you? You can say: \"Call me Alex\"."
 
 type AskQuestion struct {
 	Policy      access.Policy
@@ -61,7 +61,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		preferredName = updatedName
 		draft.Text = preferredNameAcknowledgement(preferredName, detectedLanguage(draft.Classification))
 	} else if preferredName == "" {
-		draft.Text = mergePreferredNamePrompt(draft.Text)
+		draft.Text = mergePreferredNamePrompt(draft.Text, detectedLanguage(draft.Classification))
 	}
 
 	response := qa.Response{Text: draft.Text}
@@ -302,13 +302,25 @@ func preferredNameAcknowledgement(name, language string) string {
 	return fmt.Sprintf("Nice to meet you, %s! I'll call you that.", name)
 }
 
-func mergePreferredNamePrompt(base string) string {
+func preferredNamePrompt(language string) string {
+	switch strings.ToLower(strings.TrimSpace(language)) {
+	case "ru", "russian", "русский":
+		return "Кстати, как мне тебя называть? Можешь написать: \"Зови меня Алекс\"."
+	case "kk", "kazakh", "қазақ", "қазақша":
+		return "Айтпақшы, сені қалай атайын? Мысалы: \"Мені Алекс деп ата\" деп жаза аласың."
+	default:
+		return preferredNamePromptEnglish
+	}
+}
+
+func mergePreferredNamePrompt(base, language string) string {
+	prompt := preferredNamePrompt(language)
 	base = strings.TrimSpace(base)
 	if base == "" {
-		return preferredNamePrompt
+		return prompt
 	}
-	if strings.Contains(base, preferredNamePrompt) {
+	if strings.Contains(base, prompt) {
 		return base
 	}
-	return base + "\n\n" + preferredNamePrompt
+	return base + "\n\n" + prompt
 }

@@ -178,7 +178,43 @@ func TestAskQuestionExecute(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Execute() error = %v", err)
 		}
-		if got, want := response.Text, "answer\n\n"+preferredNamePrompt; got != want {
+		if got, want := response.Text, "answer\n\n"+preferredNamePrompt(""); got != want {
+			t.Fatalf("response.Text = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("asks how to call user in detected russian language", func(t *testing.T) {
+		t.Parallel()
+
+		uc := AskQuestion{
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{TelegramID: authorizedUser.TelegramID}, true, nil
+				},
+			}),
+			Answers: fakeAnswerSource{
+				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
+					return qa.DraftResponse{
+						Text: "Привет! Как дела?",
+						Classification: &qa.MessageClassification{
+							DetectedLanguage: "ru",
+						},
+					}, nil
+				},
+			},
+			Attachments: fakeAttachmentResolver{
+				resolveFn: func(context.Context, []qa.AttachmentRef) ([]qa.Attachment, error) {
+					t.Fatal("Resolve should not be called")
+					return nil, nil
+				},
+			},
+		}
+
+		response, err := uc.Execute(context.Background(), authorizedUser, "Дарова")
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if got, want := response.Text, "Привет! Как дела?\n\n"+preferredNamePrompt("ru"); got != want {
 			t.Fatalf("response.Text = %q, want %q", got, want)
 		}
 	})
@@ -199,9 +235,9 @@ func TestAskQuestionExecute(t *testing.T) {
 					asked = true
 					return qa.DraftResponse{
 						Classification: &qa.MessageClassification{
-							Intent:        "CHIT_CHAT",
-							ProfileAction: "set_preferred_name",
-							PreferredName: "Test User",
+							Intent:           "CHIT_CHAT",
+							ProfileAction:    "set_preferred_name",
+							PreferredName:    "Test User",
 							DetectedLanguage: "en",
 						},
 					}, nil
@@ -252,9 +288,9 @@ func TestAskQuestionExecute(t *testing.T) {
 					asked = true
 					return qa.DraftResponse{
 						Classification: &qa.MessageClassification{
-							Intent:        "CHIT_CHAT",
-							ProfileAction: "set_preferred_name",
-							PreferredName: "Heisenberg",
+							Intent:           "CHIT_CHAT",
+							ProfileAction:    "set_preferred_name",
+							PreferredName:    "Heisenberg",
 							DetectedLanguage: "ru",
 						},
 					}, nil

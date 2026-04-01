@@ -84,6 +84,19 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertEqual(classification.profile_action, "set_preferred_name")
         self.assertEqual(classification.preferred_name, "Heisenberg")
 
+    def test_classify_query_prompt_guides_russian_vs_kazakh_cyrillic(self) -> None:
+        gateway, fake_client = self._gateway_with_output(
+            '{"intent":"FACTUAL_QUESTION","explain":"user asks what their name is in Russian","language":"ru","profile_action":"","preferred_name":""}'
+        )
+
+        classification, _ = gateway.classify_query("Как меня зовут?")
+
+        self.assertEqual(classification.language, "ru")
+        prompt = fake_client.responses.calls[0]["input"]
+        self.assertIn('Do NOT choose Kazakh just because the text is written in Cyrillic.', prompt)
+        self.assertIn('Prefer "ru" for standard Russian wording such as "Как меня зовут?"', prompt)
+        self.assertIn('Choose "kk" only when there are clear Kazakh signals', prompt)
+
     def test_classify_attachment_follow_up_extracts_resend_action(self) -> None:
         gateway, _ = self._gateway_with_output(
             '{"attachment_action":"resend_last_attachment","explain":"user asks to resend the previous file"}'

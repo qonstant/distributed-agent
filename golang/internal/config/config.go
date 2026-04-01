@@ -14,6 +14,7 @@ type Config struct {
 	TelegramToken        string
 	DBURL                string
 	LocalAPIURL          string
+	RabbitMQURL          string
 	DocRoot              string
 	SampleAlbumTitle     string
 	SampleAttachmentKeys []string
@@ -46,6 +47,7 @@ func Load() (Config, error) {
 		TelegramToken:        strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		DBURL:                strings.TrimSpace(os.Getenv("DB_URL")),
 		LocalAPIURL:          strings.TrimSpace(os.Getenv("LOCAL_API_URL")),
+		RabbitMQURL:          strings.TrimSpace(os.Getenv("RABBITMQ_URL")),
 		DocRoot:              strings.TrimSpace(os.Getenv("DOC_ROOT")),
 		SampleAlbumTitle:     defaultString(os.Getenv("SAMPLE_ALBUM_TITLE"), "📄 Residence permit documents"),
 		SampleAttachmentKeys: parseCSV(os.Getenv("SAMPLE_ATTACHMENT_KEYS")),
@@ -73,17 +75,30 @@ func Load() (Config, error) {
 		}
 	}
 
+	return cfg, nil
+}
+
+func (cfg Config) ValidateBot() error {
 	if cfg.TelegramToken == "" {
-		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is missing")
+		return fmt.Errorf("TELEGRAM_BOT_TOKEN is missing")
 	}
 	if cfg.DBURL == "" {
-		return Config{}, fmt.Errorf("DB_URL is missing")
+		return fmt.Errorf("DB_URL is missing")
 	}
 	if cfg.LocalAPIURL == "" {
-		return Config{}, fmt.Errorf("LOCAL_API_URL is missing")
+		return fmt.Errorf("LOCAL_API_URL is missing")
 	}
+	return nil
+}
 
-	return cfg, nil
+func (cfg Config) ValidateWorker() error {
+	if cfg.DBURL == "" {
+		return fmt.Errorf("DB_URL is missing")
+	}
+	if cfg.RabbitMQURL == "" {
+		return fmt.Errorf("RABBITMQ_URL is missing")
+	}
+	return nil
 }
 
 func defaultString(value, fallback string) string {

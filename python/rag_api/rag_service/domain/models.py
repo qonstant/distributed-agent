@@ -25,6 +25,17 @@ class Classification:
     intent: str
     explain: str = ""
     language: str = ""
+    model: str = ""
+    version: str = ""
+
+
+@dataclass(frozen=True)
+class UsageEventRecord:
+    event_type: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -53,3 +64,5 @@ class ConversationMessage:
 class QueryResult:
     answer: str
     file: Optional[str]
+    classification: Optional[Classification] = None
+    usage_events: List[UsageEventRecord] = field(default_factory=list)

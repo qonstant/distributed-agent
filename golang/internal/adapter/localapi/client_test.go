@@ -44,7 +44,7 @@ func TestClientAsk(t *testing.T) {
 				t.Fatal("conversation_id should be omitted for Ask()")
 			}
 
-			payload := `{"answer":"world","file":"docs/file.pdf"}`
+			payload := `{"answer":"world","file":"docs/file.pdf","classification":{"intent":"DOCUMENT_REQUEST","explain":"user asked for a file","language":"en","model":"gpt-4o-mini","version":"v1"},"usage_events":[{"event_type":"classification","input_tokens":0,"output_tokens":0,"total_tokens":0,"estimated_cost":0},{"event_type":"chat_completion","input_tokens":0,"output_tokens":0,"total_tokens":0,"estimated_cost":0}]}`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(payload)),
@@ -66,6 +66,18 @@ func TestClientAsk(t *testing.T) {
 		}
 		if got, want := response.AttachmentRefs[0].Kind, qa.AttachmentDocument; got != want {
 			t.Fatalf("response.AttachmentRefs[0].Kind = %q, want %q", got, want)
+		}
+		if response.Classification == nil {
+			t.Fatal("response.Classification = nil, want non-nil")
+		}
+		if got, want := response.Classification.Intent, "DOCUMENT_REQUEST"; got != want {
+			t.Fatalf("response.Classification.Intent = %q, want %q", got, want)
+		}
+		if len(response.UsageEvents) != 2 {
+			t.Fatalf("len(response.UsageEvents) = %d, want 2", len(response.UsageEvents))
+		}
+		if got, want := response.UsageEvents[1].EventType, "chat_completion"; got != want {
+			t.Fatalf("response.UsageEvents[1].EventType = %q, want %q", got, want)
 		}
 	})
 

@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from rag_service.domain.models import ConversationAttachment, ConversationMessage, QueryResult, RetrievedHit
+from rag_service.domain.models import (
+    Classification,
+    ConversationAttachment,
+    ConversationMessage,
+    QueryResult,
+    RetrievedHit,
+    UsageEventRecord,
+)
 from rag_service.infrastructure.prompts import (
     prepare_document_request_prompt,
     prepare_guidance_prompt,
@@ -81,6 +88,11 @@ def _find_previously_sent_attachment(
 
 def _duplicate_file_note(file_label: str, language: str) -> str:
     normalized_language = (language or "").strip().lower()
+    if normalized_language in {"kk", "kazakh", "қазақ", "қазақша"}:
+        return (
+            f"Мен бұл файлды осы диалогта бұрын жібергенмін: {file_label}. "
+            "Оны чаттың жоғарғы жағынан таба аласыз. Қаласаңыз, оны қайтадан жіберемін."
+        )
     if normalized_language in {"ru", "russian", "русский"}:
         return (
             f"Я уже отправлял этот файл ранее в этом диалоге: {file_label}. "
@@ -118,6 +130,22 @@ def _merge_answer_with_duplicate_note(answer: str, note: str) -> str:
     return f"{base}\n\n{note}"
 
 
+def _language_label(language: str) -> str:
+    normalized = (language or "").strip().lower()
+    mapping = {
+        "en": "English",
+        "english": "English",
+        "ru": "Russian",
+        "russian": "Russian",
+        "русский": "Russian",
+        "kk": "Kazakh",
+        "kazakh": "Kazakh",
+        "қазақ": "Kazakh",
+        "қазақша": "Kazakh",
+    }
+    return mapping.get(normalized, (language or "").strip())
+
+
 class QueryService:
     def __init__(self, gateway: "OpenAIGateway", store, conversation_memory=None) -> None:
         self._gateway = gateway
@@ -137,8 +165,10 @@ class QueryService:
 
         history = self._load_history(conversation_id)
         classification = self._gateway.classify_query(normalized_query, history=history)
+        usage_events = [UsageEventRecord(event_type="classification")]
         intent = classification.intent
         language = classification.language or ""
+        language_label = _language_label(language)
         print(
             f"[query] classifier -> intent={intent} lang={language} "
             f"explain={classification.explain}"
@@ -146,11 +176,21 @@ class QueryService:
 
         if intent in ("GREETING", "CHIT_CHAT"):
             greeting = self._gateway.generate_greeting_reply(normalized_query, language, history=history)
-            return QueryResult(answer=greeting, file=None)
+            return QueryResult(
+                answer=greeting,
+                file=None,
+                classification=classification,
+                usage_events=usage_events + [UsageEventRecord(event_type="chat_completion")],
+            )
 
         if intent == "FACTUAL_QUESTION":
             answer = self._gateway.answer_factual(normalized_query, language, history=history)
-            return QueryResult(answer=answer, file=None)
+            return QueryResult(
+                answer=answer,
+                file=None,
+                classification=classification,
+                usage_events=usage_events + [UsageEventRecord(event_type="chat_completion")],
+            )
 
         if intent in ("GUIDANCE", "DOCUMENT_REQUEST"):
             retrieval_query = normalized_query
@@ -171,6 +211,11 @@ class QueryService:
                 return QueryResult(
                     answer="I don't know based on the provided documents.",
                     file=None,
+                    classification=classification,
+                    usage_events=usage_events + [
+                        UsageEventRecord(event_type="embedding"),
+                        UsageEventRecord(event_type="rag_query"),
+                    ],
                 )
 
             best_file_agg, best_chunk = _aggregate_by_file(results)
@@ -182,8 +227,8 @@ class QueryService:
             else:
                 prompt = prepare_guidance_prompt(normalized_query, top_chunks, history=history)
 
-            if language:
-                prompt = f"Answer in the same language as detected: {language}\n\n" + prompt
+            if language_label:
+                prompt = f"Answer in the same language as detected: {language_label}\n\n" + prompt
             else:
                 prompt = "Answer in the same language as the user's query if possible.\n\n" + prompt
 
@@ -223,10 +268,24 @@ class QueryService:
                 print(f"[memory] skipping duplicate attachment resend for file={file_label}")
                 file_chosen = None
 
-            return QueryResult(answer=answer, file=file_chosen)
+            return QueryResult(
+                answer=answer,
+                file=file_chosen,
+                classification=classification,
+                usage_events=usage_events + [
+                    UsageEventRecord(event_type="embedding"),
+                    UsageEventRecord(event_type="rag_query"),
+                    UsageEventRecord(event_type="chat_completion"),
+                ],
+            )
 
         answer = self._gateway.answer_factual(normalized_query, language, history=history)
-        return QueryResult(answer=answer, file=None)
+        return QueryResult(
+            answer=answer,
+            file=None,
+            classification=classification,
+            usage_events=usage_events + [UsageEventRecord(event_type="chat_completion")],
+        )
 
     def _load_history(self, conversation_id: Optional[str]) -> List[ConversationMessage]:
         if not conversation_id or self._conversation_memory is None:

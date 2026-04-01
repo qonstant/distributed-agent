@@ -2,11 +2,14 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/qonstant/distributed-agent/internal/application/port"
 	"github.com/qonstant/distributed-agent/internal/domain/access"
+	"github.com/qonstant/distributed-agent/internal/domain/persistence"
 	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
 
@@ -15,6 +18,8 @@ type AskQuestion struct {
 	Answers     port.AnswerSource
 	Attachments port.AttachmentResolver
 	Memory      port.ConversationMemory
+	TurnEvents  port.TurnEventPublisher
+	Now         func() time.Time
 }
 
 func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string) (qa.Response, error) {
@@ -26,12 +31,19 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 	if err != nil {
 		return qa.Response{}, err
 	}
+	now := time.Now().UTC()
+	if uc.Now != nil {
+		now = uc.Now().UTC()
+	}
 
 	conversation := qa.ConversationContext{}
 	if uc.Memory != nil {
 		if loaded, err := uc.Memory.Context(ctx, user.TelegramID); err == nil {
 			conversation = loaded
 		}
+	}
+	if strings.TrimSpace(conversation.ID) == "" {
+		conversation.ID = fallbackConversationKey(user.TelegramID, now)
 	}
 
 	draft, err := askDraft(ctx, uc.Answers, question, conversation.ID)
@@ -45,6 +57,9 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		if uc.Memory != nil {
 			_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text, nil)
 		}
+		if uc.TurnEvents != nil {
+			_ = uc.TurnEvents.PublishTurn(ctx, buildTurnEvent(user, conversation.ID, question, draft, now))
+		}
 		return response, nil
 	}
 
@@ -57,6 +72,9 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 	memoryAttachments = toConversationAttachments(draft.AttachmentRefs, attachments)
 	if uc.Memory != nil {
 		_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text, memoryAttachments)
+	}
+	if uc.TurnEvents != nil {
+		_ = uc.TurnEvents.PublishTurn(ctx, buildTurnEvent(user, conversation.ID, question, draft, now))
 	}
 	return response, nil
 }
@@ -115,4 +133,75 @@ func toConversationAttachments(refs []qa.AttachmentRef, attachments []qa.Attachm
 		return nil
 	}
 	return out
+}
+
+func buildTurnEvent(
+	user access.User,
+	conversationID string,
+	question qa.Question,
+	draft qa.DraftResponse,
+	now time.Time,
+) persistence.TurnEvent {
+	event := persistence.TurnEvent{
+		Version: 1,
+		User: persistence.User{
+			TelegramID:  user.TelegramID,
+			Username:    strings.TrimSpace(user.Username),
+			DisplayName: strings.TrimSpace(user.DisplayName),
+		},
+		Conversation: persistence.Conversation{
+			Key:       strings.TrimSpace(conversationID),
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		UserMessage: persistence.Message{
+			Role:         qa.ConversationRoleUser,
+			Text:         question.Text,
+			LanguageCode: detectedLanguage(draft.Classification),
+			CreatedAt:    now,
+		},
+		AssistantMessage: persistence.Message{
+			Role:         qa.ConversationRoleAssistant,
+			Text:         draft.Text,
+			LanguageCode: detectedLanguage(draft.Classification),
+			CreatedAt:    now,
+		},
+	}
+
+	if draft.Classification != nil {
+		event.Classification = &persistence.MessageClassification{
+			Intent:            strings.TrimSpace(draft.Classification.Intent),
+			Explain:           strings.TrimSpace(draft.Classification.Explain),
+			DetectedLanguage:  strings.TrimSpace(draft.Classification.DetectedLanguage),
+			ClassifierModel:   strings.TrimSpace(draft.Classification.ClassifierModel),
+			ClassifierVersion: strings.TrimSpace(draft.Classification.ClassifierVersion),
+			CreatedAt:         now,
+		}
+	}
+	if len(draft.UsageEvents) > 0 {
+		event.UsageEvents = make([]persistence.UsageEvent, 0, len(draft.UsageEvents))
+		for _, usage := range draft.UsageEvents {
+			event.UsageEvents = append(event.UsageEvents, persistence.UsageEvent{
+				EventType:     strings.TrimSpace(usage.EventType),
+				InputTokens:   usage.InputTokens,
+				OutputTokens:  usage.OutputTokens,
+				TotalTokens:   usage.TotalTokens,
+				EstimatedCost: usage.EstimatedCost,
+				CreatedAt:     now,
+			})
+		}
+	}
+
+	return event
+}
+
+func detectedLanguage(classification *qa.MessageClassification) string {
+	if classification == nil {
+		return ""
+	}
+	return strings.TrimSpace(classification.DetectedLanguage)
+}
+
+func fallbackConversationKey(ownerID int64, now time.Time) string {
+	return fmt.Sprintf("%d-%d", ownerID, now.UnixNano())
 }

@@ -14,18 +14,23 @@ import (
 	"github.com/qonstant/distributed-agent/internal/adapter/chatmemory"
 	"github.com/qonstant/distributed-agent/internal/adapter/localapi"
 	"github.com/qonstant/distributed-agent/internal/adapter/postgres"
+	"github.com/qonstant/distributed-agent/internal/adapter/rabbitmq"
 	"github.com/qonstant/distributed-agent/internal/adapter/storage"
 	telegramadapter "github.com/qonstant/distributed-agent/internal/adapter/telegram"
 	"github.com/qonstant/distributed-agent/internal/application/port"
 	"github.com/qonstant/distributed-agent/internal/application/usecase"
 	"github.com/qonstant/distributed-agent/internal/config"
 	"github.com/qonstant/distributed-agent/internal/domain/access"
+	"github.com/qonstant/distributed-agent/internal/domain/persistence"
 	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
 
 func Run() error {
 	cfg, err := config.Load()
 	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateBot(); err != nil {
 		return err
 	}
 
@@ -40,6 +45,7 @@ func Run() error {
 
 	var directory access.Directory = accessDirectory
 	var memory port.ConversationMemory
+	var turnEvents port.TurnEventPublisher
 	if cfg.Redis.URL != "" {
 		redisStore, err := accesscache.NewRedisStore(cfg.Redis.URL)
 		if err != nil {
@@ -75,6 +81,16 @@ func Run() error {
 			)
 		}
 	}
+	if cfg.RabbitMQURL != "" {
+		publisher, err := rabbitmq.NewTurnPublisher(cfg.RabbitMQURL, persistence.TurnEventsQueueName)
+		if err != nil {
+			log.Printf("RabbitMQ turn publisher warning (continuing without turn events): %v", err)
+		} else {
+			defer publisher.Close()
+			turnEvents = publisher
+			log.Printf("Turn persistence events enabled (rabbitmq, queue=%s)", persistence.TurnEventsQueueName)
+		}
+	}
 
 	policy := access.NewPolicy(directory)
 
@@ -107,6 +123,7 @@ func Run() error {
 			Answers:     answerSource,
 			Attachments: resolver,
 			Memory:      memory,
+			TurnEvents:  turnEvents,
 		},
 		usecase.GetSampleAttachments{
 			Policy:         policy,

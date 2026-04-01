@@ -305,6 +305,7 @@ deploy-golang-prod:
     - 'printf "DB_URL=%s\n" "${DB_URL}" >> .env'
     - 'printf "LOCAL_API_URL=%s\n" "${LOCAL_API_URL}" >> .env'
     - 'printf "REDIS_URL=%s\n" "${REDIS_URL}" >> .env'
+    - 'printf "RABBITMQ_URL=%s\n" "${RABBITMQ_URL}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
@@ -331,6 +332,7 @@ deploy-golang-test:
     - 'printf "DB_URL=%s\n" "${DB_URL_TEST}" >> .env'
     - 'printf "LOCAL_API_URL=%s\n" "${LOCAL_API_URL_TEST}" >> .env'
     - 'printf "REDIS_URL=%s\n" "${REDIS_URL_TEST}" >> .env'
+    - 'printf "RABBITMQ_URL=%s\n" "${RABBITMQ_URL_TEST}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN_TEST}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'

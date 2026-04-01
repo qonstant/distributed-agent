@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from rag_service.application.query_service import QueryService
 from rag_service.infrastructure.config import load_settings
@@ -18,9 +18,27 @@ class QueryRequest(BaseModel):
     top_for_llm: Optional[int] = 8
 
 
+class ClassificationResponse(BaseModel):
+    intent: str
+    explain: str = ""
+    language: str = ""
+    model: str = ""
+    version: str = ""
+
+
+class UsageEventResponse(BaseModel):
+    event_type: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost: float = 0.0
+
+
 class QueryResponse(BaseModel):
     answer: str
     file: Optional[str] = None
+    classification: Optional[ClassificationResponse] = None
+    usage_events: list[UsageEventResponse] = Field(default_factory=list)
 
 
 def create_app() -> FastAPI:
@@ -61,7 +79,30 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return QueryResponse(answer=result.answer, file=result.file)
+        classification = None
+        if result.classification is not None:
+            classification = ClassificationResponse(
+                intent=result.classification.intent,
+                explain=result.classification.explain,
+                language=result.classification.language,
+                model=result.classification.model,
+                version=result.classification.version,
+            )
+        return QueryResponse(
+            answer=result.answer,
+            file=result.file,
+            classification=classification,
+            usage_events=[
+                UsageEventResponse(
+                    event_type=item.event_type,
+                    input_tokens=item.input_tokens,
+                    output_tokens=item.output_tokens,
+                    total_tokens=item.total_tokens,
+                    estimated_cost=item.estimated_cost,
+                )
+                for item in result.usage_events
+            ],
+        )
 
     return app
 

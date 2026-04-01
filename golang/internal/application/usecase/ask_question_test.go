@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/qonstant/distributed-agent/internal/domain/access"
+	"github.com/qonstant/distributed-agent/internal/domain/persistence"
 	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
 
@@ -57,6 +59,14 @@ func (f fakeConversationMemory) RememberTurn(
 	assistantAttachments []qa.ConversationAttachment,
 ) error {
 	return f.rememberTurnFn(ctx, ownerID, conversationID, userText, assistantText, assistantAttachments)
+}
+
+type fakeTurnEventPublisher struct {
+	publishFn func(context.Context, persistence.TurnEvent) error
+}
+
+func (f fakeTurnEventPublisher) PublishTurn(ctx context.Context, event persistence.TurnEvent) error {
+	return f.publishFn(ctx, event)
 }
 
 func TestAskQuestionExecute(t *testing.T) {
@@ -296,6 +306,8 @@ func TestAskQuestionExecute(t *testing.T) {
 			userText       string
 			assistantText  string
 		}
+		var published persistence.TurnEvent
+		now := time.Unix(1774920000, 0).UTC()
 
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
@@ -347,6 +359,13 @@ func TestAskQuestionExecute(t *testing.T) {
 					return nil
 				},
 			},
+			TurnEvents: fakeTurnEventPublisher{
+				publishFn: func(_ context.Context, event persistence.TurnEvent) error {
+					published = event
+					return nil
+				},
+			},
+			Now: func() time.Time { return now },
 		}
 
 		response, err := uc.Execute(context.Background(), authorizedUser, "hello")
@@ -367,6 +386,15 @@ func TestAskQuestionExecute(t *testing.T) {
 		}
 		if got, want := remembered.assistantText, "new answer"; got != want {
 			t.Fatalf("remembered.assistantText = %q, want %q", got, want)
+		}
+		if got, want := published.Conversation.Key, "conv-1"; got != want {
+			t.Fatalf("published.Conversation.Key = %q, want %q", got, want)
+		}
+		if got, want := published.UserMessage.Text, "hello"; got != want {
+			t.Fatalf("published.UserMessage.Text = %q, want %q", got, want)
+		}
+		if got, want := published.AssistantMessage.Text, "new answer"; got != want {
+			t.Fatalf("published.AssistantMessage.Text = %q, want %q", got, want)
 		}
 	})
 

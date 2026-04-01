@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -64,6 +65,11 @@ func (h *Handlers) Register(b *bot.Bot) {
 
 func (h *Handlers) HandleDefault(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update == nil || update.Message == nil || update.Message.From == nil {
+		return
+	}
+
+	if text, unsupported := unsupportedInputText(update); unsupported {
+		h.sendText(ctx, b, update.Message.Chat.ID, text)
 		return
 	}
 
@@ -234,4 +240,96 @@ func isPhotoAlbum(response qa.Response) bool {
 	}
 
 	return true
+}
+
+func unsupportedInputText(update *models.Update) (string, bool) {
+	if update == nil || update.Message == nil {
+		return "", false
+	}
+
+	if strings.TrimSpace(update.Message.Text) != "" {
+		return "", false
+	}
+
+	language := detectReplyLanguage(update)
+	if len(update.Message.Photo) > 0 {
+		return unsupportedImageMessage(language), true
+	}
+
+	if update.Message.Document != nil ||
+		update.Message.Video != nil ||
+		update.Message.VideoNote != nil ||
+		update.Message.Voice != nil ||
+		update.Message.Audio != nil ||
+		update.Message.Animation != nil ||
+		update.Message.Sticker != nil ||
+		update.Message.Contact != nil ||
+		update.Message.Location != nil ||
+		update.Message.Venue != nil ||
+		update.Message.Poll != nil {
+		return unsupportedGenericMessage(language), true
+	}
+
+	return unsupportedGenericMessage(language), true
+}
+
+func detectReplyLanguage(update *models.Update) string {
+	if update == nil || update.Message == nil {
+		return "en"
+	}
+
+	if update.Message.From != nil {
+		code := strings.ToLower(strings.TrimSpace(update.Message.From.LanguageCode))
+		switch {
+		case strings.HasPrefix(code, "kk"):
+			return "kk"
+		case strings.HasPrefix(code, "ru"):
+			return "ru"
+		case strings.HasPrefix(code, "en"):
+			return "en"
+		}
+	}
+
+	sample := strings.TrimSpace(update.Message.Text)
+	if sample == "" {
+		sample = strings.TrimSpace(update.Message.Caption)
+	}
+	if sample == "" {
+		return "en"
+	}
+
+	for _, r := range sample {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		if unicode.In(r, unicode.Cyrillic) {
+			return "ru"
+		}
+		if unicode.In(r, unicode.Latin) {
+			return "en"
+		}
+	}
+	return "en"
+}
+
+func unsupportedImageMessage(language string) string {
+	switch language {
+	case "ru":
+		return "Я пока не умею обрабатывать изображения. Пожалуйста, отправьте вопрос текстом."
+	case "kk":
+		return "Мен әзірге суреттерді өңдей алмаймын. Сұрағыңызды мәтінмен жіберіңіз."
+	default:
+		return "I can't process images yet. Please send your question as text."
+	}
+}
+
+func unsupportedGenericMessage(language string) string {
+	switch language {
+	case "ru":
+		return "Сейчас я принимаю только текстовые сообщения. Пожалуйста, отправьте вопрос текстом."
+	case "kk":
+		return "Қазір мен тек мәтіндік хабарламаларды қабылдаймын. Сұрағыңызды мәтінмен жіберіңіз."
+	default:
+		return "I currently accept text messages only. Please send your question as text."
+	}
 }

@@ -12,12 +12,48 @@ SUPPORTED_INTENTS = {
     "OTHER",
 }
 
+SUPPORTED_LANGUAGES = {
+    "kk",
+    "ru",
+    "en",
+    "other",
+}
+
 
 def normalize_intent(intent: str) -> str:
     value = (intent or "").strip().upper()
     if value not in SUPPORTED_INTENTS:
         return "OTHER"
     return value
+
+
+def normalize_language(language: str) -> str:
+    value = (language or "").strip().lower()
+    mapping = {
+        "kk": "kk",
+        "kazakh": "kk",
+        "қазақ": "kk",
+        "қазақша": "kk",
+        "kaz": "kk",
+        "kz": "kk",
+        "ru": "ru",
+        "russian": "ru",
+        "русский": "ru",
+        "рус": "ru",
+        "en": "en",
+        "english": "en",
+        "английский": "en",
+        "eng": "en",
+        "other": "other",
+        "unknown": "other",
+        "mixed": "other",
+        "und": "other",
+        "": "other",
+    }
+    normalized = mapping.get(value, value)
+    if normalized not in SUPPORTED_LANGUAGES:
+        return "other"
+    return normalized
 
 
 @dataclass(frozen=True)

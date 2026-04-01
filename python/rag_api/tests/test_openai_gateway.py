@@ -19,21 +19,22 @@ from rag_service.infrastructure.openai_gateway import OpenAIGateway
 
 
 class FakeResponses:
-    def __init__(self) -> None:
+    def __init__(self, output_text: str) -> None:
+        self.output_text = output_text
         self.calls = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(output_text='{"intent":"GREETING","explain":"short greeting"}')
+        return SimpleNamespace(output_text=self.output_text)
 
 
 class FakeClient:
-    def __init__(self) -> None:
-        self.responses = FakeResponses()
+    def __init__(self, output_text: str) -> None:
+        self.responses = FakeResponses(output_text)
 
 
 class OpenAIGatewayTests(unittest.TestCase):
-    def test_classify_query_uses_local_language_detection(self) -> None:
+    def _gateway_with_output(self, output_text: str) -> tuple[OpenAIGateway, FakeClient]:
         settings = SimpleNamespace(
             openai_api_key="test-key",
             embed_model="text-embedding-3-small",
@@ -41,16 +42,29 @@ class OpenAIGatewayTests(unittest.TestCase):
             class_model="gpt-4o-mini",
         )
         gateway = OpenAIGateway(settings)
-        fake_client = FakeClient()
+        fake_client = FakeClient(output_text)
         gateway._client = fake_client
+        return gateway, fake_client
 
-        classification = gateway.classify_query("Сәлем")
+    def test_classify_query_normalizes_language_to_supported_codes(self) -> None:
+        gateway, fake_client = self._gateway_with_output(
+            '{"intent":"GREETING","explain":"short greeting","language":"Russian"}'
+        )
+
+        classification = gateway.classify_query("hello")
 
         self.assertEqual(classification.intent, "GREETING")
-        self.assertEqual(classification.language, "kk")
-        self.assertEqual(classification.model, "gpt-4o-mini")
+        self.assertEqual(classification.language, "ru")
         self.assertEqual(len(fake_client.responses.calls), 1)
-        self.assertNotIn('"language"', fake_client.responses.calls[0]["input"])
+
+    def test_classify_query_maps_unknown_language_to_other(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"intent":"OTHER","explain":"unsupported language","language":"German"}'
+        )
+
+        classification = gateway.classify_query("hallo")
+
+        self.assertEqual(classification.language, "other")
 
 
 if __name__ == "__main__":

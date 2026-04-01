@@ -8,7 +8,6 @@ from openai import OpenAI
 
 from rag_service.domain.models import Classification, ConversationMessage, normalize_intent
 from rag_service.infrastructure.config import Settings
-from rag_service.infrastructure.language_detection import detect_language
 from rag_service.infrastructure.prompts import build_history_lines
 
 
@@ -32,14 +31,13 @@ class OpenAIGateway:
         query: str,
         history: Optional[List[ConversationMessage]] = None,
     ) -> Classification:
-        detected_language = detect_language(query, history=history)
         history_block = self._history_block(history)
         prompt = (
-            "You are a compact intent classifier. Given the user's latest input and optional recent conversation context below, "
-            "return a JSON object with EXACTLY two keys:\n"
+            "You are a compact intent classifier and language detector. Given the user's latest input and optional recent conversation context below, "
+            "return a JSON object with EXACTLY three keys:\n"
             " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"GUIDANCE\",\"DOCUMENT_REQUEST\",\"OTHER\"]\n"
             " - \"explain\": one short sentence explaining why\n"
-            "\n"
+            " - \"language\": the detected language name or two-letter code (e.g. \"Russian\" or \"ru\")\n\n"
             "Definitions/examples:\n"
             " - GREETING: short hello/goodbye messages (no docs needed)\n"
             " - CHIT_CHAT: small talk / thanks / compliment (no docs)\n"
@@ -48,7 +46,7 @@ class OpenAIGateway:
             " - DOCUMENT_REQUEST: user explicitly requests a document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n"
             " - OTHER: none of the above\n\n"
             "Respond ONLY with valid JSON (no extra text). Example:\n"
-            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for residency\"}\n\n"
+            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for residency\",\"language\":\"ru\"}\n\n"
             f"{history_block}"
             f"Latest user input: {json.dumps(query)}\n"
         )
@@ -63,11 +61,12 @@ class OpenAIGateway:
             parsed = self._extract_json(raw_text) or {
                 "intent": "OTHER",
                 "explain": raw_text,
+                "language": "",
             }
             return Classification(
                 intent=normalize_intent(parsed.get("intent", "")),
                 explain=str(parsed.get("explain") or ""),
-                language=detected_language,
+                language=str(parsed.get("language") or "").strip(),
                 model=self._settings.class_model,
             )
         except Exception as exc:
@@ -75,7 +74,7 @@ class OpenAIGateway:
             return Classification(
                 intent="OTHER",
                 explain=f"classifier error: {exc}",
-                language=detected_language,
+                language="",
                 model=self._settings.class_model,
             )
 

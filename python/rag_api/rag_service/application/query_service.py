@@ -134,14 +134,9 @@ def _language_label(language: str) -> str:
     normalized = (language or "").strip().lower()
     mapping = {
         "en": "English",
-        "english": "English",
         "ru": "Russian",
-        "russian": "Russian",
-        "русский": "Russian",
         "kk": "Kazakh",
-        "kazakh": "Kazakh",
-        "қазақ": "Kazakh",
-        "қазақша": "Kazakh",
+        "other": "",
     }
     return mapping.get(normalized, (language or "").strip())
 

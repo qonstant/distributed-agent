@@ -73,35 +73,53 @@ func (h *Handlers) HandleDefault(ctx context.Context, b *bot.Bot, update *models
 	}
 
 	user := userFromUpdate(update)
+	progress := StartProgressMessage(ctx, b, update.Message.Chat.ID)
 	response, err := h.ask.Execute(ctx, user, update.Message.Text)
 	if err != nil {
-		if h.handleAccessError(ctx, b, update.Message.Chat.ID, err) {
+		if errors.Is(err, access.ErrUnauthorized) {
+			if progress != nil {
+				_ = progress.Replace(ctx, h.accessDeniedText)
+			} else {
+				h.sendText(ctx, b, update.Message.Chat.ID, h.accessDeniedText)
+			}
 			return
 		}
 
 		log.Printf("[defaultHandler] ask question failed for %s: %v", user.DisplayName, err)
 		if strings.TrimSpace(response.Text) != "" {
+			text := fmt.Sprintf("%s\n\n(Не удалось подготовить вложения: %v)", response.Text, err)
+			if progress != nil {
+				_ = progress.Replace(ctx, text)
+			} else {
+				h.sendText(ctx, b, update.Message.Chat.ID, text)
+			}
+			return
+		}
+
+		text := fmt.Sprintf("Ошибка обращения к локальному API: %v", err)
+		if progress != nil {
+			_ = progress.Replace(ctx, text)
+		} else {
+			h.sendText(ctx, b, update.Message.Chat.ID, text)
+		}
+		return
+	}
+
+	if err := h.presenter.PresentWithProgress(ctx, b, update.Message.Chat.ID, response, progress); err != nil {
+		log.Printf("[defaultHandler] present failed for %s: %v", user.DisplayName, err)
+		if progress != nil {
+			_ = progress.Replace(
+				ctx,
+				fmt.Sprintf("%s\n\n(Не удалось отправить файл: %v)", response.Text, err),
+			)
+		} else {
 			h.sendText(
 				ctx,
 				b,
 				update.Message.Chat.ID,
-				fmt.Sprintf("%s\n\n(Не удалось подготовить вложения: %v)", response.Text, err),
+				fmt.Sprintf("%s\n\n(Не удалось отправить файл: %v)", response.Text, err),
 			)
-			return
 		}
-
-		h.sendText(ctx, b, update.Message.Chat.ID, fmt.Sprintf("Ошибка обращения к локальному API: %v", err))
-		return
-	}
-
-	if err := h.presenter.Present(ctx, b, update.Message.Chat.ID, response); err != nil {
-		log.Printf("[defaultHandler] present failed for %s: %v", user.DisplayName, err)
-		h.sendText(
-			ctx,
-			b,
-			update.Message.Chat.ID,
-			fmt.Sprintf("%s\n\n(Не удалось отправить файл: %v)", response.Text, err),
-		)
 	}
 }
 

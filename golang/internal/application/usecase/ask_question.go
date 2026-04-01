@@ -69,7 +69,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 	if introOnly {
 		draft.Text = preferredNameAcknowledgement(preferredName)
 	} else {
-		draft, err = askDraft(ctx, uc.Answers, question, conversation.ID)
+		draft, err = askDraft(ctx, uc.Answers, question, conversation.ID, preferredName)
 		if err != nil {
 			return qa.Response{}, err
 		}
@@ -83,6 +83,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 	response := qa.Response{Text: draft.Text}
 	var memoryAttachments []qa.ConversationAttachment
 	if len(draft.AttachmentRefs) == 0 {
+		uc.rememberUserProfile(ctx, record, preferredName)
 		if uc.Memory != nil {
 			_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text, nil)
 		}
@@ -99,6 +100,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 
 	response.Attachments = attachments
 	memoryAttachments = toConversationAttachments(draft.AttachmentRefs, attachments)
+	uc.rememberUserProfile(ctx, record, preferredName)
 	if uc.Memory != nil {
 		_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text, memoryAttachments)
 	}
@@ -113,12 +115,31 @@ func askDraft(
 	answers port.AnswerSource,
 	question qa.Question,
 	conversationID string,
+	preferredName string,
 ) (qa.DraftResponse, error) {
 	if contextual, ok := answers.(port.ConversationAwareAnswerSource); ok {
-		return contextual.AskWithConversation(ctx, question, conversationID)
+		return contextual.AskWithConversation(ctx, question, conversationID, preferredName)
 	}
 
 	return answers.Ask(ctx, question)
+}
+
+func (uc AskQuestion) rememberUserProfile(ctx context.Context, record access.Record, preferredName string) {
+	if record.TelegramID == 0 {
+		return
+	}
+
+	name := strings.TrimSpace(preferredName)
+	if name == "" {
+		name = strings.TrimSpace(record.Username)
+	}
+
+	_ = uc.Policy.RememberRecord(ctx, access.Record{
+		TelegramID:      record.TelegramID,
+		Username:        name,
+		IsBlocked:       record.IsBlocked,
+		AccessExpiresAt: record.AccessExpiresAt,
+	})
 }
 
 func toConversationAttachments(refs []qa.AttachmentRef, attachments []qa.Attachment) []qa.ConversationAttachment {

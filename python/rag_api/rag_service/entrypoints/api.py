@@ -14,6 +14,7 @@ from rag_service.infrastructure.openai_gateway import OpenAIGateway
 class QueryRequest(BaseModel):
     query: str
     conversation_id: Optional[str] = None
+    preferred_name: Optional[str] = None
     raw_k: Optional[int] = 64
     top_for_llm: Optional[int] = 8
 
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
             result = query_service.handle_query(
                 req.query,
                 conversation_id=req.conversation_id,
+                preferred_name=req.preferred_name,
                 raw_k=req.raw_k,
                 top_for_llm=req.top_for_llm,
             )

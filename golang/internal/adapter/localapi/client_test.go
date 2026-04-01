@@ -43,6 +43,9 @@ func TestClientAsk(t *testing.T) {
 			if _, ok := body["conversation_id"]; ok {
 				t.Fatal("conversation_id should be omitted for Ask()")
 			}
+			if _, ok := body["preferred_name"]; ok {
+				t.Fatal("preferred_name should be omitted for Ask()")
+			}
 
 			payload := `{"answer":"world","file":"docs/file.pdf","classification":{"intent":"DOCUMENT_REQUEST","explain":"user asked for a file","language":"en","model":"gpt-4o-mini","version":"v1"},"usage_events":[{"event_type":"classification","input_tokens":0,"output_tokens":0,"total_tokens":0,"estimated_cost":0},{"event_type":"chat_completion","input_tokens":0,"output_tokens":0,"total_tokens":0,"estimated_cost":0}]}`
 			return &http.Response{
@@ -96,6 +99,9 @@ func TestClientAsk(t *testing.T) {
 			if got, want := body["conversation_id"], "conv-1"; got != want {
 				t.Fatalf("conversation_id = %q, want %q", got, want)
 			}
+			if got, want := body["preferred_name"], "Stored Name"; got != want {
+				t.Fatalf("preferred_name = %q, want %q", got, want)
+			}
 
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -104,7 +110,7 @@ func TestClientAsk(t *testing.T) {
 			}, nil
 		})}
 
-		response, err := client.AskWithConversation(context.Background(), qa.Question{Text: "hello"}, "conv-1")
+		response, err := client.AskWithConversation(context.Background(), qa.Question{Text: "hello"}, "conv-1", "Stored Name")
 		if err != nil {
 			t.Fatalf("AskWithConversation() error = %v", err)
 		}

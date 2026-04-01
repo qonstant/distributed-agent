@@ -42,6 +42,14 @@ func (p Policy) AccessMode() string {
 	return "users table"
 }
 
+func (p Policy) RememberRecord(ctx context.Context, record Record) error {
+	refresher, ok := p.directory.(RecordRefresher)
+	if !ok {
+		return nil
+	}
+	return refresher.StoreRecord(ctx, record)
+}
+
 func normalizeUsername(value string) string {
 	return strings.TrimPrefix(strings.TrimSpace(value), "@")
 }

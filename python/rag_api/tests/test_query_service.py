@@ -23,7 +23,7 @@ class FakeGateway:
     def __init__(self, classification: Classification) -> None:
         self.classification = classification
         self.classify_calls: list[tuple[str, list[ConversationMessage]]] = []
-        self.answer_factual_calls: list[tuple[str, str, list[ConversationMessage]]] = []
+        self.answer_factual_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
         self.rewrite_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.embedded_queries: list[str] = []
         self.generated_prompts: list[str] = []
@@ -38,11 +38,11 @@ class FakeGateway:
         self.classify_calls.append((query, history or []))
         return self.classification, self.classification_usage
 
-    def generate_greeting_reply(self, user_text: str, language_hint: str, history=None):
+    def generate_greeting_reply(self, user_text: str, language_hint: str, preferred_name: str = "", history=None):
         return "hello", self.greeting_usage
 
-    def answer_factual(self, query: str, language_hint: str, history=None):
-        self.answer_factual_calls.append((query, language_hint, history or []))
+    def answer_factual(self, query: str, language_hint: str, preferred_name: str = "", history=None):
+        self.answer_factual_calls.append((query, language_hint, preferred_name, history or []))
         return "The test code is ALPHA-123.", self.factual_usage
 
     def rewrite_query_with_history(self, query: str, history=None):
@@ -86,7 +86,7 @@ class QueryServiceTests(unittest.TestCase):
         memory = FakeConversationMemory(history)
         service = QueryService(gateway, FakeStore(), conversation_memory=memory)
 
-        result = service.handle_query("What is the test code?", conversation_id="conv-1")
+        result = service.handle_query("What is the test code?", conversation_id="conv-1", preferred_name="Test User")
 
         self.assertEqual(
             result,
@@ -102,7 +102,7 @@ class QueryServiceTests(unittest.TestCase):
         )
         self.assertEqual(memory.requested_ids, ["conv-1"])
         self.assertEqual(gateway.classify_calls, [("What is the test code?", history)])
-        self.assertEqual(gateway.answer_factual_calls, [("What is the test code?", "en", history)])
+        self.assertEqual(gateway.answer_factual_calls, [("What is the test code?", "en", "Test User", history)])
 
     def test_document_request_rewrites_retrieval_query_and_includes_history_in_prompt(self) -> None:
         history = [
@@ -125,7 +125,7 @@ class QueryServiceTests(unittest.TestCase):
         ]
         service = QueryService(gateway, FakeStore(results), conversation_memory=memory)
 
-        result = service.handle_query("Which sample guide was that?", conversation_id="conv-1")
+        result = service.handle_query("Which sample guide was that?", conversation_id="conv-1", preferred_name="Test User")
 
         self.assertEqual(
             result,
@@ -148,6 +148,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.rewrite_calls, [("Which sample guide was that?", history)])
         self.assertEqual(gateway.embedded_queries, ["sample onboarding guide pdf"])
         self.assertEqual(len(gateway.generated_prompts), 1)
+        self.assertIn("Preferred user name: Test User", gateway.generated_prompts[0])
         self.assertIn("Recent conversation context", gateway.generated_prompts[0])
         self.assertIn("user: Send me the sample onboarding guide", gateway.generated_prompts[0])
 
@@ -171,7 +172,7 @@ class QueryServiceTests(unittest.TestCase):
         ]
         service = QueryService(gateway, FakeStore(results), conversation_memory=memory)
 
-        result = service.handle_query("Please resend the file", conversation_id="conv-1")
+        result = service.handle_query("Please resend the file", conversation_id="conv-1", preferred_name="Test User")
 
         self.assertEqual(
             result,
@@ -201,8 +202,10 @@ class QueryServiceTests(unittest.TestCase):
             "send that one again",
             [RetrievedHit(score=1.0, nid=1, meta={"source_file": "doc.pdf", "page": 1, "text": "excerpt"})],
             history=history,
+            preferred_name="Test User",
         )
 
+        self.assertIn("Preferred user name: Test User", prompt)
         self.assertIn("Recent conversation context", prompt)
         self.assertIn("assistant: I sent the sample.", prompt)
         self.assertIn("attachments sent: document(docs/test-guide.pdf)", prompt)

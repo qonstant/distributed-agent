@@ -44,10 +44,23 @@ def build_history_lines(history: Optional[List[ConversationMessage]], header: st
     return lines
 
 
+def build_personalization_lines(preferred_name: Optional[str]) -> List[str]:
+    name = (preferred_name or "").strip()
+    if not name:
+        return []
+
+    return [
+        f"Preferred user name: {name}",
+        "If it sounds natural, address the user by this name once in the answer. Do not invent any other personal details.",
+        "",
+    ]
+
+
 def prepare_document_request_prompt(
     query: str,
     top_chunks: List[RetrievedHit],
     history: Optional[List[ConversationMessage]] = None,
+    preferred_name: Optional[str] = None,
 ) -> str:
     lines = [
         "You are a strict document retriever. Use ONLY the excerpts below; do NOT invent or generalize beyond them.",
@@ -55,6 +68,7 @@ def prepare_document_request_prompt(
         query,
         "",
     ]
+    lines.extend(build_personalization_lines(preferred_name))
     lines.extend(
         build_history_lines(
             history,
@@ -90,6 +104,7 @@ def prepare_guidance_prompt(
     query: str,
     top_chunks: List[RetrievedHit],
     history: Optional[List[ConversationMessage]] = None,
+    preferred_name: Optional[str] = None,
 ) -> str:
     lines = [
         "You are an assistant that gives practical guidance using ONLY the provided document excerpts. Do NOT invent facts.",
@@ -97,6 +112,7 @@ def prepare_guidance_prompt(
         query,
         "",
     ]
+    lines.extend(build_personalization_lines(preferred_name))
     lines.extend(
         build_history_lines(
             history,

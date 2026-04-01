@@ -71,6 +71,20 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertEqual(classification.language, "other")
         self.assertIsNone(usage)
 
+    def test_answer_factual_includes_preferred_name_in_prompt(self) -> None:
+        gateway, fake_client = self._gateway_with_output(
+            "The code is ALPHA-123.",
+            usage=SimpleNamespace(input_tokens=15, output_tokens=6, total_tokens=21),
+        )
+
+        answer, usage = gateway.answer_factual("What is the test code?", "en", preferred_name="Test User")
+
+        self.assertEqual(answer, "The code is ALPHA-123.")
+        self.assertIsNotNone(usage)
+        self.assertEqual(len(fake_client.responses.calls), 1)
+        prompt = fake_client.responses.calls[0]["input"]
+        self.assertIn("Preferred user name: Test User", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -159,12 +159,14 @@ class QueryService:
         self,
         query: str,
         conversation_id: Optional[str] = None,
+        preferred_name: Optional[str] = None,
         raw_k: Optional[int] = None,
         top_for_llm: Optional[int] = None,
     ) -> QueryResult:
         normalized_query = (query or "").strip()
         if not normalized_query:
             raise ValueError("query is empty")
+        normalized_preferred_name = (preferred_name or "").strip()
 
         history = self._load_history(conversation_id)
         classification, classification_usage = self._gateway.classify_query(normalized_query, history=history)
@@ -188,6 +190,7 @@ class QueryService:
             greeting, completion_usage = self._gateway.generate_greeting_reply(
                 normalized_query,
                 language,
+                preferred_name=normalized_preferred_name,
                 history=history,
             )
             return QueryResult(
@@ -209,6 +212,7 @@ class QueryService:
             answer, completion_usage = self._gateway.answer_factual(
                 normalized_query,
                 language,
+                preferred_name=normalized_preferred_name,
                 history=history,
             )
             return QueryResult(
@@ -261,9 +265,19 @@ class QueryService:
             top_chunks = results[:top_n]
 
             if intent == "DOCUMENT_REQUEST":
-                prompt = prepare_document_request_prompt(normalized_query, top_chunks, history=history)
+                prompt = prepare_document_request_prompt(
+                    normalized_query,
+                    top_chunks,
+                    history=history,
+                    preferred_name=normalized_preferred_name,
+                )
             else:
-                prompt = prepare_guidance_prompt(normalized_query, top_chunks, history=history)
+                prompt = prepare_guidance_prompt(
+                    normalized_query,
+                    top_chunks,
+                    history=history,
+                    preferred_name=normalized_preferred_name,
+                )
 
             if language_label:
                 prompt = f"Answer in the same language as detected: {language_label}\n\n" + prompt
@@ -318,6 +332,7 @@ class QueryService:
         answer, completion_usage = self._gateway.answer_factual(
             normalized_query,
             language,
+            preferred_name=normalized_preferred_name,
             history=history,
         )
         return QueryResult(

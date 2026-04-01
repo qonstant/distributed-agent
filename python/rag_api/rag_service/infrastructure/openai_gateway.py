@@ -14,7 +14,7 @@ from rag_service.domain.models import (
     normalize_language,
 )
 from rag_service.infrastructure.config import Settings
-from rag_service.infrastructure.prompts import build_history_lines
+from rag_service.infrastructure.prompts import build_history_lines, build_personalization_lines
 
 
 class OpenAIGateway:
@@ -99,6 +99,7 @@ class OpenAIGateway:
         self,
         user_text: str,
         language_hint: str,
+        preferred_name: str = "",
         history: Optional[List[ConversationMessage]] = None,
     ) -> tuple[str, Optional[ModelUsage]]:
         language_name = self._language_name(language_hint)
@@ -108,10 +109,13 @@ class OpenAIGateway:
             else "in the same language as the user"
         )
         history_block = self._history_block(history)
+        personalization_block = self._personalization_block(preferred_name)
         prompt = (
             f"{history_block}"
+            f"{personalization_block}"
             f"The user wrote: {json.dumps(user_text)}\n\n"
             f"Produce a single short friendly reply ({lang_instruction}). Keep it to one short sentence (<=20 words). "
+            "If a preferred user name is available, start the reply with it when natural. "
             "Do NOT include file paths or any extra commentary. Return only the reply text."
         )
         try:
@@ -137,6 +141,7 @@ class OpenAIGateway:
         self,
         query: str,
         language_hint: str,
+        preferred_name: str = "",
         history: Optional[List[ConversationMessage]] = None,
     ) -> tuple[str, Optional[ModelUsage]]:
         language_name = self._language_name(language_hint)
@@ -146,8 +151,10 @@ class OpenAIGateway:
             else "Answer in the same language as the user."
         )
         history_block = self._history_block(history)
+        personalization_block = self._personalization_block(preferred_name)
         prompt = (
             f"{history_block}"
+            f"{personalization_block}"
             f"You are a concise helpful assistant. {lang_instruction} "
             "Answer the user question briefly (1-2 short paragraphs). Use recent conversation context when it is relevant. Do NOT include any file paths or suggest internal document locations.\n\n"
             f"Question: {query}\n\nAnswer:"
@@ -285,6 +292,13 @@ class OpenAIGateway:
         if not lines:
             return ""
         return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _personalization_block(preferred_name: str) -> str:
+        lines = build_personalization_lines(preferred_name)
+        if not lines:
+            return ""
+        return "\n".join(lines)
 
     @staticmethod
     def _language_name(language_hint: str) -> str:

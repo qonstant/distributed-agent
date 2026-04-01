@@ -12,15 +12,19 @@ import (
 )
 
 type fakeAnswerSource struct {
-	askFn                 func(context.Context, qa.Question) (qa.DraftResponse, error)
-	askWithConversationFn func(context.Context, qa.Question, string) (qa.DraftResponse, error)
+	askFn                      func(context.Context, qa.Question) (qa.DraftResponse, error)
+	askWithConversationFn      func(context.Context, qa.Question, string) (qa.DraftResponse, error)
+	askWithConversationNamedFn func(context.Context, qa.Question, string, string) (qa.DraftResponse, error)
 }
 
 func (f fakeAnswerSource) Ask(ctx context.Context, question qa.Question) (qa.DraftResponse, error) {
 	return f.askFn(ctx, question)
 }
 
-func (f fakeAnswerSource) AskWithConversation(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
+func (f fakeAnswerSource) AskWithConversation(ctx context.Context, question qa.Question, conversationID, preferredName string) (qa.DraftResponse, error) {
+	if f.askWithConversationNamedFn != nil {
+		return f.askWithConversationNamedFn(ctx, question, conversationID, preferredName)
+	}
 	if f.askWithConversationFn != nil {
 		return f.askWithConversationFn(ctx, question, conversationID)
 	}
@@ -393,12 +397,15 @@ func TestAskQuestionExecute(t *testing.T) {
 					t.Fatal("Ask should not be called when AskWithConversation is available")
 					return qa.DraftResponse{}, nil
 				},
-				askWithConversationFn: func(_ context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
+				askWithConversationNamedFn: func(_ context.Context, question qa.Question, conversationID, preferredName string) (qa.DraftResponse, error) {
 					if got, want := question.Text, "hello"; got != want {
 						t.Fatalf("question.Text = %q, want %q", got, want)
 					}
 					if got, want := conversationID, "conv-1"; got != want {
 						t.Fatalf("conversationID = %q, want %q", got, want)
+					}
+					if got, want := preferredName, "Stored Name"; got != want {
+						t.Fatalf("preferredName = %q, want %q", got, want)
 					}
 					return qa.DraftResponse{Text: "new answer"}, nil
 				},

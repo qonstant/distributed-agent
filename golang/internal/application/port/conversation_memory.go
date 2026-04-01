@@ -12,5 +12,5 @@ type ConversationMemory interface {
 }
 
 type ConversationAwareAnswerSource interface {
-	AskWithConversation(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error)
+	AskWithConversation(ctx context.Context, question qa.Question, conversationID, preferredName string) (qa.DraftResponse, error)
 }

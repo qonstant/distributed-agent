@@ -21,6 +21,7 @@ type Client struct {
 type queryRequest struct {
 	Query          string `json:"query"`
 	ConversationID string `json:"conversation_id,omitempty"`
+	PreferredName  string `json:"preferred_name,omitempty"`
 }
 
 func NewClient(apiURL string) *Client {
@@ -33,17 +34,18 @@ func NewClient(apiURL string) *Client {
 }
 
 func (c *Client) Ask(ctx context.Context, question qa.Question) (qa.DraftResponse, error) {
-	return c.ask(ctx, question, "")
+	return c.ask(ctx, question, "", "")
 }
 
-func (c *Client) AskWithConversation(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
-	return c.ask(ctx, question, conversationID)
+func (c *Client) AskWithConversation(ctx context.Context, question qa.Question, conversationID, preferredName string) (qa.DraftResponse, error) {
+	return c.ask(ctx, question, conversationID, preferredName)
 }
 
-func (c *Client) ask(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
+func (c *Client) ask(ctx context.Context, question qa.Question, conversationID, preferredName string) (qa.DraftResponse, error) {
 	body := queryRequest{
 		Query:          question.Text,
 		ConversationID: strings.TrimSpace(conversationID),
+		PreferredName:  strings.TrimSpace(preferredName),
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

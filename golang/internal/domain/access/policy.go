@@ -19,18 +19,23 @@ func NewPolicy(directory Directory) Policy {
 }
 
 func (p Policy) Authorize(ctx context.Context, user User) error {
+	_, err := p.AuthorizeAndLoad(ctx, user)
+	return err
+}
+
+func (p Policy) AuthorizeAndLoad(ctx context.Context, user User) (Record, error) {
 	if user.TelegramID == 0 {
-		return ErrUnauthorized
+		return Record{}, ErrUnauthorized
 	}
 
 	record, found, err := p.directory.FindByTelegramID(ctx, user.TelegramID)
 	if err != nil {
-		return err
+		return Record{}, err
 	}
 	if !found || !record.Allows(p.now()) {
-		return ErrUnauthorized
+		return Record{}, ErrUnauthorized
 	}
-	return nil
+	return record, nil
 }
 
 func (p Policy) AccessMode() string {

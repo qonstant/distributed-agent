@@ -4,6 +4,7 @@ import "time"
 
 type Record struct {
 	TelegramID      int64
+	Username        string
 	IsBlocked       bool
 	AccessExpiresAt *time.Time
 }

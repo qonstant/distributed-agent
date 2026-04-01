@@ -185,7 +185,7 @@ func userFromUpdate(update *models.Update) access.User {
 
 	return access.User{
 		TelegramID:  int64(update.Message.From.ID),
-		Username:    update.Message.From.Username,
+		Username:    "",
 		DisplayName: displayName(update),
 	}
 }

@@ -4,14 +4,30 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/qonstant/distributed-agent/internal/application/port"
 	"github.com/qonstant/distributed-agent/internal/domain/access"
 	"github.com/qonstant/distributed-agent/internal/domain/persistence"
 	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
+
+var preferredNamePatterns = []struct {
+	pattern *regexp.Regexp
+	anchor  bool
+}{
+	{pattern: regexp.MustCompile(`(?i)^\s*my name is\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
+	{pattern: regexp.MustCompile(`(?i)^\s*call me\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
+	{pattern: regexp.MustCompile(`(?i)^\s*меня зовут\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
+	{pattern: regexp.MustCompile(`(?i)^\s*зови меня\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
+	{pattern: regexp.MustCompile(`(?i)^\s*менің атым\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
+	{pattern: regexp.MustCompile(`(?i)^\s*мені\s+(.+?)\s+деп ата\s*[.!?]*\s*$`), anchor: true},
+}
+
+const preferredNamePrompt = "By the way, how should I call you? You can say: \"Call me Alex\"."
 
 type AskQuestion struct {
 	Policy      access.Policy
@@ -23,7 +39,8 @@ type AskQuestion struct {
 }
 
 func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string) (qa.Response, error) {
-	if err := uc.Policy.Authorize(ctx, user); err != nil {
+	record, err := uc.Policy.AuthorizeAndLoad(ctx, user)
+	if err != nil {
 		return qa.Response{}, err
 	}
 
@@ -36,6 +53,8 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		now = uc.Now().UTC()
 	}
 
+	preferredName, detectedName, introOnly := resolvePreferredName(record.Username, question.Text)
+
 	conversation := qa.ConversationContext{}
 	if uc.Memory != nil {
 		if loaded, err := uc.Memory.Context(ctx, user.TelegramID); err == nil {
@@ -46,9 +65,19 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		conversation.ID = fallbackConversationKey(user.TelegramID, now)
 	}
 
-	draft, err := askDraft(ctx, uc.Answers, question, conversation.ID)
-	if err != nil {
-		return qa.Response{}, err
+	draft := qa.DraftResponse{}
+	if introOnly {
+		draft.Text = preferredNameAcknowledgement(preferredName)
+	} else {
+		draft, err = askDraft(ctx, uc.Answers, question, conversation.ID)
+		if err != nil {
+			return qa.Response{}, err
+		}
+		if detectedName != "" {
+			draft.Text = mergePreferredNameAcknowledgement(draft.Text, preferredName)
+		} else if preferredName == "" {
+			draft.Text = mergePreferredNamePrompt(draft.Text)
+		}
 	}
 
 	response := qa.Response{Text: draft.Text}
@@ -58,7 +87,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 			_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text, nil)
 		}
 		if uc.TurnEvents != nil {
-			_ = uc.TurnEvents.PublishTurn(ctx, buildTurnEvent(user, conversation.ID, question, draft, now))
+			_ = uc.TurnEvents.PublishTurn(ctx, buildTurnEvent(user, preferredName, conversation.ID, question, draft, now))
 		}
 		return response, nil
 	}
@@ -74,7 +103,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		_ = uc.Memory.RememberTurn(ctx, user.TelegramID, conversation.ID, question.Text, draft.Text, memoryAttachments)
 	}
 	if uc.TurnEvents != nil {
-		_ = uc.TurnEvents.PublishTurn(ctx, buildTurnEvent(user, conversation.ID, question, draft, now))
+		_ = uc.TurnEvents.PublishTurn(ctx, buildTurnEvent(user, preferredName, conversation.ID, question, draft, now))
 	}
 	return response, nil
 }
@@ -137,6 +166,7 @@ func toConversationAttachments(refs []qa.AttachmentRef, attachments []qa.Attachm
 
 func buildTurnEvent(
 	user access.User,
+	preferredName string,
 	conversationID string,
 	question qa.Question,
 	draft qa.DraftResponse,
@@ -146,7 +176,7 @@ func buildTurnEvent(
 		Version: 1,
 		User: persistence.User{
 			TelegramID:  user.TelegramID,
-			Username:    strings.TrimSpace(user.Username),
+			Username:    strings.TrimSpace(preferredName),
 			DisplayName: strings.TrimSpace(user.DisplayName),
 		},
 		Conversation: persistence.Conversation{
@@ -188,4 +218,88 @@ func buildTurnEvent(
 
 func fallbackConversationKey(ownerID int64, now time.Time) string {
 	return fmt.Sprintf("%d-%d", ownerID, now.UnixNano())
+}
+
+func resolvePreferredName(currentName, userText string) (string, string, bool) {
+	currentName = strings.TrimSpace(currentName)
+	for _, candidate := range preferredNamePatterns {
+		matches := candidate.pattern.FindStringSubmatch(userText)
+		if len(matches) < 2 {
+			continue
+		}
+
+		name := normalizePreferredName(matches[1])
+		if name == "" {
+			continue
+		}
+		return name, name, candidate.anchor
+	}
+
+	return currentName, "", false
+}
+
+func normalizePreferredName(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, " \t\n\r.,!?;:\"'()[]{}")
+	value = strings.Join(strings.Fields(value), " ")
+	if value == "" {
+		return ""
+	}
+
+	words := strings.Fields(value)
+	if len(words) > 4 {
+		return ""
+	}
+
+	runes := []rune(value)
+	if len(runes) > 64 {
+		return ""
+	}
+
+	hasLetter := false
+	for _, r := range runes {
+		switch {
+		case unicode.IsLetter(r):
+			hasLetter = true
+		case unicode.IsSpace(r):
+		case r == '-' || r == '\'' || r == '`':
+		default:
+			return ""
+		}
+	}
+	if !hasLetter {
+		return ""
+	}
+
+	return value
+}
+
+func preferredNameAcknowledgement(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return "Nice to meet you! I'll remember that."
+	}
+	return fmt.Sprintf("Nice to meet you, %s! I'll call you that.", name)
+}
+
+func mergePreferredNameAcknowledgement(base, name string) string {
+	note := preferredNameAcknowledgement(name)
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return note
+	}
+	if strings.Contains(base, note) {
+		return base
+	}
+	return note + "\n\n" + base
+}
+
+func mergePreferredNamePrompt(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return preferredNamePrompt
+	}
+	if strings.Contains(base, preferredNamePrompt) {
+		return base
+	}
+	return base + "\n\n" + preferredNamePrompt
 }

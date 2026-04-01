@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
+from rag_service.application.usage_estimation import (
+    estimate_classification_event,
+    estimate_embedding_event,
+    estimate_factual_completion_event,
+    estimate_greeting_completion_event,
+    estimate_prompt_completion_event,
+    rag_query_event,
+    usage_event_from_model_usage,
+)
 from rag_service.domain.models import (
     Classification,
     ConversationAttachment,
@@ -159,8 +168,15 @@ class QueryService:
             raise ValueError("query is empty")
 
         history = self._load_history(conversation_id)
-        classification = self._gateway.classify_query(normalized_query, history=history)
-        usage_events = [UsageEventRecord(event_type="classification")]
+        classification, classification_usage = self._gateway.classify_query(normalized_query, history=history)
+        usage_events = [
+            self._classification_usage_event(
+                normalized_query,
+                history,
+                classification,
+                classification_usage,
+            )
+        ]
         intent = classification.intent
         language = classification.language or ""
         language_label = _language_label(language)
@@ -170,30 +186,57 @@ class QueryService:
         )
 
         if intent in ("GREETING", "CHIT_CHAT"):
-            greeting = self._gateway.generate_greeting_reply(normalized_query, language, history=history)
+            greeting, completion_usage = self._gateway.generate_greeting_reply(
+                normalized_query,
+                language,
+                history=history,
+            )
             return QueryResult(
                 answer=greeting,
                 file=None,
                 classification=classification,
-                usage_events=usage_events + [UsageEventRecord(event_type="chat_completion")],
+                usage_events=usage_events + [
+                    self._chat_completion_usage_event(
+                        normalized_query,
+                        history,
+                        greeting,
+                        completion_usage,
+                        greeting_mode=True,
+                    )
+                ],
             )
 
         if intent == "FACTUAL_QUESTION":
-            answer = self._gateway.answer_factual(normalized_query, language, history=history)
+            answer, completion_usage = self._gateway.answer_factual(
+                normalized_query,
+                language,
+                history=history,
+            )
             return QueryResult(
                 answer=answer,
                 file=None,
                 classification=classification,
-                usage_events=usage_events + [UsageEventRecord(event_type="chat_completion")],
+                usage_events=usage_events + [
+                    self._chat_completion_usage_event(
+                        normalized_query,
+                        history,
+                        answer,
+                        completion_usage,
+                    )
+                ],
             )
 
         if intent in ("GUIDANCE", "DOCUMENT_REQUEST"):
             retrieval_query = normalized_query
+            rewrite_usage = None
             if history:
-                retrieval_query = self._gateway.rewrite_query_with_history(normalized_query, history)
+                retrieval_query, rewrite_usage = self._gateway.rewrite_query_with_history(
+                    normalized_query,
+                    history,
+                )
 
             try:
-                query_embedding = self._gateway.embed_text(retrieval_query)
+                query_embedding, embedding_usage = self._gateway.embed_text(retrieval_query)
             except Exception as exc:  # pragma: no cover - exercised through API behavior
                 raise RuntimeError(f"embedding failed: {exc}") from exc
 
@@ -207,10 +250,11 @@ class QueryService:
                     answer="I don't know based on the provided documents.",
                     file=None,
                     classification=classification,
-                    usage_events=usage_events + [
-                        UsageEventRecord(event_type="embedding"),
-                        UsageEventRecord(event_type="rag_query"),
-                    ],
+                    usage_events=usage_events + self._rag_usage_events(
+                        retrieval_query,
+                        rewrite_usage,
+                        embedding_usage,
+                    ),
                 )
 
             best_file_agg, best_chunk = _aggregate_by_file(results)
@@ -227,7 +271,7 @@ class QueryService:
             else:
                 prompt = "Answer in the same language as the user's query if possible.\n\n" + prompt
 
-            llm_json = self._gateway.generate_json_response(prompt, max_tokens=512)
+            llm_json, completion_usage = self._gateway.generate_json_response(prompt, max_tokens=512)
 
             if isinstance(llm_json, dict) and "answer" in llm_json and "file" in llm_json:
                 answer = str(llm_json.get("answer", "")).strip()
@@ -267,19 +311,28 @@ class QueryService:
                 answer=answer,
                 file=file_chosen,
                 classification=classification,
-                usage_events=usage_events + [
-                    UsageEventRecord(event_type="embedding"),
-                    UsageEventRecord(event_type="rag_query"),
-                    UsageEventRecord(event_type="chat_completion"),
-                ],
+                usage_events=usage_events
+                + self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
+                + [self._prompt_completion_usage_event(prompt, answer, completion_usage)],
             )
 
-        answer = self._gateway.answer_factual(normalized_query, language, history=history)
+        answer, completion_usage = self._gateway.answer_factual(
+            normalized_query,
+            language,
+            history=history,
+        )
         return QueryResult(
             answer=answer,
             file=None,
             classification=classification,
-            usage_events=usage_events + [UsageEventRecord(event_type="chat_completion")],
+            usage_events=usage_events + [
+                self._chat_completion_usage_event(
+                    normalized_query,
+                    history,
+                    answer,
+                    completion_usage,
+                )
+            ],
         )
 
     def _load_history(self, conversation_id: Optional[str]) -> List[ConversationMessage]:
@@ -292,3 +345,46 @@ class QueryService:
                 f"[memory] loaded {len(history)} messages for conversation_id={conversation_id}"
             )
         return history
+
+    @staticmethod
+    def _classification_usage_event(
+        query: str,
+        history: List[ConversationMessage],
+        classification: Classification,
+        usage,
+    ) -> UsageEventRecord:
+        if usage is not None:
+            return usage_event_from_model_usage("classification", usage)
+        return estimate_classification_event(query, history, classification)
+
+    @staticmethod
+    def _chat_completion_usage_event(
+        query: str,
+        history: List[ConversationMessage],
+        answer: str,
+        usage,
+        greeting_mode: bool = False,
+    ) -> UsageEventRecord:
+        if usage is not None:
+            return usage_event_from_model_usage("chat_completion", usage)
+        if greeting_mode:
+            return estimate_greeting_completion_event(query, history, answer)
+        return estimate_factual_completion_event(query, history, answer)
+
+    @staticmethod
+    def _prompt_completion_usage_event(prompt: str, answer: str, usage) -> UsageEventRecord:
+        if usage is not None:
+            return usage_event_from_model_usage("chat_completion", usage)
+        return estimate_prompt_completion_event(prompt, answer)
+
+    @staticmethod
+    def _rag_usage_events(retrieval_query: str, rewrite_usage, embedding_usage) -> List[UsageEventRecord]:
+        events: List[UsageEventRecord] = []
+        if rewrite_usage is not None:
+            events.append(usage_event_from_model_usage("other", rewrite_usage))
+        if embedding_usage is not None:
+            events.append(usage_event_from_model_usage("embedding", embedding_usage))
+        else:
+            events.append(estimate_embedding_event(retrieval_query))
+        events.append(rag_query_event())
+        return events

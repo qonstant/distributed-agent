@@ -6,7 +6,13 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from openai import OpenAI
 
-from rag_service.domain.models import Classification, ConversationMessage, normalize_intent
+from rag_service.domain.models import (
+    Classification,
+    ConversationMessage,
+    ModelUsage,
+    normalize_intent,
+    normalize_language,
+)
 from rag_service.infrastructure.config import Settings
 from rag_service.infrastructure.prompts import build_history_lines
 
@@ -16,7 +22,7 @@ class OpenAIGateway:
         self._settings = settings
         self._client = OpenAI(api_key=settings.openai_api_key)
 
-    def embed_text(self, text: str) -> np.ndarray:
+    def embed_text(self, text: str) -> tuple[np.ndarray, Optional[ModelUsage]]:
         response = self._client.embeddings.create(model=self._settings.embed_model, input=[text])
         item = response.data[0]
         embedding = getattr(item, "embedding", None) or (
@@ -24,20 +30,23 @@ class OpenAIGateway:
         )
         if embedding is None:
             raise RuntimeError("Failed to parse embedding response")
-        return np.array(embedding, dtype=np.float32)
+        return np.array(embedding, dtype=np.float32), self._extract_usage(
+            response,
+            self._settings.embed_model,
+        )
 
     def classify_query(
         self,
         query: str,
         history: Optional[List[ConversationMessage]] = None,
-    ) -> Classification:
+    ) -> tuple[Classification, Optional[ModelUsage]]:
         history_block = self._history_block(history)
         prompt = (
             "You are a compact intent classifier and language detector. Given the user's latest input and optional recent conversation context below, "
             "return a JSON object with EXACTLY three keys:\n"
             " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"GUIDANCE\",\"DOCUMENT_REQUEST\",\"OTHER\"]\n"
             " - \"explain\": one short sentence explaining why\n"
-            " - \"language\": the detected language name or two-letter code (e.g. \"Russian\" or \"ru\")\n\n"
+            " - \"language\": exactly one of [\"kk\",\"ru\",\"en\",\"other\"]\n\n"
             "Definitions/examples:\n"
             " - GREETING: short hello/goodbye messages (no docs needed)\n"
             " - CHIT_CHAT: small talk / thanks / compliment (no docs)\n"
@@ -46,7 +55,9 @@ class OpenAIGateway:
             " - DOCUMENT_REQUEST: user explicitly requests a document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n"
             " - OTHER: none of the above\n\n"
             "Respond ONLY with valid JSON (no extra text). Example:\n"
-            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for residency\",\"language\":\"ru\"}\n\n"
+            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for residency\",\"language\":\"ru\"}\n"
+            "{\"intent\":\"GREETING\",\"explain\":\"short greeting in Kazakh\",\"language\":\"kk\"}\n"
+            "{\"intent\":\"OTHER\",\"explain\":\"language outside supported set\",\"language\":\"other\"}\n\n"
             f"{history_block}"
             f"Latest user input: {json.dumps(query)}\n"
         )
@@ -63,19 +74,25 @@ class OpenAIGateway:
                 "explain": raw_text,
                 "language": "",
             }
-            return Classification(
-                intent=normalize_intent(parsed.get("intent", "")),
-                explain=str(parsed.get("explain") or ""),
-                language=str(parsed.get("language") or "").strip(),
-                model=self._settings.class_model,
+            return (
+                Classification(
+                    intent=normalize_intent(parsed.get("intent", "")),
+                    explain=str(parsed.get("explain") or ""),
+                    language=normalize_language(str(parsed.get("language") or "")),
+                    model=self._settings.class_model,
+                ),
+                self._extract_usage(response, self._settings.class_model),
             )
         except Exception as exc:
             print("[classify] classifier error:", exc)
-            return Classification(
-                intent="OTHER",
-                explain=f"classifier error: {exc}",
-                language="",
-                model=self._settings.class_model,
+            return (
+                Classification(
+                    intent="OTHER",
+                    explain=f"classifier error: {exc}",
+                    language="other",
+                    model=self._settings.class_model,
+                ),
+                None,
             )
 
     def generate_greeting_reply(
@@ -83,7 +100,7 @@ class OpenAIGateway:
         user_text: str,
         language_hint: str,
         history: Optional[List[ConversationMessage]] = None,
-    ) -> str:
+    ) -> tuple[str, Optional[ModelUsage]]:
         language_name = self._language_name(language_hint)
         lang_instruction = (
             f"in {language_name}"
@@ -110,18 +127,18 @@ class OpenAIGateway:
             for line in text.splitlines():
                 stripped = line.strip()
                 if stripped:
-                    return stripped
-            return text
+                    return stripped, self._extract_usage(response, self._settings.llm_model)
+            return text, self._extract_usage(response, self._settings.llm_model)
         except Exception as exc:
             print("[greeting] generation failed:", exc)
-            return "Hi — how can I help you today?"
+            return "Hi — how can I help you today?", None
 
     def answer_factual(
         self,
         query: str,
         language_hint: str,
         history: Optional[List[ConversationMessage]] = None,
-    ) -> str:
+    ) -> tuple[str, Optional[ModelUsage]]:
         language_name = self._language_name(language_hint)
         lang_instruction = (
             f"Answer in {language_name}."
@@ -142,18 +159,21 @@ class OpenAIGateway:
                 max_output_tokens=400,
                 temperature=0.0,
             )
-            return self._resp_to_text(response).strip()
+            return self._resp_to_text(response).strip(), self._extract_usage(
+                response,
+                self._settings.llm_model,
+            )
         except Exception as exc:
             print("[factual] LLM error:", exc)
-            return f"(LLM error: {exc})"
+            return f"(LLM error: {exc})", None
 
     def rewrite_query_with_history(
         self,
         query: str,
         history: Optional[List[ConversationMessage]] = None,
-    ) -> str:
+    ) -> tuple[str, Optional[ModelUsage]]:
         if not history:
-            return query
+            return query, None
 
         history_block = self._history_block(history)
         prompt = (
@@ -175,12 +195,16 @@ class OpenAIGateway:
             for line in text.splitlines():
                 stripped = line.strip()
                 if stripped:
-                    return stripped
+                    return stripped, self._extract_usage(response, self._settings.class_model)
         except Exception as exc:
             print("[rewrite] query rewrite failed:", exc)
-        return query
+        return query, None
 
-    def generate_json_response(self, prompt: str, max_tokens: int = 512) -> Optional[Dict[str, Any]]:
+    def generate_json_response(
+        self,
+        prompt: str,
+        max_tokens: int = 512,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[ModelUsage]]:
         try:
             response = self._client.responses.create(
                 model=self._settings.llm_model,
@@ -189,10 +213,13 @@ class OpenAIGateway:
                 temperature=0.0,
             )
             text = self._resp_to_text(response)
-            return self._extract_json(text)
+            return self._extract_json(text), self._extract_usage(
+                response,
+                self._settings.llm_model,
+            )
         except Exception as exc:
             print("[synth] LLM synth failed:", exc)
-            return None
+            return None, None
 
     @staticmethod
     def _extract_json(text: str) -> Optional[Dict[str, Any]]:
@@ -264,13 +291,36 @@ class OpenAIGateway:
         normalized = (language_hint or "").strip().lower()
         mapping = {
             "en": "English",
-            "english": "English",
             "ru": "Russian",
-            "russian": "Russian",
-            "русский": "Russian",
             "kk": "Kazakh",
-            "kazakh": "Kazakh",
-            "қазақ": "Kazakh",
-            "қазақша": "Kazakh",
+            "other": "",
         }
         return mapping.get(normalized, (language_hint or "").strip())
+
+    @staticmethod
+    def _extract_usage(response: Any, model: str) -> Optional[ModelUsage]:
+        usage = getattr(response, "usage", None) or (
+            response.get("usage") if isinstance(response, dict) else None
+        )
+        if usage is None:
+            return None
+
+        def get_value(obj: Any, key: str) -> Any:
+            if isinstance(obj, dict):
+                return obj.get(key)
+            return getattr(obj, key, None)
+
+        input_tokens = get_value(usage, "input_tokens")
+        if input_tokens is None:
+            input_tokens = get_value(usage, "prompt_tokens")
+        output_tokens = get_value(usage, "output_tokens") or 0
+        total_tokens = get_value(usage, "total_tokens")
+        if total_tokens is None:
+            total_tokens = int(input_tokens or 0) + int(output_tokens or 0)
+
+        return ModelUsage(
+            model=model,
+            input_tokens=int(input_tokens or 0),
+            output_tokens=int(output_tokens or 0),
+            total_tokens=int(total_tokens or 0),
+        )

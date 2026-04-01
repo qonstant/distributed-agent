@@ -5,13 +5,17 @@ import unittest
 import numpy as np
 
 from rag_service.application.query_service import QueryService
+from rag_service.application.usage_estimation import (
+    rag_query_event,
+    usage_event_from_model_usage,
+)
 from rag_service.domain.models import (
     Classification,
     ConversationAttachment,
     ConversationMessage,
+    ModelUsage,
     QueryResult,
     RetrievedHit,
-    UsageEventRecord,
 )
 from rag_service.infrastructure.prompts import prepare_document_request_prompt
 
@@ -24,29 +28,35 @@ class FakeGateway:
         self.rewrite_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.embedded_queries: list[str] = []
         self.generated_prompts: list[str] = []
+        self.classification_usage = ModelUsage(model="gpt-4o-mini", input_tokens=12, output_tokens=6, total_tokens=18)
+        self.greeting_usage = ModelUsage(model="gpt-4o-mini", input_tokens=10, output_tokens=3, total_tokens=13)
+        self.factual_usage = ModelUsage(model="gpt-4o-mini", input_tokens=16, output_tokens=7, total_tokens=23)
+        self.rewrite_usage = ModelUsage(model="gpt-4o-mini", input_tokens=20, output_tokens=4, total_tokens=24)
+        self.embedding_usage = ModelUsage(model="text-embedding-3-small", input_tokens=9, output_tokens=0, total_tokens=9)
+        self.json_usage = ModelUsage(model="gpt-4o-mini", input_tokens=30, output_tokens=8, total_tokens=38)
 
-    def classify_query(self, query: str, history=None) -> Classification:
+    def classify_query(self, query: str, history=None):
         self.classify_calls.append((query, history or []))
-        return self.classification
+        return self.classification, self.classification_usage
 
-    def generate_greeting_reply(self, user_text: str, language_hint: str, history=None) -> str:
-        return "hello"
+    def generate_greeting_reply(self, user_text: str, language_hint: str, history=None):
+        return "hello", self.greeting_usage
 
-    def answer_factual(self, query: str, language_hint: str, history=None) -> str:
+    def answer_factual(self, query: str, language_hint: str, history=None):
         self.answer_factual_calls.append((query, language_hint, history or []))
-        return "The test code is ALPHA-123."
+        return "The test code is ALPHA-123.", self.factual_usage
 
-    def rewrite_query_with_history(self, query: str, history=None) -> str:
+    def rewrite_query_with_history(self, query: str, history=None):
         self.rewrite_calls.append((query, history or []))
-        return "sample onboarding guide pdf"
+        return "sample onboarding guide pdf", self.rewrite_usage
 
-    def embed_text(self, text: str) -> np.ndarray:
+    def embed_text(self, text: str):
         self.embedded_queries.append(text)
-        return np.array([1.0], dtype=np.float32)
+        return np.array([1.0], dtype=np.float32), self.embedding_usage
 
     def generate_json_response(self, prompt: str, max_tokens: int = 512):
         self.generated_prompts.append(prompt)
-        return {"answer": "Use this sample.", "file": "docs/test-guide.pdf"}
+        return {"answer": "Use this sample.", "file": "docs/test-guide.pdf"}, self.json_usage
 
 
 class FakeStore:
@@ -86,8 +96,8 @@ class QueryServiceTests(unittest.TestCase):
                 file=None,
                 classification=Classification(intent="FACTUAL_QUESTION", explain="needs memory", language="en"),
                 usage_events=[
-                    UsageEventRecord(event_type="classification"),
-                    UsageEventRecord(event_type="chat_completion"),
+                    usage_event_from_model_usage("classification", gateway.classification_usage),
+                    usage_event_from_model_usage("chat_completion", gateway.factual_usage),
                 ],
             ),
         )
@@ -129,10 +139,11 @@ class QueryServiceTests(unittest.TestCase):
                 file=None,
                 classification=Classification(intent="DOCUMENT_REQUEST", explain="follow-up request", language="en"),
                 usage_events=[
-                    UsageEventRecord(event_type="classification"),
-                    UsageEventRecord(event_type="embedding"),
-                    UsageEventRecord(event_type="rag_query"),
-                    UsageEventRecord(event_type="chat_completion"),
+                    usage_event_from_model_usage("classification", gateway.classification_usage),
+                    usage_event_from_model_usage("other", gateway.rewrite_usage),
+                    usage_event_from_model_usage("embedding", gateway.embedding_usage),
+                    rag_query_event(),
+                    usage_event_from_model_usage("chat_completion", gateway.json_usage),
                 ],
             ),
         )
@@ -171,10 +182,11 @@ class QueryServiceTests(unittest.TestCase):
                 file="docs/test-guide.pdf",
                 classification=Classification(intent="DOCUMENT_REQUEST", explain="resend request", language="en"),
                 usage_events=[
-                    UsageEventRecord(event_type="classification"),
-                    UsageEventRecord(event_type="embedding"),
-                    UsageEventRecord(event_type="rag_query"),
-                    UsageEventRecord(event_type="chat_completion"),
+                    usage_event_from_model_usage("classification", gateway.classification_usage),
+                    usage_event_from_model_usage("other", gateway.rewrite_usage),
+                    usage_event_from_model_usage("embedding", gateway.embedding_usage),
+                    rag_query_event(),
+                    usage_event_from_model_usage("chat_completion", gateway.json_usage),
                 ],
             ),
         )

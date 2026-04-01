@@ -75,6 +75,14 @@ class UsageEventRecord:
 
 
 @dataclass(frozen=True)
+class ModelUsage:
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass(frozen=True)
 class RetrievedHit:
     score: float
     nid: int

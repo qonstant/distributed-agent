@@ -8,7 +8,6 @@ from rag_service.application.usage_estimation import (
     estimate_factual_completion_event,
     estimate_greeting_completion_event,
     estimate_prompt_completion_event,
-    rag_query_event,
     usage_event_from_model_usage,
 )
 from rag_service.domain.models import (
@@ -386,5 +385,4 @@ class QueryService:
             events.append(usage_event_from_model_usage("embedding", embedding_usage))
         else:
             events.append(estimate_embedding_event(retrieval_query))
-        events.append(rag_query_event())
         return events

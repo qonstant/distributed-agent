@@ -103,10 +103,6 @@ def estimate_embedding_event(text: str) -> UsageEventRecord:
     )
 
 
-def rag_query_event() -> UsageEventRecord:
-    return UsageEventRecord(event_type="rag_query")
-
-
 def usage_event_from_model_usage(event_type: str, usage: ModelUsage) -> UsageEventRecord:
     input_tokens = max(0, int(usage.input_tokens or 0))
     output_tokens = max(0, int(usage.output_tokens or 0))

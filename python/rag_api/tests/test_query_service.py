@@ -6,7 +6,6 @@ import numpy as np
 
 from rag_service.application.query_service import QueryService
 from rag_service.application.usage_estimation import (
-    rag_query_event,
     usage_event_from_model_usage,
 )
 from rag_service.domain.models import (
@@ -142,7 +141,6 @@ class QueryServiceTests(unittest.TestCase):
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                     usage_event_from_model_usage("other", gateway.rewrite_usage),
                     usage_event_from_model_usage("embedding", gateway.embedding_usage),
-                    rag_query_event(),
                     usage_event_from_model_usage("chat_completion", gateway.json_usage),
                 ],
             ),
@@ -185,7 +183,6 @@ class QueryServiceTests(unittest.TestCase):
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                     usage_event_from_model_usage("other", gateway.rewrite_usage),
                     usage_event_from_model_usage("embedding", gateway.embedding_usage),
-                    rag_query_event(),
                     usage_event_from_model_usage("chat_completion", gateway.json_usage),
                 ],
             ),

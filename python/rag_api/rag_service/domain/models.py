@@ -19,6 +19,11 @@ SUPPORTED_LANGUAGES = {
     "other",
 }
 
+SUPPORTED_PROFILE_ACTIONS = {
+    "",
+    "set_preferred_name",
+}
+
 
 def normalize_intent(intent: str) -> str:
     value = (intent or "").strip().upper()
@@ -56,6 +61,23 @@ def normalize_language(language: str) -> str:
     return normalized
 
 
+def normalize_profile_action(action: str) -> str:
+    value = (action or "").strip().lower()
+    mapping = {
+        "": "",
+        "none": "",
+        "set_preferred_name": "set_preferred_name",
+        "set-name": "set_preferred_name",
+        "set_name": "set_preferred_name",
+        "rename_user": "set_preferred_name",
+        "change_name": "set_preferred_name",
+    }
+    normalized = mapping.get(value, value)
+    if normalized not in SUPPORTED_PROFILE_ACTIONS:
+        return ""
+    return normalized
+
+
 @dataclass(frozen=True)
 class Classification:
     intent: str
@@ -63,6 +85,8 @@ class Classification:
     language: str = ""
     model: str = ""
     version: str = ""
+    profile_action: str = ""
+    preferred_name: str = ""
 
 
 @dataclass(frozen=True)

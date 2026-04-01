@@ -57,6 +57,8 @@ class OpenAIGatewayTests(unittest.TestCase):
 
         self.assertEqual(classification.intent, "GREETING")
         self.assertEqual(classification.language, "ru")
+        self.assertEqual(classification.profile_action, "")
+        self.assertEqual(classification.preferred_name, "")
         self.assertIsNotNone(usage)
         self.assertEqual(usage.input_tokens, 11)
         self.assertEqual(len(fake_client.responses.calls), 1)
@@ -70,6 +72,17 @@ class OpenAIGatewayTests(unittest.TestCase):
 
         self.assertEqual(classification.language, "other")
         self.assertIsNone(usage)
+
+    def test_classify_query_extracts_preferred_name_action(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"intent":"CHIT_CHAT","explain":"user sets a preferred name","language":"ru","profile_action":"set_preferred_name","preferred_name":"Heisenberg"}'
+        )
+
+        classification, _ = gateway.classify_query("зовут меня теперь Heisenberg")
+
+        self.assertEqual(classification.intent, "CHIT_CHAT")
+        self.assertEqual(classification.profile_action, "set_preferred_name")
+        self.assertEqual(classification.preferred_name, "Heisenberg")
 
     def test_answer_factual_includes_preferred_name_in_prompt(self) -> None:
         gateway, fake_client = self._gateway_with_output(

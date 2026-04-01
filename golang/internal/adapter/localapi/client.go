@@ -73,11 +73,13 @@ func (c *Client) ask(ctx context.Context, question qa.Question, conversationID, 
 		Answer         string `json:"answer"`
 		File           string `json:"file"`
 		Classification *struct {
-			Intent   string `json:"intent"`
-			Explain  string `json:"explain"`
-			Language string `json:"language"`
-			Model    string `json:"model"`
-			Version  string `json:"version"`
+			Intent        string `json:"intent"`
+			Explain       string `json:"explain"`
+			Language      string `json:"language"`
+			Model         string `json:"model"`
+			Version       string `json:"version"`
+			ProfileAction string `json:"profile_action"`
+			PreferredName string `json:"preferred_name"`
 		} `json:"classification"`
 		UsageEvents []struct {
 			EventType     string  `json:"event_type"`
@@ -105,6 +107,8 @@ func (c *Client) ask(ctx context.Context, question qa.Question, conversationID, 
 			DetectedLanguage:  strings.TrimSpace(result.Classification.Language),
 			ClassifierModel:   strings.TrimSpace(result.Classification.Model),
 			ClassifierVersion: strings.TrimSpace(result.Classification.Version),
+			ProfileAction:     strings.TrimSpace(result.Classification.ProfileAction),
+			PreferredName:     strings.TrimSpace(result.Classification.PreferredName),
 		}
 	}
 	for _, item := range result.UsageEvents {

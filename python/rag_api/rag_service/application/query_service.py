@@ -186,6 +186,14 @@ class QueryService:
             f"explain={classification.explain}"
         )
 
+        if classification.profile_action == "set_preferred_name" and (classification.preferred_name or "").strip():
+            return QueryResult(
+                answer="",
+                file=None,
+                classification=classification,
+                usage_events=usage_events,
+            )
+
         if intent in ("GREETING", "CHIT_CHAT"):
             greeting, completion_usage = self._gateway.generate_greeting_reply(
                 normalized_query,

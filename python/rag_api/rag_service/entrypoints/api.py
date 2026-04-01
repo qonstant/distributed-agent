@@ -25,6 +25,8 @@ class ClassificationResponse(BaseModel):
     language: str = ""
     model: str = ""
     version: str = ""
+    profile_action: str = ""
+    preferred_name: str = ""
 
 
 class UsageEventResponse(BaseModel):
@@ -89,6 +91,8 @@ def create_app() -> FastAPI:
                 language=result.classification.language,
                 model=result.classification.model,
                 version=result.classification.version,
+                profile_action=result.classification.profile_action,
+                preferred_name=result.classification.preferred_name,
             )
         return QueryResponse(
             answer=result.answer,

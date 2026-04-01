@@ -210,6 +210,40 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIn("assistant: I sent the sample.", prompt)
         self.assertIn("attachments sent: document(docs/test-guide.pdf)", prompt)
 
+    def test_profile_update_short_circuits_after_classification(self) -> None:
+        gateway = FakeGateway(
+            Classification(
+                intent="CHIT_CHAT",
+                explain="user sets a preferred name",
+                language="ru",
+                profile_action="set_preferred_name",
+                preferred_name="Heisenberg",
+            )
+        )
+        service = QueryService(gateway, FakeStore(), conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("Неа, зовут меня теперь Heisenberg", conversation_id="conv-1")
+
+        self.assertEqual(
+            result,
+            QueryResult(
+                answer="",
+                file=None,
+                classification=Classification(
+                    intent="CHIT_CHAT",
+                    explain="user sets a preferred name",
+                    language="ru",
+                    profile_action="set_preferred_name",
+                    preferred_name="Heisenberg",
+                ),
+                usage_events=[
+                    usage_event_from_model_usage("classification", gateway.classification_usage),
+                ],
+            ),
+        )
+        self.assertEqual(gateway.answer_factual_calls, [])
+        self.assertEqual(gateway.generated_prompts, [])
+
 
 if __name__ == "__main__":
     unittest.main()

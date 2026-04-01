@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"path"
-	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -14,18 +13,6 @@ import (
 	"github.com/qonstant/distributed-agent/internal/domain/persistence"
 	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
-
-var preferredNamePatterns = []struct {
-	pattern *regexp.Regexp
-	anchor  bool
-}{
-	{pattern: regexp.MustCompile(`(?i)^\s*my name is\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
-	{pattern: regexp.MustCompile(`(?i)^\s*call me\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
-	{pattern: regexp.MustCompile(`(?i)^\s*меня зовут\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
-	{pattern: regexp.MustCompile(`(?i)^\s*зови меня\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
-	{pattern: regexp.MustCompile(`(?i)^\s*менің атым\s+(.+?)\s*[.!?]*\s*$`), anchor: true},
-	{pattern: regexp.MustCompile(`(?i)^\s*мені\s+(.+?)\s+деп ата\s*[.!?]*\s*$`), anchor: true},
-}
 
 const preferredNamePrompt = "By the way, how should I call you? You can say: \"Call me Alex\"."
 
@@ -53,7 +40,7 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		now = uc.Now().UTC()
 	}
 
-	preferredName, detectedName, introOnly := resolvePreferredName(record.Username, question.Text)
+	preferredName := strings.TrimSpace(record.Username)
 
 	conversation := qa.ConversationContext{}
 	if uc.Memory != nil {
@@ -65,19 +52,16 @@ func (uc AskQuestion) Execute(ctx context.Context, user access.User, text string
 		conversation.ID = fallbackConversationKey(user.TelegramID, now)
 	}
 
-	draft := qa.DraftResponse{}
-	if introOnly {
+	draft, err := askDraft(ctx, uc.Answers, question, conversation.ID, preferredName)
+	if err != nil {
+		return qa.Response{}, err
+	}
+
+	if updatedName, updated := classifiedPreferredName(draft.Classification); updated {
+		preferredName = updatedName
 		draft.Text = preferredNameAcknowledgement(preferredName)
-	} else {
-		draft, err = askDraft(ctx, uc.Answers, question, conversation.ID, preferredName)
-		if err != nil {
-			return qa.Response{}, err
-		}
-		if detectedName != "" {
-			draft.Text = mergePreferredNameAcknowledgement(draft.Text, preferredName)
-		} else if preferredName == "" {
-			draft.Text = mergePreferredNamePrompt(draft.Text)
-		}
+	} else if preferredName == "" {
+		draft.Text = mergePreferredNamePrompt(draft.Text)
 	}
 
 	response := qa.Response{Text: draft.Text}
@@ -241,22 +225,19 @@ func fallbackConversationKey(ownerID int64, now time.Time) string {
 	return fmt.Sprintf("%d-%d", ownerID, now.UnixNano())
 }
 
-func resolvePreferredName(currentName, userText string) (string, string, bool) {
-	currentName = strings.TrimSpace(currentName)
-	for _, candidate := range preferredNamePatterns {
-		matches := candidate.pattern.FindStringSubmatch(userText)
-		if len(matches) < 2 {
-			continue
-		}
-
-		name := normalizePreferredName(matches[1])
-		if name == "" {
-			continue
-		}
-		return name, name, candidate.anchor
+func classifiedPreferredName(classification *qa.MessageClassification) (string, bool) {
+	if classification == nil {
+		return "", false
+	}
+	if strings.TrimSpace(classification.ProfileAction) != "set_preferred_name" {
+		return "", false
 	}
 
-	return currentName, "", false
+	name := normalizePreferredName(classification.PreferredName)
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 func normalizePreferredName(value string) string {
@@ -300,18 +281,6 @@ func preferredNameAcknowledgement(name string) string {
 		return "Nice to meet you! I'll remember that."
 	}
 	return fmt.Sprintf("Nice to meet you, %s! I'll call you that.", name)
-}
-
-func mergePreferredNameAcknowledgement(base, name string) string {
-	note := preferredNameAcknowledgement(name)
-	base = strings.TrimSpace(base)
-	if base == "" {
-		return note
-	}
-	if strings.Contains(base, note) {
-		return base
-	}
-	return note + "\n\n" + base
 }
 
 func mergePreferredNamePrompt(base string) string {

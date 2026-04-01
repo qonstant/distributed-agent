@@ -18,6 +18,8 @@ type MessageClassification struct {
 	DetectedLanguage  string
 	ClassifierModel   string
 	ClassifierVersion string
+	ProfileAction     string
+	PreferredName     string
 }
 
 type UsageEvent struct {

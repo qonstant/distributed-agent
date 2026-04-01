@@ -183,10 +183,11 @@ func TestAskQuestionExecute(t *testing.T) {
 		}
 	})
 
-	t.Run("stores preferred name from explicit introduction without calling answer source", func(t *testing.T) {
+	t.Run("stores preferred name from classification action", func(t *testing.T) {
 		t.Parallel()
 
 		var published persistence.TurnEvent
+		asked := false
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
 				findFn: func(context.Context, int64) (access.Record, bool, error) {
@@ -195,8 +196,14 @@ func TestAskQuestionExecute(t *testing.T) {
 			}),
 			Answers: fakeAnswerSource{
 				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
-					t.Fatal("Ask should not be called for a pure name introduction")
-					return qa.DraftResponse{}, nil
+					asked = true
+					return qa.DraftResponse{
+						Classification: &qa.MessageClassification{
+							Intent:        "CHIT_CHAT",
+							ProfileAction: "set_preferred_name",
+							PreferredName: "Test User",
+						},
+					}, nil
 				},
 			},
 			Attachments: fakeAttachmentResolver{
@@ -217,10 +224,65 @@ func TestAskQuestionExecute(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Execute() error = %v", err)
 		}
+		if !asked {
+			t.Fatal("Ask should be called so the classifier can extract the preferred name")
+		}
 		if got, want := response.Text, "Nice to meet you, Test User! I'll call you that."; got != want {
 			t.Fatalf("response.Text = %q, want %q", got, want)
 		}
 		if got, want := published.User.Username, "Test User"; got != want {
+			t.Fatalf("published.User.Username = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("updates preferred name from classification rename action", func(t *testing.T) {
+		t.Parallel()
+
+		var published persistence.TurnEvent
+		asked := false
+		uc := AskQuestion{
+			Policy: access.NewPolicy(fakeAccessDirectory{
+				findFn: func(context.Context, int64) (access.Record, bool, error) {
+					return access.Record{TelegramID: authorizedUser.TelegramID, Username: "Роман"}, true, nil
+				},
+			}),
+			Answers: fakeAnswerSource{
+				askFn: func(context.Context, qa.Question) (qa.DraftResponse, error) {
+					asked = true
+					return qa.DraftResponse{
+						Classification: &qa.MessageClassification{
+							Intent:        "CHIT_CHAT",
+							ProfileAction: "set_preferred_name",
+							PreferredName: "Heisenberg",
+						},
+					}, nil
+				},
+			},
+			Attachments: fakeAttachmentResolver{
+				resolveFn: func(context.Context, []qa.AttachmentRef) ([]qa.Attachment, error) {
+					t.Fatal("Resolve should not be called")
+					return nil, nil
+				},
+			},
+			TurnEvents: fakeTurnEventPublisher{
+				publishFn: func(_ context.Context, event persistence.TurnEvent) error {
+					published = event
+					return nil
+				},
+			},
+		}
+
+		response, err := uc.Execute(context.Background(), authorizedUser, "Неа, зовут меня теперь Heisenberg")
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if !asked {
+			t.Fatal("Ask should be called so the classifier can detect the rename")
+		}
+		if got, want := response.Text, "Nice to meet you, Heisenberg! I'll call you that."; got != want {
+			t.Fatalf("response.Text = %q, want %q", got, want)
+		}
+		if got, want := published.User.Username, "Heisenberg"; got != want {
 			t.Fatalf("published.User.Username = %q, want %q", got, want)
 		}
 	})

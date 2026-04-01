@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from rag_service.domain.models import normalize_language
+from rag_service.domain.models import normalize_language, normalize_profile_action
 
 
 class ModelsTests(unittest.TestCase):
@@ -18,6 +18,14 @@ class ModelsTests(unittest.TestCase):
         self.assertEqual(normalize_language("de"), "other")
         self.assertEqual(normalize_language(""), "other")
         self.assertEqual(normalize_language("mixed"), "other")
+
+    def test_normalize_profile_action_maps_supported_values(self) -> None:
+        self.assertEqual(normalize_profile_action("set_preferred_name"), "set_preferred_name")
+        self.assertEqual(normalize_profile_action("change_name"), "set_preferred_name")
+        self.assertEqual(normalize_profile_action("none"), "")
+
+    def test_normalize_profile_action_maps_unknown_to_empty(self) -> None:
+        self.assertEqual(normalize_profile_action("delete_user"), "")
 
 
 if __name__ == "__main__":

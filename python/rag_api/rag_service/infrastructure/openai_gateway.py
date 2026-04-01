@@ -12,6 +12,7 @@ from rag_service.domain.models import (
     ModelUsage,
     normalize_intent,
     normalize_language,
+    normalize_profile_action,
 )
 from rag_service.infrastructure.config import Settings
 from rag_service.infrastructure.prompts import build_history_lines, build_personalization_lines
@@ -43,10 +44,12 @@ class OpenAIGateway:
         history_block = self._history_block(history)
         prompt = (
             "You are a compact intent classifier and language detector. Given the user's latest input and optional recent conversation context below, "
-            "return a JSON object with EXACTLY three keys:\n"
+            "return a JSON object with EXACTLY five keys:\n"
             " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"GUIDANCE\",\"DOCUMENT_REQUEST\",\"OTHER\"]\n"
             " - \"explain\": one short sentence explaining why\n"
             " - \"language\": exactly one of [\"kk\",\"ru\",\"en\",\"other\"]\n\n"
+            " - \"profile_action\": either \"set_preferred_name\" or \"\"\n"
+            " - \"preferred_name\": extracted preferred name if the user is telling you what to call them, else \"\"\n\n"
             "Definitions/examples:\n"
             " - GREETING: short hello/goodbye messages (no docs needed)\n"
             " - CHIT_CHAT: small talk / thanks / compliment (no docs)\n"
@@ -54,10 +57,14 @@ class OpenAIGateway:
             " - GUIDANCE: user asks for step-by-step guidance, procedures or how-to that should be answered using documents if available, but may be synthesized from top-K excerpts (do NOT invent facts)\n"
             " - DOCUMENT_REQUEST: user explicitly requests a document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n"
             " - OTHER: none of the above\n\n"
+            "Set profile_action to \"set_preferred_name\" only when the user is explicitly telling you what name to use for them, for example "
+            "\"call me Alex\", \"my name is Rocco\", \"зови меня Роман\", \"меня зовут Азамат\", or rename phrases like \"зовут меня теперь Heisenberg\". "
+            "When you do that, put only the clean extracted name into preferred_name.\n\n"
             "Respond ONLY with valid JSON (no extra text). Example:\n"
-            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for residency\",\"language\":\"ru\"}\n"
-            "{\"intent\":\"GREETING\",\"explain\":\"short greeting in Kazakh\",\"language\":\"kk\"}\n"
-            "{\"intent\":\"OTHER\",\"explain\":\"language outside supported set\",\"language\":\"other\"}\n\n"
+            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for residency\",\"language\":\"ru\",\"profile_action\":\"\",\"preferred_name\":\"\"}\n"
+            "{\"intent\":\"GREETING\",\"explain\":\"short greeting in Kazakh\",\"language\":\"kk\",\"profile_action\":\"\",\"preferred_name\":\"\"}\n"
+            "{\"intent\":\"CHIT_CHAT\",\"explain\":\"user sets a preferred name\",\"language\":\"ru\",\"profile_action\":\"set_preferred_name\",\"preferred_name\":\"Роман\"}\n"
+            "{\"intent\":\"OTHER\",\"explain\":\"language outside supported set\",\"language\":\"other\",\"profile_action\":\"\",\"preferred_name\":\"\"}\n\n"
             f"{history_block}"
             f"Latest user input: {json.dumps(query)}\n"
         )
@@ -73,6 +80,8 @@ class OpenAIGateway:
                 "intent": "OTHER",
                 "explain": raw_text,
                 "language": "",
+                "profile_action": "",
+                "preferred_name": "",
             }
             return (
                 Classification(
@@ -80,6 +89,8 @@ class OpenAIGateway:
                     explain=str(parsed.get("explain") or ""),
                     language=normalize_language(str(parsed.get("language") or "")),
                     model=self._settings.class_model,
+                    profile_action=normalize_profile_action(str(parsed.get("profile_action") or "")),
+                    preferred_name=str(parsed.get("preferred_name") or "").strip(),
                 ),
                 self._extract_usage(response, self._settings.class_model),
             )
@@ -91,6 +102,8 @@ class OpenAIGateway:
                     explain=f"classifier error: {exc}",
                     language="other",
                     model=self._settings.class_model,
+                    profile_action="",
+                    preferred_name="",
                 ),
                 None,
             )

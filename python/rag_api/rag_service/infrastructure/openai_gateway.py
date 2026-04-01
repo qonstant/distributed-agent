@@ -10,6 +10,7 @@ from rag_service.domain.models import (
     Classification,
     ConversationMessage,
     ModelUsage,
+    normalize_attachment_action,
     normalize_intent,
     normalize_language,
     normalize_profile_action,
@@ -219,6 +220,49 @@ class OpenAIGateway:
         except Exception as exc:
             print("[rewrite] query rewrite failed:", exc)
         return query, None
+
+    def classify_attachment_follow_up(
+        self,
+        query: str,
+        history: Optional[List[ConversationMessage]] = None,
+    ) -> tuple[str, Optional[ModelUsage]]:
+        if not history:
+            return "", None
+
+        history_block = self._history_block(history)
+        prompt = (
+            "You detect whether the latest user message is explicitly asking to resend the most recently sent assistant attachment from the recent conversation context.\n"
+            "Return a JSON object with EXACTLY two keys:\n"
+            ' - "attachment_action": either "resend_last_attachment" or ""\n'
+            ' - "explain": one short sentence explaining why\n\n'
+            'Choose "resend_last_attachment" only when the user is clearly asking to send the already-mentioned file again, even in short follow-ups like "again", '
+            '"one more time", "еще раз", or similar context-dependent requests. '
+            'If the user is asking what the file is about, asking a new question, or you are unsure, return "".\n\n'
+            "Respond ONLY with valid JSON. Example:\n"
+            '{"attachment_action":"resend_last_attachment","explain":"user asks to send the previously sent file again"}\n'
+            '{"attachment_action":"","explain":"user asks about the file rather than requesting a resend"}\n\n'
+            f"{history_block}"
+            f"Latest user input: {json.dumps(query)}\n"
+        )
+        try:
+            response = self._client.responses.create(
+                model=self._settings.class_model,
+                input=prompt,
+                max_output_tokens=120,
+                temperature=0.0,
+            )
+            raw_text = self._resp_to_text(response) or ""
+            parsed = self._extract_json(raw_text) or {
+                "attachment_action": "",
+                "explain": raw_text,
+            }
+            return (
+                normalize_attachment_action(str(parsed.get("attachment_action") or "")),
+                self._extract_usage(response, self._settings.class_model),
+            )
+        except Exception as exc:
+            print("[attach-classify] attachment follow-up classifier error:", exc)
+            return "", None
 
     def generate_json_response(
         self,

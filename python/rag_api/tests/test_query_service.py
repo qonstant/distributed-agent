@@ -20,14 +20,17 @@ from rag_service.infrastructure.prompts import prepare_document_request_prompt
 
 
 class FakeGateway:
-    def __init__(self, classification: Classification) -> None:
+    def __init__(self, classification: Classification, attachment_action: str = "") -> None:
         self.classification = classification
+        self.attachment_action = attachment_action
         self.classify_calls: list[tuple[str, list[ConversationMessage]]] = []
+        self.attachment_follow_up_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.answer_factual_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
         self.rewrite_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.embedded_queries: list[str] = []
         self.generated_prompts: list[str] = []
         self.classification_usage = ModelUsage(model="gpt-4o-mini", input_tokens=12, output_tokens=6, total_tokens=18)
+        self.attachment_action_usage = ModelUsage(model="gpt-4o-mini", input_tokens=8, output_tokens=4, total_tokens=12)
         self.greeting_usage = ModelUsage(model="gpt-4o-mini", input_tokens=10, output_tokens=3, total_tokens=13)
         self.factual_usage = ModelUsage(model="gpt-4o-mini", input_tokens=16, output_tokens=7, total_tokens=23)
         self.rewrite_usage = ModelUsage(model="gpt-4o-mini", input_tokens=20, output_tokens=4, total_tokens=24)
@@ -37,6 +40,10 @@ class FakeGateway:
     def classify_query(self, query: str, history=None):
         self.classify_calls.append((query, history or []))
         return self.classification, self.classification_usage
+
+    def classify_attachment_follow_up(self, query: str, history=None):
+        self.attachment_follow_up_calls.append((query, history or []))
+        return self.attachment_action, self.attachment_action_usage
 
     def generate_greeting_reply(self, user_text: str, language_hint: str, preferred_name: str = "", history=None):
         return "hello", self.greeting_usage
@@ -102,6 +109,7 @@ class QueryServiceTests(unittest.TestCase):
         )
         self.assertEqual(memory.requested_ids, ["conv-1"])
         self.assertEqual(gateway.classify_calls, [("What is the test code?", history)])
+        self.assertEqual(gateway.attachment_follow_up_calls, [])
         self.assertEqual(gateway.answer_factual_calls, [("What is the test code?", "en", "Test User", history)])
 
     def test_document_request_rewrites_retrieval_query_and_includes_history_in_prompt(self) -> None:
@@ -139,12 +147,14 @@ class QueryServiceTests(unittest.TestCase):
                 classification=Classification(intent="DOCUMENT_REQUEST", explain="follow-up request", language="en"),
                 usage_events=[
                     usage_event_from_model_usage("classification", gateway.classification_usage),
+                    usage_event_from_model_usage("classification", gateway.attachment_action_usage),
                     usage_event_from_model_usage("other", gateway.rewrite_usage),
                     usage_event_from_model_usage("embedding", gateway.embedding_usage),
                     usage_event_from_model_usage("chat_completion", gateway.json_usage),
                 ],
             ),
         )
+        self.assertEqual(gateway.attachment_follow_up_calls, [("Which sample guide was that?", history)])
         self.assertEqual(gateway.rewrite_calls, [("Which sample guide was that?", history)])
         self.assertEqual(gateway.embedded_queries, ["sample onboarding guide pdf"])
         self.assertEqual(len(gateway.generated_prompts), 1)
@@ -161,7 +171,10 @@ class QueryServiceTests(unittest.TestCase):
                 attachments=[ConversationAttachment(name="test-guide.pdf", kind="document", source="docs/test-guide.pdf")],
             )
         ]
-        gateway = FakeGateway(Classification(intent="DOCUMENT_REQUEST", explain="resend request", language="en"))
+        gateway = FakeGateway(
+            Classification(intent="DOCUMENT_REQUEST", explain="resend request", language="en"),
+            attachment_action="resend_last_attachment",
+        )
         memory = FakeConversationMemory(history)
         results = [
             RetrievedHit(
@@ -177,17 +190,52 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(
             result,
             QueryResult(
-                answer="Use this sample.",
+                answer="Here is the file again: test-guide.pdf.",
                 file="docs/test-guide.pdf",
                 classification=Classification(intent="DOCUMENT_REQUEST", explain="resend request", language="en"),
                 usage_events=[
                     usage_event_from_model_usage("classification", gateway.classification_usage),
-                    usage_event_from_model_usage("other", gateway.rewrite_usage),
-                    usage_event_from_model_usage("embedding", gateway.embedding_usage),
-                    usage_event_from_model_usage("chat_completion", gateway.json_usage),
+                    usage_event_from_model_usage("classification", gateway.attachment_action_usage),
                 ],
             ),
         )
+        self.assertEqual(gateway.attachment_follow_up_calls, [("Please resend the file", history)])
+        self.assertEqual(gateway.rewrite_calls, [])
+        self.assertEqual(gateway.generated_prompts, [])
+
+    def test_short_resend_follow_up_resends_latest_attachment(self) -> None:
+        history = [
+            ConversationMessage(
+                role="assistant",
+                text="I already sent the sample.",
+                ts=2,
+                attachments=[ConversationAttachment(name="CV_ru.pdf", kind="document", source="italy/CV_ru.pdf")],
+            )
+        ]
+        gateway = FakeGateway(
+            Classification(intent="CHIT_CHAT", explain="short follow-up", language="ru"),
+            attachment_action="resend_last_attachment",
+        )
+        memory = FakeConversationMemory(history)
+        service = QueryService(gateway, FakeStore(), conversation_memory=memory)
+
+        result = service.handle_query("Еще раз", conversation_id="conv-1", preferred_name="Test User")
+
+        self.assertEqual(
+            result,
+            QueryResult(
+                answer="Вот файл еще раз: CV_ru.pdf.",
+                file="italy/CV_ru.pdf",
+                classification=Classification(intent="CHIT_CHAT", explain="short follow-up", language="ru"),
+                usage_events=[
+                    usage_event_from_model_usage("classification", gateway.classification_usage),
+                    usage_event_from_model_usage("classification", gateway.attachment_action_usage),
+                ],
+            ),
+        )
+        self.assertEqual(gateway.attachment_follow_up_calls, [("Еще раз", history)])
+        self.assertEqual(gateway.answer_factual_calls, [])
+        self.assertEqual(gateway.generated_prompts, [])
 
     def test_document_prompt_helper_includes_history(self) -> None:
         history = [
@@ -243,6 +291,7 @@ class QueryServiceTests(unittest.TestCase):
         )
         self.assertEqual(gateway.answer_factual_calls, [])
         self.assertEqual(gateway.generated_prompts, [])
+        self.assertEqual(gateway.attachment_follow_up_calls, [])
 
 
 if __name__ == "__main__":

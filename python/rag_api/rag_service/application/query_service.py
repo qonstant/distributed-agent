@@ -49,27 +49,35 @@ def _basename(value: str) -> str:
     return normalized.rsplit("/", 1)[-1]
 
 
-def _looks_like_resend_request(query: str) -> bool:
-    value = (query or "").strip().lower()
-    if not value:
-        return False
+def _find_latest_assistant_attachment(history: List[ConversationMessage]) -> Optional[ConversationAttachment]:
+    for message in reversed(history):
+        if message.role != "assistant":
+            continue
+        for attachment in message.attachments:
+            if (attachment.source or "").strip() or (attachment.name or "").strip():
+                return attachment
+    return None
 
-    phrases = (
-        "resend",
-        "re-send",
-        "send it again",
-        "send that again",
-        "send the file again",
-        "send again",
-        "one more time",
-        "again please",
-        "пришли еще раз",
-        "отправь еще раз",
-        "перешли еще раз",
-        "снова отправь",
-        "повтори отправку",
-    )
-    return any(phrase in value for phrase in phrases)
+
+def _resend_attachment_source(attachment: ConversationAttachment) -> Optional[str]:
+    source = (attachment.source or "").strip()
+    if source:
+        return source
+    name = (attachment.name or "").strip()
+    if name:
+        return name
+    return None
+
+
+def _resend_attachment_answer(attachment: ConversationAttachment, language: str) -> str:
+    file_label = _attachment_display_label(attachment, attachment.source or attachment.name)
+    normalized_language = (language or "").strip().lower()
+
+    if normalized_language in {"kk", "kazakh", "қазақ", "қазақша"}:
+        return f"Міне, файлды қайта жібердім: {file_label}."
+    if normalized_language in {"ru", "russian", "русский"}:
+        return f"Вот файл еще раз: {file_label}."
+    return f"Here is the file again: {file_label}."
 
 
 def _find_previously_sent_attachment(
@@ -193,6 +201,24 @@ class QueryService:
                 classification=classification,
                 usage_events=usage_events,
             )
+
+        latest_attachment = _find_latest_assistant_attachment(history)
+        if latest_attachment is not None:
+            attachment_action, attachment_action_usage = self._gateway.classify_attachment_follow_up(
+                normalized_query,
+                history=history,
+            )
+            if attachment_action_usage is not None:
+                usage_events.append(usage_event_from_model_usage("classification", attachment_action_usage))
+
+            resend_source = _resend_attachment_source(latest_attachment)
+            if attachment_action == "resend_last_attachment" and resend_source is not None:
+                return QueryResult(
+                    answer=_resend_attachment_answer(latest_attachment, language),
+                    file=resend_source,
+                    classification=classification,
+                    usage_events=usage_events,
+                )
 
         if intent in ("GREETING", "CHIT_CHAT"):
             greeting, completion_usage = self._gateway.generate_greeting_reply(
@@ -319,7 +345,7 @@ class QueryService:
                 answer = answer[:1600].rstrip() + "..."
 
             previous_attachment = _find_previously_sent_attachment(history, file_chosen)
-            if previous_attachment and not _looks_like_resend_request(normalized_query):
+            if previous_attachment:
                 file_label = _attachment_display_label(previous_attachment, file_chosen)
                 answer = _merge_answer_with_duplicate_note(
                     answer,

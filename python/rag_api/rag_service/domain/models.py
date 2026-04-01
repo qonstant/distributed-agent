@@ -24,6 +24,11 @@ SUPPORTED_PROFILE_ACTIONS = {
     "set_preferred_name",
 }
 
+SUPPORTED_ATTACHMENT_ACTIONS = {
+    "",
+    "resend_last_attachment",
+}
+
 
 def normalize_intent(intent: str) -> str:
     value = (intent or "").strip().upper()
@@ -74,6 +79,22 @@ def normalize_profile_action(action: str) -> str:
     }
     normalized = mapping.get(value, value)
     if normalized not in SUPPORTED_PROFILE_ACTIONS:
+        return ""
+    return normalized
+
+
+def normalize_attachment_action(action: str) -> str:
+    value = (action or "").strip().lower()
+    mapping = {
+        "": "",
+        "none": "",
+        "resend_last_attachment": "resend_last_attachment",
+        "resend_attachment": "resend_last_attachment",
+        "resend_last_file": "resend_last_attachment",
+        "send_again": "resend_last_attachment",
+    }
+    normalized = mapping.get(value, value)
+    if normalized not in SUPPORTED_ATTACHMENT_ACTIONS:
         return ""
     return normalized
 

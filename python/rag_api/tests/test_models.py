@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from rag_service.domain.models import normalize_language, normalize_profile_action
+from rag_service.domain.models import (
+    normalize_attachment_action,
+    normalize_language,
+    normalize_profile_action,
+)
 
 
 class ModelsTests(unittest.TestCase):
@@ -26,6 +30,14 @@ class ModelsTests(unittest.TestCase):
 
     def test_normalize_profile_action_maps_unknown_to_empty(self) -> None:
         self.assertEqual(normalize_profile_action("delete_user"), "")
+
+    def test_normalize_attachment_action_maps_supported_values(self) -> None:
+        self.assertEqual(normalize_attachment_action("resend_last_attachment"), "resend_last_attachment")
+        self.assertEqual(normalize_attachment_action("send_again"), "resend_last_attachment")
+        self.assertEqual(normalize_attachment_action("none"), "")
+
+    def test_normalize_attachment_action_maps_unknown_to_empty(self) -> None:
+        self.assertEqual(normalize_attachment_action("delete_attachment"), "")
 
 
 if __name__ == "__main__":

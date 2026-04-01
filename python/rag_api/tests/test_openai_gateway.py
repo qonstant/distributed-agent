@@ -84,6 +84,25 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertEqual(classification.profile_action, "set_preferred_name")
         self.assertEqual(classification.preferred_name, "Heisenberg")
 
+    def test_classify_attachment_follow_up_extracts_resend_action(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"attachment_action":"resend_last_attachment","explain":"user asks to resend the previous file"}'
+        )
+
+        action, _ = gateway.classify_attachment_follow_up(
+            "Еще раз",
+            history=[],
+        )
+
+        self.assertEqual(action, "")
+
+        action, _ = gateway.classify_attachment_follow_up(
+            "Еще раз",
+            history=[SimpleNamespace(role="assistant", text="I sent the file", attachments=[], ts=1)],
+        )
+
+        self.assertEqual(action, "resend_last_attachment")
+
     def test_answer_factual_includes_preferred_name_in_prompt(self) -> None:
         gateway, fake_client = self._gateway_with_output(
             "The code is ALPHA-123.",

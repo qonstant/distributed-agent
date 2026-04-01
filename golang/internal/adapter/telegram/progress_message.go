@@ -5,14 +5,21 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/go-telegram/bot"
 )
 
-var thinkingFrames = []string{
+var thinkingFramesLatin = []string{
 	"Thinking.",
 	"Thinking..",
 	"Thinking...",
+}
+
+var thinkingFramesCyrillic = []string{
+	"Думаю.",
+	"Думаю..",
+	"Думаю...",
 }
 
 const thinkingUpdateInterval = 1200 * time.Millisecond
@@ -24,16 +31,18 @@ type ProgressMessage struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	stopOnce  sync.Once
+	frames    []string
 }
 
-func StartProgressMessage(ctx context.Context, b *bot.Bot, chatID int64) *ProgressMessage {
+func StartProgressMessage(ctx context.Context, b *bot.Bot, chatID int64, text string) *ProgressMessage {
 	if b == nil {
 		return nil
 	}
+	frames := thinkingFramesForText(text)
 
 	msg, err := b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: chatID,
-		Text:   thinkingFrames[0],
+		Text:   frames[0],
 	})
 	if err != nil {
 		return nil
@@ -46,6 +55,7 @@ func StartProgressMessage(ctx context.Context, b *bot.Bot, chatID int64) *Progre
 		messageID: msg.ID,
 		cancel:    cancel,
 		done:      make(chan struct{}),
+		frames:    frames,
 	}
 
 	go progress.animate(runCtx)
@@ -64,7 +74,7 @@ func (p *ProgressMessage) animate(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			text := thinkingFrames[frameIdx%len(thinkingFrames)]
+			text := p.frames[frameIdx%len(p.frames)]
 			frameIdx++
 			_, _ = p.bot.EditMessageText(ctx, &bot.EditMessageTextParams{
 				ChatID:    p.chatID,
@@ -120,4 +130,23 @@ func (p *ProgressMessage) Delete(ctx context.Context) error {
 		MessageID: p.messageID,
 	})
 	return err
+}
+
+func thinkingFramesForText(text string) []string {
+	hasLatin := false
+	for _, r := range text {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		if unicode.In(r, unicode.Cyrillic) {
+			return thinkingFramesCyrillic
+		}
+		if unicode.In(r, unicode.Latin) {
+			hasLatin = true
+		}
+	}
+	if hasLatin {
+		return thinkingFramesLatin
+	}
+	return thinkingFramesLatin
 }

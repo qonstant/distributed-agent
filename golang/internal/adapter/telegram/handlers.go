@@ -73,7 +73,7 @@ func (h *Handlers) HandleDefault(ctx context.Context, b *bot.Bot, update *models
 	}
 
 	user := userFromUpdate(update)
-	progress := StartProgressMessage(ctx, b, update.Message.Chat.ID)
+	progress := StartProgressMessage(ctx, b, update.Message.Chat.ID, update.Message.Text)
 	response, err := h.ask.Execute(ctx, user, update.Message.Text)
 	if err != nil {
 		if errors.Is(err, access.ErrUnauthorized) {

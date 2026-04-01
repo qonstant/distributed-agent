@@ -113,7 +113,7 @@ func TestAskQuestionExecute(t *testing.T) {
 					if got, want := telegramID, authorizedUser.TelegramID; got != want {
 						t.Fatalf("FindByTelegramID() telegramID = %d, want %d", got, want)
 					}
-					return access.Record{TelegramID: telegramID, HasAccess: true}, true, nil
+					return access.Record{TelegramID: telegramID}, true, nil
 				},
 			}),
 			Answers: fakeAnswerSource{
@@ -155,7 +155,7 @@ func TestAskQuestionExecute(t *testing.T) {
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
 				findFn: func(context.Context, int64) (access.Record, bool, error) {
-					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+					return access.Record{TelegramID: authorizedUser.TelegramID}, true, nil
 				},
 			}),
 			Answers: fakeAnswerSource{
@@ -197,7 +197,7 @@ func TestAskQuestionExecute(t *testing.T) {
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
 				findFn: func(context.Context, int64) (access.Record, bool, error) {
-					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+					return access.Record{TelegramID: authorizedUser.TelegramID}, true, nil
 				},
 			}),
 			Answers: fakeAnswerSource{
@@ -225,7 +225,7 @@ func TestAskQuestionExecute(t *testing.T) {
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
 				findFn: func(context.Context, int64) (access.Record, bool, error) {
-					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+					return access.Record{TelegramID: authorizedUser.TelegramID}, true, nil
 				},
 			}),
 			Answers: fakeAnswerSource{
@@ -256,7 +256,7 @@ func TestAskQuestionExecute(t *testing.T) {
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
 				findFn: func(context.Context, int64) (access.Record, bool, error) {
-					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+					return access.Record{TelegramID: authorizedUser.TelegramID}, true, nil
 				},
 			}),
 			Answers: fakeAnswerSource{
@@ -312,7 +312,7 @@ func TestAskQuestionExecute(t *testing.T) {
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
 				findFn: func(context.Context, int64) (access.Record, bool, error) {
-					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+					return access.Record{TelegramID: authorizedUser.TelegramID}, true, nil
 				},
 			}),
 			Answers: fakeAnswerSource{
@@ -393,9 +393,6 @@ func TestAskQuestionExecute(t *testing.T) {
 		if got, want := published.UserMessage.Text, "hello"; got != want {
 			t.Fatalf("published.UserMessage.Text = %q, want %q", got, want)
 		}
-		if got, want := published.AssistantMessage.Text, "new answer"; got != want {
-			t.Fatalf("published.AssistantMessage.Text = %q, want %q", got, want)
-		}
 	})
 
 	t.Run("continues when conversation memory is unavailable", func(t *testing.T) {
@@ -404,7 +401,7 @@ func TestAskQuestionExecute(t *testing.T) {
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
 				findFn: func(context.Context, int64) (access.Record, bool, error) {
-					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+					return access.Record{TelegramID: authorizedUser.TelegramID}, true, nil
 				},
 			}),
 			Answers: fakeAnswerSource{
@@ -444,7 +441,7 @@ func TestAskQuestionExecute(t *testing.T) {
 		uc := AskQuestion{
 			Policy: access.NewPolicy(fakeAccessDirectory{
 				findFn: func(context.Context, int64) (access.Record, bool, error) {
-					return access.Record{TelegramID: authorizedUser.TelegramID, HasAccess: true}, true, nil
+					return access.Record{TelegramID: authorizedUser.TelegramID}, true, nil
 				},
 			}),
 			Answers: fakeAnswerSource{

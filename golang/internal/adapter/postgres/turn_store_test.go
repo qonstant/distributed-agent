@@ -10,7 +10,6 @@ import (
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 
 	"github.com/qonstant/distributed-agent/internal/domain/persistence"
-	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
 
 func TestTurnStoreSaveTurn(t *testing.T) {
@@ -37,20 +36,12 @@ func TestTurnStoreSaveTurn(t *testing.T) {
 			UpdatedAt: now,
 		},
 		UserMessage: persistence.Message{
-			Role:         qa.ConversationRoleUser,
-			Text:         "What is the test code?",
-			LanguageCode: "en",
-			CreatedAt:    now,
-		},
-		AssistantMessage: persistence.Message{
-			Role:         qa.ConversationRoleAssistant,
-			Text:         "The test code is ALPHA-123.",
-			LanguageCode: "en",
-			CreatedAt:    now,
+			Text:      "What is the test code?",
+			CreatedAt: now,
 		},
 		Classification: &persistence.MessageClassification{
 			Intent:            "FACTUAL_QUESTION",
-			Explain:           "user asks about prior context",
+			Explanation:       "user asks about prior context",
 			DetectedLanguage:  "en",
 			ClassifierModel:   "gpt-4o-mini",
 			ClassifierVersion: "v1",
@@ -64,10 +55,10 @@ func TestTurnStoreSaveTurn(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		INSERT INTO "users" ("telegram_id", "telegram_username", "has_access", "created_at", "updated_at")
-		VALUES ($1, NULLIF($2, ''), false, now(), now())
+		INSERT INTO "users" ("telegram_id", "username", "created_at", "updated_at")
+		VALUES ($1, NULLIF($2, ''), now(), now())
 		ON CONFLICT ("telegram_id") DO UPDATE
-		SET "telegram_username" = COALESCE(NULLIF(EXCLUDED."telegram_username", ''), "users"."telegram_username"),
+		SET "username" = COALESCE(NULLIF(EXCLUDED."username", ''), "users"."username"),
 		    "updated_at" = now()
 		RETURNING "id"
 	`)).
@@ -85,26 +76,18 @@ func TestTurnStoreSaveTurn(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(11)))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		INSERT INTO "messages" ("conversation_id", "user_id", "message_text", "language_code", "telegram_message_id", "created_at")
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)
+		INSERT INTO "messages" ("conversation_id", "message_text", "created_at")
+		VALUES ($1, $2, $3)
 		RETURNING "id"
 	`)).
-		WithArgs(int64(11), int64(7), "What is the test code?", "en", nil, now).
-		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(100)))
-
-	mock.ExpectQuery(regexp.QuoteMeta(`
-		INSERT INTO "messages" ("conversation_id", "user_id", "message_text", "language_code", "telegram_message_id", "created_at")
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)
-		RETURNING "id"
-	`)).
-		WithArgs(int64(11), nil, "The test code is ALPHA-123.", "en", nil, now).
+		WithArgs(int64(11), "What is the test code?", now).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(101)))
 
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO "message_classifications" (
 			"message_id",
 			"intent",
-			"explain",
+			"explanation",
 			"detected_language",
 			"classifier_model",
 			"classifier_version",
@@ -113,42 +96,44 @@ func TestTurnStoreSaveTurn(t *testing.T) {
 		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7)
 		ON CONFLICT ("message_id") DO UPDATE
 		SET "intent" = EXCLUDED."intent",
-		    "explain" = EXCLUDED."explain",
+		    "explanation" = EXCLUDED."explanation",
 		    "detected_language" = EXCLUDED."detected_language",
 		    "classifier_model" = EXCLUDED."classifier_model",
 		    "classifier_version" = EXCLUDED."classifier_version"
 	`)).
-		WithArgs(int64(100), "FACTUAL_QUESTION", "user asks about prior context", "en", "gpt-4o-mini", "v1", now).
+		WithArgs(int64(101), "FACTUAL_QUESTION", "user asks about prior context", "en", "gpt-4o-mini", "v1", now).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO "usage_events" (
 			"user_id",
+			"conversation_id",
+			"message_id",
 			"event_type",
 			"input_tokens",
 			"output_tokens",
-			"total_tokens",
 			"estimated_cost",
 			"created_at"
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`)).
-		WithArgs(int64(7), "classification", 0, 0, 0, 0.0, now).
+		WithArgs(int64(7), int64(11), int64(101), "classification", 0, 0, 0.0, now).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO "usage_events" (
 			"user_id",
+			"conversation_id",
+			"message_id",
 			"event_type",
 			"input_tokens",
 			"output_tokens",
-			"total_tokens",
 			"estimated_cost",
 			"created_at"
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`)).
-		WithArgs(int64(7), "chat_completion", 0, 0, 0, 0.0, now).
+		WithArgs(int64(7), int64(11), int64(101), "chat_completion", 0, 0, 0.0, now).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	mock.ExpectCommit()
@@ -175,10 +160,10 @@ func TestTurnStoreSaveTurnRollsBackOnUserUpsertError(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		INSERT INTO "users" ("telegram_id", "telegram_username", "has_access", "created_at", "updated_at")
-		VALUES ($1, NULLIF($2, ''), false, now(), now())
+		INSERT INTO "users" ("telegram_id", "username", "created_at", "updated_at")
+		VALUES ($1, NULLIF($2, ''), now(), now())
 		ON CONFLICT ("telegram_id") DO UPDATE
-		SET "telegram_username" = COALESCE(NULLIF(EXCLUDED."telegram_username", ''), "users"."telegram_username"),
+		SET "username" = COALESCE(NULLIF(EXCLUDED."username", ''), "users"."username"),
 		    "updated_at" = now()
 		RETURNING "id"
 	`)).
@@ -193,8 +178,7 @@ func TestTurnStoreSaveTurnRollsBackOnUserUpsertError(t *testing.T) {
 			CreatedAt: time.Unix(1774920000, 0).UTC(),
 			UpdatedAt: time.Unix(1774920000, 0).UTC(),
 		},
-		UserMessage:      persistence.Message{Role: qa.ConversationRoleUser, Text: "hello"},
-		AssistantMessage: persistence.Message{Role: qa.ConversationRoleAssistant, Text: "world"},
+		UserMessage: persistence.Message{Text: "hello"},
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("SaveTurn() error = %v, want wrapped %v", err, wantErr)

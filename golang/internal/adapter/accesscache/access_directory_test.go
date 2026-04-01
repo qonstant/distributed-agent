@@ -36,7 +36,6 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 	now := time.Date(2026, 3, 29, 12, 0, 0, 0, time.UTC)
 	activeRecord := access.Record{
 		TelegramID:      42,
-		HasAccess:       true,
 		AccessExpiresAt: ptrTime(now.Add(time.Minute)),
 	}
 
@@ -49,10 +48,10 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 		var refreshedTTL time.Duration
 		store := fakeStore{
 			getFn: func(_ context.Context, key string) (string, bool, error) {
-				if got, want := key, "access:telegram:42"; got != want {
+				if got, want := key, "access:v2:telegram:42"; got != want {
 					t.Fatalf("Get() key = %q, want %q", got, want)
 				}
-				return `{"found":true,"record":{"TelegramID":42,"IsBlocked":false,"HasAccess":true}}`, true, nil
+				return `{"found":true,"record":{"TelegramID":42,"IsBlocked":false}}`, true, nil
 			},
 			setFn: func(_ context.Context, key, value string, ttl time.Duration) error {
 				refreshedKey = key
@@ -67,7 +66,7 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 				return access.Record{}, false, nil
 			},
 		}, store, CachedAccessDirectoryConfig{
-			KeyPrefix:   "access:telegram:",
+			KeyPrefix:   "access:v2:telegram:",
 			TTL:         time.Minute,
 			NegativeTTL: 15 * time.Second,
 		})
@@ -79,13 +78,13 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 		if !found {
 			t.Fatal("FindByTelegramID() found = false, want true")
 		}
-		if record.TelegramID != 42 || !record.HasAccess {
+		if record.TelegramID != 42 {
 			t.Fatalf("FindByTelegramID() record = %+v", record)
 		}
 		if delegateCalled {
 			t.Fatal("delegate was called on cache hit")
 		}
-		if got, want := refreshedKey, "access:telegram:42"; got != want {
+		if got, want := refreshedKey, "access:v2:telegram:42"; got != want {
 			t.Fatalf("Set() key = %q, want %q", got, want)
 		}
 		if got, want := refreshedTTL, time.Minute; got != want {
@@ -105,7 +104,7 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 		var refreshedTTL time.Duration
 		store := fakeStore{
 			getFn: func(context.Context, string) (string, bool, error) {
-				return `{"found":false,"record":{"TelegramID":0,"IsBlocked":false,"HasAccess":false}}`, true, nil
+				return `{"found":false,"record":{"TelegramID":0,"IsBlocked":false}}`, true, nil
 			},
 			setFn: func(_ context.Context, key, value string, ttl time.Duration) error {
 				refreshedKey = key
@@ -120,7 +119,7 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 				return access.Record{}, false, nil
 			},
 		}, store, CachedAccessDirectoryConfig{
-			KeyPrefix:   "access:telegram:",
+			KeyPrefix:   "access:v2:telegram:",
 			TTL:         time.Minute,
 			NegativeTTL: 15 * time.Second,
 		})
@@ -138,7 +137,7 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 		if delegateCalled {
 			t.Fatal("delegate was called on negative cache hit")
 		}
-		if got, want := refreshedKey, "access:telegram:42"; got != want {
+		if got, want := refreshedKey, "access:v2:telegram:42"; got != want {
 			t.Fatalf("Set() key = %q, want %q", got, want)
 		}
 		if got, want := refreshedTTL, 15*time.Second; got != want {
@@ -175,7 +174,7 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 				return activeRecord, true, nil
 			},
 		}, store, CachedAccessDirectoryConfig{
-			KeyPrefix:   "access:telegram:",
+			KeyPrefix:   "access:v2:telegram:",
 			TTL:         time.Minute,
 			NegativeTTL: 15 * time.Second,
 		})
@@ -190,7 +189,7 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 		if got, want := record, activeRecord; got != want {
 			t.Fatalf("FindByTelegramID() record = %+v, want %+v", got, want)
 		}
-		if got, want := cachedKey, "access:telegram:42"; got != want {
+		if got, want := cachedKey, "access:v2:telegram:42"; got != want {
 			t.Fatalf("Set() key = %q, want %q", got, want)
 		}
 		if got, want := cachedTTL, time.Minute; got != want {
@@ -219,7 +218,7 @@ func TestCachedAccessDirectoryFindByTelegramID(t *testing.T) {
 				return access.Record{}, false, nil
 			},
 		}, store, CachedAccessDirectoryConfig{
-			KeyPrefix:   "access:telegram:",
+			KeyPrefix:   "access:v2:telegram:",
 			TTL:         time.Minute,
 			NegativeTTL: 15 * time.Second,
 		})

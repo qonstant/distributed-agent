@@ -34,7 +34,6 @@ func TestPolicyAuthorize(t *testing.T) {
 			user: User{TelegramID: 42, Username: "alloweduser"},
 			record: Record{
 				TelegramID: 42,
-				HasAccess: true,
 			},
 			found: true,
 		},
@@ -44,9 +43,9 @@ func TestPolicyAuthorize(t *testing.T) {
 			wantErr: ErrUnauthorized,
 		},
 		{
-			name: "rejects missing user record",
-			user: User{TelegramID: 42},
-			found: false,
+			name:    "rejects missing user record",
+			user:    User{TelegramID: 42},
+			found:   false,
 			wantErr: ErrUnauthorized,
 		},
 		{
@@ -54,20 +53,9 @@ func TestPolicyAuthorize(t *testing.T) {
 			user: User{TelegramID: 42},
 			record: Record{
 				TelegramID: 42,
-				HasAccess: true,
-				IsBlocked: true,
+				IsBlocked:  true,
 			},
-			found: true,
-			wantErr: ErrUnauthorized,
-		},
-		{
-			name: "rejects user without access grant",
-			user: User{TelegramID: 42},
-			record: Record{
-				TelegramID: 42,
-				HasAccess: false,
-			},
-			found: true,
+			found:   true,
 			wantErr: ErrUnauthorized,
 		},
 		{
@@ -75,10 +63,9 @@ func TestPolicyAuthorize(t *testing.T) {
 			user: User{TelegramID: 42},
 			record: Record{
 				TelegramID:      42,
-				HasAccess:       true,
 				AccessExpiresAt: ptrTime(now.Add(-time.Minute)),
 			},
-			found: true,
+			found:   true,
 			wantErr: ErrUnauthorized,
 		},
 		{
@@ -92,7 +79,6 @@ func TestPolicyAuthorize(t *testing.T) {
 			user: User{TelegramID: 42},
 			record: Record{
 				TelegramID:      42,
-				HasAccess:       true,
 				AccessExpiresAt: ptrTime(now.Add(time.Minute)),
 			},
 			found: true,
@@ -102,7 +88,6 @@ func TestPolicyAuthorize(t *testing.T) {
 			user: User{TelegramID: 42},
 			record: Record{
 				TelegramID:      42,
-				HasAccess:       true,
 				AccessExpiresAt: nil,
 			},
 			found: true,
@@ -112,9 +97,8 @@ func TestPolicyAuthorize(t *testing.T) {
 			user: User{TelegramID: 42},
 			record: Record{
 				TelegramID: 0,
-				HasAccess: true,
 			},
-			found: true,
+			found:   true,
 			wantErr: ErrUnauthorized,
 		},
 	}

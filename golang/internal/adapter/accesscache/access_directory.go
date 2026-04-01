@@ -36,7 +36,7 @@ type cacheEntry struct {
 func NewCachedAccessDirectory(delegate access.Directory, store Store, cfg CachedAccessDirectoryConfig) *CachedAccessDirectory {
 	keyPrefix := cfg.KeyPrefix
 	if keyPrefix == "" {
-		keyPrefix = "access:telegram:"
+		keyPrefix = "access:v2:telegram:"
 	}
 	if cfg.TTL == 0 {
 		cfg.TTL = time.Minute

@@ -10,7 +10,6 @@ import (
 	_ "github.com/lib/pq"
 
 	"github.com/qonstant/distributed-agent/internal/domain/persistence"
-	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
 
 type TurnStore struct {
@@ -61,11 +60,8 @@ func (s *TurnStore) SaveTurn(ctx context.Context, event persistence.TurnEvent) e
 		return err
 	}
 
-	userMessageID, err := insertMessage(ctx, tx, conversationID, userID, event.UserMessage, true)
+	userMessageID, err := insertMessage(ctx, tx, conversationID, event.UserMessage)
 	if err != nil {
-		return err
-	}
-	if _, err := insertMessage(ctx, tx, conversationID, userID, event.AssistantMessage, false); err != nil {
 		return err
 	}
 
@@ -76,7 +72,7 @@ func (s *TurnStore) SaveTurn(ctx context.Context, event persistence.TurnEvent) e
 	}
 
 	for _, usage := range event.UsageEvents {
-		if err := insertUsageEvent(ctx, tx, userID, usage); err != nil {
+		if err := insertUsageEvent(ctx, tx, userID, conversationID, userMessageID, usage); err != nil {
 			return err
 		}
 	}
@@ -96,10 +92,10 @@ func upsertUser(ctx context.Context, tx *sql.Tx, user persistence.User) (int64, 
 	if err := tx.QueryRowContext(
 		ctx,
 		`
-		INSERT INTO "users" ("telegram_id", "telegram_username", "has_access", "created_at", "updated_at")
-		VALUES ($1, NULLIF($2, ''), false, now(), now())
+		INSERT INTO "users" ("telegram_id", "username", "created_at", "updated_at")
+		VALUES ($1, NULLIF($2, ''), now(), now())
 		ON CONFLICT ("telegram_id") DO UPDATE
-		SET "telegram_username" = COALESCE(NULLIF(EXCLUDED."telegram_username", ''), "users"."telegram_username"),
+		SET "username" = COALESCE(NULLIF(EXCLUDED."username", ''), "users"."username"),
 		    "updated_at" = now()
 		RETURNING "id"
 		`,
@@ -152,41 +148,26 @@ func insertMessage(
 	ctx context.Context,
 	tx *sql.Tx,
 	conversationID int64,
-	userID int64,
 	message persistence.Message,
-	isUserMessage bool,
 ) (int64, error) {
 	createdAt := message.CreatedAt
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
 
-	var owner any
-	if isUserMessage {
-		owner = userID
-	}
-
-	var telegramMessageID any
-	if message.TelegramMessageID != nil {
-		telegramMessageID = *message.TelegramMessageID
-	}
-
 	var id int64
 	if err := tx.QueryRowContext(
 		ctx,
 		`
-		INSERT INTO "messages" ("conversation_id", "user_id", "message_text", "language_code", "telegram_message_id", "created_at")
-		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6)
+		INSERT INTO "messages" ("conversation_id", "message_text", "created_at")
+		VALUES ($1, $2, $3)
 		RETURNING "id"
 		`,
 		conversationID,
-		owner,
 		message.Text,
-		strings.TrimSpace(message.LanguageCode),
-		telegramMessageID,
 		createdAt,
 	).Scan(&id); err != nil {
-		return 0, fmt.Errorf("insert %s message: %w", messageRole(isUserMessage), err)
+		return 0, fmt.Errorf("insert user message: %w", err)
 	}
 
 	return id, nil
@@ -208,7 +189,7 @@ func insertClassification(ctx context.Context, tx *sql.Tx, messageID int64, clas
 		INSERT INTO "message_classifications" (
 			"message_id",
 			"intent",
-			"explain",
+			"explanation",
 			"detected_language",
 			"classifier_model",
 			"classifier_version",
@@ -217,14 +198,14 @@ func insertClassification(ctx context.Context, tx *sql.Tx, messageID int64, clas
 		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7)
 		ON CONFLICT ("message_id") DO UPDATE
 		SET "intent" = EXCLUDED."intent",
-		    "explain" = EXCLUDED."explain",
+		    "explanation" = EXCLUDED."explanation",
 		    "detected_language" = EXCLUDED."detected_language",
 		    "classifier_model" = EXCLUDED."classifier_model",
 		    "classifier_version" = EXCLUDED."classifier_version"
 		`,
 		messageID,
 		intent,
-		strings.TrimSpace(classification.Explain),
+		strings.TrimSpace(classification.Explanation),
 		strings.TrimSpace(classification.DetectedLanguage),
 		strings.TrimSpace(classification.ClassifierModel),
 		strings.TrimSpace(classification.ClassifierVersion),
@@ -236,7 +217,14 @@ func insertClassification(ctx context.Context, tx *sql.Tx, messageID int64, clas
 	return nil
 }
 
-func insertUsageEvent(ctx context.Context, tx *sql.Tx, userID int64, usage persistence.UsageEvent) error {
+func insertUsageEvent(
+	ctx context.Context,
+	tx *sql.Tx,
+	userID int64,
+	conversationID int64,
+	messageID int64,
+	usage persistence.UsageEvent,
+) error {
 	eventType := strings.TrimSpace(usage.EventType)
 	if eventType == "" {
 		eventType = "other"
@@ -251,20 +239,22 @@ func insertUsageEvent(ctx context.Context, tx *sql.Tx, userID int64, usage persi
 		`
 		INSERT INTO "usage_events" (
 			"user_id",
+			"conversation_id",
+			"message_id",
 			"event_type",
 			"input_tokens",
 			"output_tokens",
-			"total_tokens",
 			"estimated_cost",
 			"created_at"
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		`,
 		userID,
+		conversationID,
+		messageID,
 		eventType,
 		usage.InputTokens,
 		usage.OutputTokens,
-		usage.TotalTokens,
 		usage.EstimatedCost,
 		createdAt,
 	); err != nil {
@@ -272,11 +262,4 @@ func insertUsageEvent(ctx context.Context, tx *sql.Tx, userID int64, usage persi
 	}
 
 	return nil
-}
-
-func messageRole(isUserMessage bool) string {
-	if isUserMessage {
-		return string(qa.ConversationRoleUser)
-	}
-	return string(qa.ConversationRoleAssistant)
 }

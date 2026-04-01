@@ -35,7 +35,7 @@ func (d *AccessDirectory) Close() error {
 
 func (d *AccessDirectory) FindByTelegramID(ctx context.Context, telegramID int64) (access.Record, bool, error) {
 	const query = `
-		SELECT telegram_id, is_blocked, has_access, access_expires_at
+		SELECT telegram_id, is_blocked, access_expires_at
 		FROM users
 		WHERE telegram_id = $1
 		LIMIT 1
@@ -46,7 +46,6 @@ func (d *AccessDirectory) FindByTelegramID(ctx context.Context, telegramID int64
 	err := d.db.QueryRowContext(ctx, query, telegramID).Scan(
 		&record.TelegramID,
 		&record.IsBlocked,
-		&record.HasAccess,
 		&accessExpiresAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {

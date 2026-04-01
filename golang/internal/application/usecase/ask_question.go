@@ -155,23 +155,15 @@ func buildTurnEvent(
 			UpdatedAt: now,
 		},
 		UserMessage: persistence.Message{
-			Role:         qa.ConversationRoleUser,
-			Text:         question.Text,
-			LanguageCode: detectedLanguage(draft.Classification),
-			CreatedAt:    now,
-		},
-		AssistantMessage: persistence.Message{
-			Role:         qa.ConversationRoleAssistant,
-			Text:         draft.Text,
-			LanguageCode: detectedLanguage(draft.Classification),
-			CreatedAt:    now,
+			Text:      question.Text,
+			CreatedAt: now,
 		},
 	}
 
 	if draft.Classification != nil {
 		event.Classification = &persistence.MessageClassification{
 			Intent:            strings.TrimSpace(draft.Classification.Intent),
-			Explain:           strings.TrimSpace(draft.Classification.Explain),
+			Explanation:       strings.TrimSpace(draft.Classification.Explain),
 			DetectedLanguage:  strings.TrimSpace(draft.Classification.DetectedLanguage),
 			ClassifierModel:   strings.TrimSpace(draft.Classification.ClassifierModel),
 			ClassifierVersion: strings.TrimSpace(draft.Classification.ClassifierVersion),
@@ -185,7 +177,6 @@ func buildTurnEvent(
 				EventType:     strings.TrimSpace(usage.EventType),
 				InputTokens:   usage.InputTokens,
 				OutputTokens:  usage.OutputTokens,
-				TotalTokens:   usage.TotalTokens,
 				EstimatedCost: usage.EstimatedCost,
 				CreatedAt:     now,
 			})
@@ -193,13 +184,6 @@ func buildTurnEvent(
 	}
 
 	return event
-}
-
-func detectedLanguage(classification *qa.MessageClassification) string {
-	if classification == nil {
-		return ""
-	}
-	return strings.TrimSpace(classification.DetectedLanguage)
 }
 
 func fallbackConversationKey(ownerID int64, now time.Time) string {

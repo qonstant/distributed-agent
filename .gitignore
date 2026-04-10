@@ -119,3 +119,4 @@ secrets.json
 *.venv
 *.csv
 __pycache__
+*.vscode

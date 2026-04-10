@@ -25,6 +25,7 @@
 *.pdf
 *.png
 *.md
+!README.md
 .vscode
 chunks.jsonl
 meta.json

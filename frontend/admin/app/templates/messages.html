@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Messages{% endblock %}
+{% block topbar_title %}Conversation Message Review{% endblock %}
+
+{% block content %}
+<section class="hero-panel">
+    <div class="hero-kicker">Message Review</div>
+    <h1 class="hero-title">{{ user.username or user.telegram_id }}</h1>
+    <p class="hero-copy">A cleaner message feed for this user, grouped by conversation context and enriched with the latest classification metadata.</p>
+    <div class="hero-actions">
+        <a href="/admin-ui/users/{{ user.telegram_id }}" class="btn btn-app btn-app-secondary">Back to Profile</a>
+        <a href="/admin-ui/dashboard" class="btn btn-app btn-app-primary">Return to Dashboard</a>
+    </div>
+</section>
+
+<section class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-envelope-paper"></i>Messages</div>
+        <div class="stat-value">{{ messages|length }}</div>
+        <div class="stat-footnote">Messages currently linked to this user.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-chat-left-text"></i>Conversations</div>
+        <div class="stat-value">{{ messages|map(attribute='conversation_id')|unique|list|length if messages else 0 }}</div>
+        <div class="stat-footnote">Distinct conversation threads represented here.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-tags"></i>Classified</div>
+        <div class="stat-value">{{ messages|selectattr('classification')|list|length }}</div>
+        <div class="stat-footnote">Messages that already have a classification attached.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-ui-checks-grid"></i>Without Classification</div>
+        <div class="stat-value">{{ messages|length - (messages|selectattr('classification')|list|length) }}</div>
+        <div class="stat-footnote">Messages that still do not have classification data.</div>
+    </div>
+</section>
+
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Message Feed</h2>
+            <p class="panel-caption">Readable cards instead of a dense raw table, keeping the same underlying data.</p>
+        </div>
+    </div>
+
+    {% if messages %}
+    <div class="message-list">
+        {% for msg in messages %}
+        <article class="message-card">
+            <div class="message-head">
+                <div>
+                    <strong>Message #{{ msg.id }}</strong>
+                    <div class="text-muted small mt-1">Conversation {{ msg.conversation_id }} · {{ msg.created_at }}</div>
+                </div>
+                {% if msg.classification %}
+                    <span class="chip info"><i class="bi bi-tags"></i>{{ msg.classification.intent }}</span>
+                {% else %}
+                    <span class="chip neutral"><i class="bi bi-dash-circle"></i>No classification</span>
+                {% endif %}
+            </div>
+
+            <p class="message-text">{{ msg.message_text }}</p>
+
+            <div class="message-meta">
+                {% if msg.classification %}
+                    <span class="chip neutral"><i class="bi bi-chat-left-quote"></i>{{ msg.classification.explanation or "No explanation" }}</span>
+                    <span class="chip neutral"><i class="bi bi-cpu"></i>{{ msg.classification.classifier_model or "-" }}</span>
+                    <span class="chip neutral"><i class="bi bi-diagram-3"></i>{{ msg.classification.classifier_version or "-" }}</span>
+                    <span class="chip neutral"><i class="bi bi-translate"></i>{{ msg.classification.detected_language or "-" }}</span>
+                {% endif %}
+            </div>
+
+            <form action="/admin-ui/messages/{{ msg.id }}/classify" method="post" class="filter-grid mt-4">
+                <div class="filter-span-3">
+                    <label class="filter-label">Intent</label>
+                    <select name="intent" class="form-select">
+                        {% for intent in classifier_intents %}
+                        <option value="{{ intent }}" {% if msg.classification and msg.classification.intent == intent %}selected{% endif %}>{{ intent }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="filter-span-5">
+                    <label class="filter-label">Explanation</label>
+                    <input type="text" name="explanation" class="form-control" value="{{ msg.classification.explanation if msg.classification else '' }}" placeholder="Optional explanation">
+                </div>
+                <div class="filter-span-2">
+                    <label class="filter-label">Language</label>
+                    <input type="text" name="detected_language" class="form-control" value="{{ msg.classification.detected_language if msg.classification else '' }}" placeholder="ru">
+                </div>
+                <div class="filter-span-2">
+                    <label class="filter-label">Model</label>
+                    <input type="text" name="classifier_model" class="form-control" value="{{ msg.classification.classifier_model if msg.classification else '' }}" placeholder="gpt-4o-mini">
+                </div>
+                <div class="filter-span-4">
+                    <label class="filter-label">Version</label>
+                    <input type="text" name="classifier_version" class="form-control" value="{{ msg.classification.classifier_version if msg.classification else '' }}" placeholder="prompt-v1">
+                </div>
+                <div class="filter-span-6">
+                    <label class="filter-label">Admin Note</label>
+                    <input type="text" name="notes" class="form-control" placeholder="Optional audit note">
+                </div>
+                <div class="filter-span-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-app btn-app-primary w-100">{% if msg.classification %}Update{% else %}Classify{% endif %}</button>
+                </div>
+            </form>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <strong class="d-block mb-2">No messages found.</strong>
+        This user does not currently have messages available for review.
+    </div>
+    {% endif %}
+</section>
+{% endblock %}

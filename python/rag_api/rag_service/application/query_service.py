@@ -106,25 +106,6 @@ def _find_previously_sent_attachment(
     return None
 
 
-def _duplicate_file_note(file_label: str, language: str) -> str:
-    normalized_language = (language or "").strip().lower()
-    if normalized_language in {"kk", "kazakh", "қазақ", "қазақша"}:
-        return (
-            f"Мен бұл файлды осы диалогта бұрын жібергенмін: {file_label}. "
-            "Оны чаттың жоғарғы жағынан таба аласыз. Қаласаңыз, оны қайтадан жіберемін."
-        )
-    if normalized_language in {"ru", "russian", "русский"}:
-        return (
-            f"Я уже отправлял этот файл ранее в этом диалоге: {file_label}. "
-            "Его можно найти выше в переписке. Если хотите, я могу отправить его еще раз."
-        )
-
-    return (
-        f"I already sent this file earlier in the conversation: {file_label}. "
-        "You can find it above in the chat. If you want, I can resend it."
-    )
-
-
 def _attachment_display_label(
     attachment: Optional[ConversationAttachment],
     file_chosen: Optional[str],
@@ -141,13 +122,26 @@ def _attachment_display_label(
     return _basename(file_chosen or "")
 
 
-def _merge_answer_with_duplicate_note(answer: str, note: str) -> str:
-    base = (answer or "").strip()
-    if not base:
-        return note
-    if note in base:
-        return base
-    return f"{base}\n\n{note}"
+def _normalize_file_choice(value) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized or normalized.lower() in {"none", "null", "nil"}:
+        return None
+    return normalized
+
+
+def _source_file_from_hit(hit: Optional[RetrievedHit]) -> Optional[str]:
+    if hit is None:
+        return None
+    return _normalize_file_choice(hit.meta.get("source_file") or hit.meta.get("filename"))
+
+
+def _should_attach_supporting_file(answer: str) -> bool:
+    normalized = (answer or "").strip().lower()
+    if not normalized:
+        return False
+    return normalized != "i don't know based on the provided documents."
 
 
 def _language_label(language: str) -> str:
@@ -363,9 +357,7 @@ class QueryService:
 
                 if isinstance(llm_json, dict) and "answer" in llm_json and "file" in llm_json:
                     answer = str(llm_json.get("answer", "")).strip()
-                    file_chosen = llm_json.get("file")
-                    if file_chosen is not None:
-                        file_chosen = str(file_chosen)
+                    file_chosen = _normalize_file_choice(llm_json.get("file"))
                 else:
                     if best_chunk is None:
                         return QueryResult(
@@ -374,7 +366,7 @@ class QueryService:
                         )
                     chunk_meta = best_chunk.meta
                     answer = (chunk_meta.get("text") or chunk_meta.get("md") or "").strip()
-                    file_chosen = (
+                    file_chosen = _normalize_file_choice(
                         chunk_meta.get("source_file")
                         or chunk_meta.get("filename")
                         or best_file_agg
@@ -385,15 +377,15 @@ class QueryService:
                 if len(answer) > 1600:
                     answer = answer[:1600].rstrip() + "..."
 
+                if not file_chosen and _should_attach_supporting_file(answer):
+                    file_chosen = _source_file_from_hit(best_chunk) or _normalize_file_choice(best_file_agg)
+                    if file_chosen:
+                        print(f"[query] using fallback supporting file={file_chosen}")
+
                 previous_attachment = _find_previously_sent_attachment(history, file_chosen)
                 if previous_attachment:
                     file_label = _attachment_display_label(previous_attachment, file_chosen)
-                    answer = _merge_answer_with_duplicate_note(
-                        answer,
-                        _duplicate_file_note(file_label, language),
-                    )
-                    print(f"[memory] skipping duplicate attachment resend for file={file_label}")
-                    file_chosen = None
+                    print(f"[memory] file was sent before, sending again for current answer: {file_label}")
 
                 return QueryResult(
                     answer=answer,

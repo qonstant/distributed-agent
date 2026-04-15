@@ -26,10 +26,12 @@ class FakeGateway:
         classification: Classification,
         attachment_action: str = "",
         clarity: RetrievalClarity | None = None,
+        json_response=None,
     ) -> None:
         self.classification = classification
         self.attachment_action = attachment_action
         self.clarity = clarity
+        self.json_response = json_response
         self.classify_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.attachment_follow_up_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.clarity_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
@@ -79,6 +81,8 @@ class FakeGateway:
 
     def generate_json_response(self, prompt: str, max_tokens: int = 512):
         self.generated_prompts.append(prompt)
+        if self.json_response is not None:
+            return self.json_response, self.json_usage
         return {"answer": "Use this sample.", "file": "docs/test-guide.pdf"}, self.json_usage
 
 
@@ -158,12 +162,8 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(
             result,
             QueryResult(
-                answer=(
-                    "Use this sample.\n\n"
-                    "I already sent this file earlier in the conversation: test-guide.pdf. "
-                    "You can find it above in the chat. If you want, I can resend it."
-                ),
-                file=None,
+                answer="Use this sample.",
+                file="docs/test-guide.pdf",
                 classification=Classification(intent="DOCUMENT_REQUEST", explain="follow-up request", language="en"),
                 usage_events=[
                     usage_event_from_model_usage("classification", gateway.classification_usage),
@@ -184,6 +184,50 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIn("Preferred user name: Test User", gateway.generated_prompts[0])
         self.assertIn("Recent conversation context", gateway.generated_prompts[0])
         self.assertIn("user: Send me the sample onboarding guide", gateway.generated_prompts[0])
+
+    def test_guidance_falls_back_to_best_source_file_when_llm_omits_file(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="supported guidance", language="en"),
+            json_response={"answer": "Use the DSU application instructions from the retrieved document.", "file": None},
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={
+                    "source_file": "italy/DSU_Scholarship_en.pdf",
+                    "page": 1,
+                    "text": "DSU application instructions",
+                },
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("how to apply for dsu", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "Use the DSU application instructions from the retrieved document.")
+        self.assertEqual(result.file, "italy/DSU_Scholarship_en.pdf")
+
+    def test_guidance_does_not_attach_file_for_unknown_answer(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="unsupported guidance", language="en"),
+            json_response={"answer": "I don't know based on the provided documents.", "file": None},
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/DSU_Scholarship_en.pdf", "page": 1, "text": "DSU excerpt"},
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("unsupported question", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "I don't know based on the provided documents.")
+        self.assertIsNone(result.file)
 
     def test_guidance_asks_clarifying_question_without_search_when_unclear(self) -> None:
         gateway = FakeGateway(

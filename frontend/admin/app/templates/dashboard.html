@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard{% endblock %}
+{% block topbar_title %}Users and Access Moderation{% endblock %}
+
+{% block content %}
+{% set stats = namespace(granted=0, blocked=0, admins=0) %}
+{% for user in users %}
+    {% if user.has_access %}{% set stats.granted = stats.granted + 1 %}{% endif %}
+    {% if user.is_blocked %}{% set stats.blocked = stats.blocked + 1 %}{% endif %}
+    {% if user.is_admin %}{% set stats.admins = stats.admins + 1 %}{% endif %}
+{% endfor %}
+
+<section class="hero-panel">
+    <div class="hero-kicker">Overview</div>
+    <h1 class="hero-title">Search users first, then open the full action workspace.</h1>
+    <p class="hero-copy">The dashboard is now the entry point: find the user, check current state, and open the profile page when you need action notes, payment verification, access extension, or deeper review.</p>
+    <div class="hero-actions">
+        <a href="/admin-ui/reports/usage-events" class="btn btn-app btn-app-primary">Usage Report</a>
+        <a href="/admin-ui/reports/admin-actions" class="btn btn-app btn-app-secondary">Audit Report</a>
+    </div>
+</section>
+
+<section class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-people-fill"></i>Filtered Users</div>
+        <div class="stat-value">{{ total_users }}</div>
+        <div class="stat-footnote">Users matching the current filters.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-check2-circle"></i>Visible Access</div>
+        <div class="stat-value">{{ stats.granted }}</div>
+        <div class="stat-footnote">Granted on the current page snapshot.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-slash-circle"></i>Blocked</div>
+        <div class="stat-value">{{ stats.blocked }}</div>
+        <div class="stat-footnote">Accounts currently blocked on this page.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-shield-check"></i>Admins</div>
+        <div class="stat-value">{{ stats.admins }}</div>
+        <div class="stat-footnote">Admin accounts visible in this result set.</div>
+    </div>
+</section>
+
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Search and Filter</h2>
+            <p class="panel-caption">Use the table below for quick review. Open the profile page for notes and full moderation actions.</p>
+        </div>
+    </div>
+
+    <form method="get" action="/admin-ui/dashboard" class="filter-grid">
+        <div class="filter-span-6">
+            <label class="filter-label">Search</label>
+            <input type="text" name="q" value="{{ query or '' }}" class="form-control" placeholder="Search by username or Telegram ID">
+        </div>
+        <div class="filter-span-3">
+            <label class="filter-label">Access</label>
+            <select name="access" class="form-select">
+                <option value="">All Access</option>
+                <option value="granted" {% if request.query_params.get('access') == 'granted' %}selected{% endif %}>Granted</option>
+                <option value="revoked" {% if request.query_params.get('access') == 'revoked' %}selected{% endif %}>Revoked</option>
+            </select>
+        </div>
+        <div class="filter-span-3">
+            <label class="filter-label">Status</label>
+            <select name="blocked" class="form-select">
+                <option value="">All Status</option>
+                <option value="active" {% if request.query_params.get('blocked') == 'active' %}selected{% endif %}>Active</option>
+                <option value="blocked" {% if request.query_params.get('blocked') == 'blocked' %}selected{% endif %}>Blocked</option>
+            </select>
+        </div>
+        <div class="filter-span-12 d-flex gap-2 flex-wrap">
+            <button class="btn btn-app btn-app-primary">Apply Filters</button>
+            <a href="/admin-ui/dashboard" class="btn btn-app btn-app-secondary">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">User Directory</h2>
+            <p class="panel-caption">Showing {{ users|length }} users on this page out of {{ total_users }} filtered results.</p>
+        </div>
+    </div>
+
+    <div class="table-wrap">
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Access</th>
+                        <th>Status</th>
+                        <th>Role</th>
+                        <th class="text-end">Quick Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% if users %}
+                    {% for user in users %}
+                    <tr>
+                        <td>
+                            <div class="table-name">
+                                <strong>{{ user.username or "No username" }}</strong>
+                                <span>Telegram ID {{ user.telegram_id }}</span>
+                            </div>
+                        </td>
+                        <td>
+                            {% if user.has_access %}
+                                <span class="chip success"><i class="bi bi-check2-circle"></i>Granted</span>
+                            {% else %}
+                                <span class="chip warning"><i class="bi bi-hourglass-split"></i>Revoked</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.is_blocked %}
+                                <span class="chip danger"><i class="bi bi-slash-circle"></i>Blocked</span>
+                            {% else %}
+                                <span class="chip success"><i class="bi bi-activity"></i>Active</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.is_admin %}
+                                <span class="chip info"><i class="bi bi-shield-check"></i>Admin</span>
+                            {% else %}
+                                <span class="chip neutral"><i class="bi bi-person"></i>User</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <div class="action-stack">
+                                <a href="/admin-ui/users/{{ user.telegram_id }}" class="btn btn-ghost">Open Profile</a>
+                                {% if not user.has_access %}
+                                <form action="/admin-ui/grant/{{ user.telegram_id }}" method="post" class="d-inline">
+                                    <input type="hidden" name="notes" value="">
+                                    <button type="submit" class="btn btn-tonal teal">Grant</button>
+                                </form>
+                                {% else %}
+                                <form action="/admin-ui/revoke/{{ user.telegram_id }}" method="post" class="d-inline">
+                                    <input type="hidden" name="notes" value="">
+                                    <button type="submit" class="btn btn-tonal gold">Revoke</button>
+                                </form>
+                                {% endif %}
+                                {% if user.is_blocked %}
+                                <form action="/admin-ui/unblock/{{ user.telegram_id }}" method="post" class="d-inline">
+                                    <input type="hidden" name="notes" value="">
+                                    <button type="submit" class="btn btn-tonal ink">Unblock</button>
+                                </form>
+                                {% else %}
+                                <form action="/admin-ui/block/{{ user.telegram_id }}" method="post" class="d-inline">
+                                    <input type="hidden" name="notes" value="">
+                                    <button type="submit" class="btn btn-tonal ink">Block</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="5">
+                            <div class="empty-state">
+                                <strong class="d-block mb-2">No users match these filters.</strong>
+                                Adjust the search or reset the current query to broaden the result set.
+                            </div>
+                        </td>
+                    </tr>
+                {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}

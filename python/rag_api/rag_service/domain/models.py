@@ -111,6 +111,15 @@ class Classification:
 
 
 @dataclass(frozen=True)
+class RetrievalClarity:
+    is_clear: bool
+    standalone_query: str = ""
+    clarifying_question: str = ""
+    reason: str = ""
+    is_retrieval_related: bool = True
+
+
+@dataclass(frozen=True)
 class UsageEventRecord:
     event_type: str
     input_tokens: int = 0

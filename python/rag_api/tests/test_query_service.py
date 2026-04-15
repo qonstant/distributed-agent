@@ -14,17 +14,25 @@ from rag_service.domain.models import (
     ConversationMessage,
     ModelUsage,
     QueryResult,
+    RetrievalClarity,
     RetrievedHit,
 )
 from rag_service.infrastructure.prompts import prepare_document_request_prompt
 
 
 class FakeGateway:
-    def __init__(self, classification: Classification, attachment_action: str = "") -> None:
+    def __init__(
+        self,
+        classification: Classification,
+        attachment_action: str = "",
+        clarity: RetrievalClarity | None = None,
+    ) -> None:
         self.classification = classification
         self.attachment_action = attachment_action
+        self.clarity = clarity
         self.classify_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.attachment_follow_up_calls: list[tuple[str, list[ConversationMessage]]] = []
+        self.clarity_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
         self.answer_factual_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
         self.rewrite_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.embedded_queries: list[str] = []
@@ -33,6 +41,7 @@ class FakeGateway:
         self.attachment_action_usage = ModelUsage(model="gpt-4o-mini", input_tokens=8, output_tokens=4, total_tokens=12)
         self.greeting_usage = ModelUsage(model="gpt-4o-mini", input_tokens=10, output_tokens=3, total_tokens=13)
         self.factual_usage = ModelUsage(model="gpt-4o-mini", input_tokens=16, output_tokens=7, total_tokens=23)
+        self.clarity_usage = ModelUsage(model="gpt-4o-mini", input_tokens=18, output_tokens=5, total_tokens=23)
         self.rewrite_usage = ModelUsage(model="gpt-4o-mini", input_tokens=20, output_tokens=4, total_tokens=24)
         self.embedding_usage = ModelUsage(model="text-embedding-3-small", input_tokens=9, output_tokens=0, total_tokens=9)
         self.json_usage = ModelUsage(model="gpt-4o-mini", input_tokens=30, output_tokens=8, total_tokens=38)
@@ -55,6 +64,14 @@ class FakeGateway:
     def rewrite_query_with_history(self, query: str, history=None):
         self.rewrite_calls.append((query, history or []))
         return "sample onboarding guide pdf", self.rewrite_usage
+
+    def clarify_or_rewrite_query(self, query: str, language_hint: str, intent: str, history=None):
+        self.clarity_calls.append((query, language_hint, intent, history or []))
+        if self.clarity is not None:
+            return self.clarity, self.clarity_usage
+        if history:
+            return RetrievalClarity(is_clear=True, standalone_query="sample onboarding guide pdf"), self.clarity_usage
+        return RetrievalClarity(is_clear=True, standalone_query=query), self.clarity_usage
 
     def embed_text(self, text: str):
         self.embedded_queries.append(text)
@@ -114,7 +131,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.attachment_follow_up_calls, [])
         self.assertEqual(gateway.answer_factual_calls, [("What is the test code?", "en", "Test User", history)])
 
-    def test_document_request_rewrites_retrieval_query_and_includes_history_in_prompt(self) -> None:
+    def test_document_request_uses_clarity_standalone_query_and_includes_history_in_prompt(self) -> None:
         history = [
             ConversationMessage(role="user", text="Send me the sample onboarding guide", ts=1),
             ConversationMessage(
@@ -151,14 +168,15 @@ class QueryServiceTests(unittest.TestCase):
                 usage_events=[
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                     usage_event_from_model_usage("classification", gateway.attachment_action_usage),
-                    usage_event_from_model_usage("other", gateway.rewrite_usage),
+                    usage_event_from_model_usage("classification", gateway.clarity_usage),
                     usage_event_from_model_usage("embedding", gateway.embedding_usage),
                     usage_event_from_model_usage("chat_completion", gateway.json_usage),
                 ],
             ),
         )
         self.assertEqual(gateway.attachment_follow_up_calls, [("Which sample guide was that?", history)])
-        self.assertEqual(gateway.rewrite_calls, [("Which sample guide was that?", history)])
+        self.assertEqual(gateway.clarity_calls, [("Which sample guide was that?", "en", "DOCUMENT_REQUEST", history)])
+        self.assertEqual(gateway.rewrite_calls, [])
         self.assertEqual(gateway.embedded_queries, ["sample onboarding guide pdf"])
         self.assertEqual(store.search_calls[0]["language"], "en")
         self.assertEqual(store.search_calls[0]["query_text"], "sample onboarding guide pdf")
@@ -166,6 +184,70 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIn("Preferred user name: Test User", gateway.generated_prompts[0])
         self.assertIn("Recent conversation context", gateway.generated_prompts[0])
         self.assertIn("user: Send me the sample onboarding guide", gateway.generated_prompts[0])
+
+    def test_guidance_asks_clarifying_question_without_search_when_unclear(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="ambiguous docs question", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=False,
+                clarifying_question="Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
+                reason="The requested document topic is missing.",
+            ),
+        )
+        store = FakeStore()
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("what documents do I need?", conversation_id="conv-1")
+
+        self.assertEqual(
+            result,
+            QueryResult(
+                answer="Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
+                file=None,
+                classification=Classification(intent="GUIDANCE", explain="ambiguous docs question", language="en"),
+                usage_events=[
+                    usage_event_from_model_usage("classification", gateway.classification_usage),
+                    usage_event_from_model_usage("classification", gateway.clarity_usage),
+                ],
+            ),
+        )
+        self.assertEqual(gateway.embedded_queries, [])
+        self.assertEqual(store.search_calls, [])
+        self.assertEqual(gateway.generated_prompts, [])
+
+    def test_follow_up_after_clarification_can_run_rag_when_classifier_returns_other(self) -> None:
+        history = [
+            ConversationMessage(
+                role="assistant",
+                text="Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
+                ts=1,
+            )
+        ]
+        gateway = FakeGateway(
+            Classification(intent="OTHER", explain="fragment answer to previous question", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query="What documents are needed for an Italian student visa?",
+                reason="The latest reply resolves the previous clarification question.",
+            ),
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/Visa_en.pdf", "page": 1, "text": "student visa document excerpt"},
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("student visa", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "Use this sample.")
+        self.assertEqual(result.file, "docs/test-guide.pdf")
+        self.assertEqual(gateway.embedded_queries, ["What documents are needed for an Italian student visa?"])
+        self.assertEqual(store.search_calls[0]["query_text"], "What documents are needed for an Italian student visa?")
+        self.assertEqual(gateway.clarity_calls, [("student visa", "en", "OTHER", history)])
 
     def test_document_request_resends_same_file_when_user_explicitly_asks(self) -> None:
         history = [

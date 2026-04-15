@@ -15,6 +15,7 @@ from rag_service.domain.models import (
     ConversationAttachment,
     ConversationMessage,
     QueryResult,
+    RetrievalClarity,
     RetrievedHit,
     UsageEventRecord,
 )
@@ -25,6 +26,9 @@ from rag_service.infrastructure.prompts import (
 
 if TYPE_CHECKING:
     from rag_service.infrastructure.openai_gateway import OpenAIGateway
+
+
+RETRIEVAL_INTENTS = {"GUIDANCE", "DOCUMENT_REQUEST"}
 
 
 def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Optional[RetrievedHit]]:
@@ -157,6 +161,23 @@ def _language_label(language: str) -> str:
     return mapping.get(normalized, (language or "").strip())
 
 
+def _should_run_retrieval_clarity(intent: str, history: List[ConversationMessage]) -> bool:
+    if intent in RETRIEVAL_INTENTS:
+        return True
+    if intent == "OTHER" and history:
+        return True
+    return False
+
+
+def _fallback_clarifying_question(language: str) -> str:
+    normalized_language = (language or "").strip().lower()
+    if normalized_language == "kk":
+        return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, CV, DSU шәкіртақысы, мотивациялық хат немесе ұсыныс хат?"
+    if normalized_language == "ru":
+        return "По какой теме вы спрашиваете: студенческая виза, CV, стипендия DSU, мотивационное письмо или рекомендательное письмо?"
+    return "Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?"
+
+
 class QueryService:
     def __init__(self, gateway: "OpenAIGateway", store, conversation_memory=None) -> None:
         self._gateway = gateway
@@ -263,110 +284,125 @@ class QueryService:
                 ],
             )
 
-        if intent in ("GUIDANCE", "DOCUMENT_REQUEST"):
-            retrieval_query = normalized_query
-            rewrite_usage = None
-            if history:
-                retrieval_query, rewrite_usage = self._gateway.rewrite_query_with_history(
-                    normalized_query,
-                    history,
-                )
+        if _should_run_retrieval_clarity(intent, history):
+            clarity, clarity_usage = self._retrieval_clarity(
+                normalized_query,
+                language,
+                intent,
+                history,
+            )
+            if clarity_usage is not None:
+                usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
 
-            try:
-                query_embedding, embedding_usage = self._gateway.embed_text(retrieval_query)
-            except Exception as exc:  # pragma: no cover - exercised through API behavior
-                raise RuntimeError(f"embedding failed: {exc}") from exc
+            if clarity.is_retrieval_related or intent in RETRIEVAL_INTENTS:
+                if not clarity.is_clear:
+                    answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(language)
+                    return QueryResult(
+                        answer=answer,
+                        file=None,
+                        classification=classification,
+                        usage_events=usage_events,
+                    )
 
-            try:
-                results = self._store.search(
-                    query_embedding,
-                    k=max(1, int(raw_k or 64)),
-                    language=language,
-                    query_text=retrieval_query,
-                )
-            except Exception as exc:  # pragma: no cover - exercised through API behavior
-                raise RuntimeError(f"search failed: {exc}") from exc
+                retrieval_query = (clarity.standalone_query or "").strip() or normalized_query
+                retrieval_intent = intent if intent in RETRIEVAL_INTENTS else "GUIDANCE"
+                rewrite_usage = None
 
-            if not results:
-                return QueryResult(
-                    answer="I don't know based on the provided documents.",
-                    file=None,
-                    classification=classification,
-                    usage_events=usage_events + self._rag_usage_events(
-                        retrieval_query,
-                        rewrite_usage,
-                        embedding_usage,
-                    ),
-                )
+                try:
+                    query_embedding, embedding_usage = self._gateway.embed_text(retrieval_query)
+                except Exception as exc:  # pragma: no cover - exercised through API behavior
+                    raise RuntimeError(f"embedding failed: {exc}") from exc
 
-            best_file_agg, best_chunk = _aggregate_by_file(results)
-            top_n = max(1, int(top_for_llm or 8))
-            top_chunks = results[:top_n]
+                try:
+                    results = self._store.search(
+                        query_embedding,
+                        k=max(1, int(raw_k or 64)),
+                        language=language,
+                        query_text=retrieval_query,
+                    )
+                except Exception as exc:  # pragma: no cover - exercised through API behavior
+                    raise RuntimeError(f"search failed: {exc}") from exc
 
-            if intent == "DOCUMENT_REQUEST":
-                prompt = prepare_document_request_prompt(
-                    normalized_query,
-                    top_chunks,
-                    history=history,
-                    preferred_name=normalized_preferred_name,
-                )
-            else:
-                prompt = prepare_guidance_prompt(
-                    normalized_query,
-                    top_chunks,
-                    history=history,
-                    preferred_name=normalized_preferred_name,
-                )
-
-            if language_label:
-                prompt = f"Answer in the same language as detected: {language_label}\n\n" + prompt
-            else:
-                prompt = "Answer in the same language as the user's query if possible.\n\n" + prompt
-
-            llm_json, completion_usage = self._gateway.generate_json_response(prompt, max_tokens=512)
-
-            if isinstance(llm_json, dict) and "answer" in llm_json and "file" in llm_json:
-                answer = str(llm_json.get("answer", "")).strip()
-                file_chosen = llm_json.get("file")
-                if file_chosen is not None:
-                    file_chosen = str(file_chosen)
-            else:
-                if best_chunk is None:
+                if not results:
                     return QueryResult(
                         answer="I don't know based on the provided documents.",
                         file=None,
+                        classification=classification,
+                        usage_events=usage_events + self._rag_usage_events(
+                            retrieval_query,
+                            rewrite_usage,
+                            embedding_usage,
+                        ),
                     )
-                chunk_meta = best_chunk.meta
-                answer = (chunk_meta.get("text") or chunk_meta.get("md") or "").strip()
-                file_chosen = (
-                    chunk_meta.get("source_file")
-                    or chunk_meta.get("filename")
-                    or best_file_agg
+
+                best_file_agg, best_chunk = _aggregate_by_file(results)
+                top_n = max(1, int(top_for_llm or 8))
+                top_chunks = results[:top_n]
+
+                if retrieval_intent == "DOCUMENT_REQUEST":
+                    prompt = prepare_document_request_prompt(
+                        retrieval_query,
+                        top_chunks,
+                        history=history,
+                        preferred_name=normalized_preferred_name,
+                    )
+                else:
+                    prompt = prepare_guidance_prompt(
+                        retrieval_query,
+                        top_chunks,
+                        history=history,
+                        preferred_name=normalized_preferred_name,
+                    )
+
+                if language_label:
+                    prompt = f"Answer in the same language as detected: {language_label}\n\n" + prompt
+                else:
+                    prompt = "Answer in the same language as the user's query if possible.\n\n" + prompt
+
+                llm_json, completion_usage = self._gateway.generate_json_response(prompt, max_tokens=512)
+
+                if isinstance(llm_json, dict) and "answer" in llm_json and "file" in llm_json:
+                    answer = str(llm_json.get("answer", "")).strip()
+                    file_chosen = llm_json.get("file")
+                    if file_chosen is not None:
+                        file_chosen = str(file_chosen)
+                else:
+                    if best_chunk is None:
+                        return QueryResult(
+                            answer="I don't know based on the provided documents.",
+                            file=None,
+                        )
+                    chunk_meta = best_chunk.meta
+                    answer = (chunk_meta.get("text") or chunk_meta.get("md") or "").strip()
+                    file_chosen = (
+                        chunk_meta.get("source_file")
+                        or chunk_meta.get("filename")
+                        or best_file_agg
+                    )
+
+                if not answer:
+                    answer = "I don't know based on the provided documents."
+                if len(answer) > 1600:
+                    answer = answer[:1600].rstrip() + "..."
+
+                previous_attachment = _find_previously_sent_attachment(history, file_chosen)
+                if previous_attachment:
+                    file_label = _attachment_display_label(previous_attachment, file_chosen)
+                    answer = _merge_answer_with_duplicate_note(
+                        answer,
+                        _duplicate_file_note(file_label, language),
+                    )
+                    print(f"[memory] skipping duplicate attachment resend for file={file_label}")
+                    file_chosen = None
+
+                return QueryResult(
+                    answer=answer,
+                    file=file_chosen,
+                    classification=classification,
+                    usage_events=usage_events
+                    + self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
+                    + [self._prompt_completion_usage_event(prompt, answer, completion_usage)],
                 )
-
-            if not answer:
-                answer = "I don't know based on the provided documents."
-            if len(answer) > 1600:
-                answer = answer[:1600].rstrip() + "..."
-
-            previous_attachment = _find_previously_sent_attachment(history, file_chosen)
-            if previous_attachment:
-                file_label = _attachment_display_label(previous_attachment, file_chosen)
-                answer = _merge_answer_with_duplicate_note(
-                    answer,
-                    _duplicate_file_note(file_label, language),
-                )
-                print(f"[memory] skipping duplicate attachment resend for file={file_label}")
-                file_chosen = None
-
-            return QueryResult(
-                answer=answer,
-                file=file_chosen,
-                classification=classification,
-                usage_events=usage_events
-                + self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
-                + [self._prompt_completion_usage_event(prompt, answer, completion_usage)],
-            )
 
         answer, completion_usage = self._gateway.answer_factual(
             normalized_query,
@@ -387,6 +423,24 @@ class QueryService:
                 )
             ],
         )
+
+    def _retrieval_clarity(
+        self,
+        query: str,
+        language: str,
+        intent: str,
+        history: List[ConversationMessage],
+    ) -> Tuple[RetrievalClarity, object]:
+        try:
+            return self._gateway.clarify_or_rewrite_query(
+                query,
+                language,
+                intent,
+                history=history,
+            )
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            print("[clarify] clarity gateway failed:", exc)
+            return RetrievalClarity(is_clear=True, standalone_query=query), None
 
     def _load_history(self, conversation_id: Optional[str]) -> List[ConversationMessage]:
         if not conversation_id or self._conversation_memory is None:

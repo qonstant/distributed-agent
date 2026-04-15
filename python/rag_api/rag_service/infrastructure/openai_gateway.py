@@ -10,6 +10,7 @@ from rag_service.domain.models import (
     Classification,
     ConversationMessage,
     ModelUsage,
+    RetrievalClarity,
     normalize_attachment_action,
     normalize_intent,
     normalize_language,
@@ -227,6 +228,83 @@ class OpenAIGateway:
             print("[rewrite] query rewrite failed:", exc)
         return query, None
 
+    def clarify_or_rewrite_query(
+        self,
+        query: str,
+        language_hint: str,
+        intent: str,
+        history: Optional[List[ConversationMessage]] = None,
+    ) -> tuple[RetrievalClarity, Optional[ModelUsage]]:
+        history_block = self._history_block(history)
+        language_name = self._language_name(language_hint) or "the user's language"
+        prompt = (
+            "You are a clarification gate for a document-grounded RAG assistant.\n"
+            "Your job is to decide whether the latest user message is specific enough to run document retrieval now, "
+            "or whether the assistant should ask exactly one clarifying question first.\n\n"
+            "Current corpus scope:\n"
+            " - Country defaults to Italy. Do NOT ask for country just because it is missing.\n"
+            " - Supported topics include: Italian student visa, CV, DSU scholarship, motivation letter, and recommendation letter.\n\n"
+            "Treat short/lazy queries as clear when the topic is identifiable. Examples of clear queries: "
+            "\"visa docs\", \"cv help\", \"dsu money\", \"motivation letter structure\", \"recommendation letter who\".\n"
+            "Ask a clarification only when the missing detail would change which document/topic should be searched. "
+            "Examples of unclear queries: \"what documents do I need?\", \"how to apply?\", \"send file\", \"что нужно?\", \"қалай тапсырам?\".\n"
+            "If the recent conversation contains an assistant clarification question, combine the latest user reply with that context. "
+            "If the combined meaning is clear, produce a complete standalone search query.\n\n"
+            "Return ONLY valid JSON with exactly these keys:\n"
+            ' - "is_clear": boolean\n'
+            ' - "standalone_query": string; if is_clear is true, this must be a complete retrieval query\n'
+            ' - "clarifying_question": string; if is_clear is false, ask one concise question in '
+            f"{language_name}\n"
+            ' - "reason": one short sentence\n\n'
+            "Do not answer the user. Do not mention internal retrieval, embeddings, metadata, or files unless the user asked for a file.\n\n"
+            "Examples:\n"
+            '{"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","reason":"The visa document topic is clear."}\n'
+            '{"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?","reason":"The user asks for documents but not the process."}\n\n'
+            f"{history_block}"
+            f"Classifier intent: {json.dumps(intent)}\n"
+            f"Latest user input: {json.dumps(query)}\n"
+        )
+        try:
+            response = self._client.responses.create(
+                model=self._settings.class_model,
+                input=prompt,
+                max_output_tokens=180,
+                temperature=0.0,
+            )
+            raw_text = self._resp_to_text(response) or ""
+            parsed = self._extract_json(raw_text) or {}
+            clarity = RetrievalClarity(
+                is_clear=self._json_bool(parsed.get("is_clear"), default=True),
+                standalone_query=str(parsed.get("standalone_query") or "").strip(),
+                clarifying_question=str(parsed.get("clarifying_question") or "").strip(),
+                reason=str(parsed.get("reason") or "").strip(),
+            )
+            if clarity.is_clear and not clarity.standalone_query:
+                clarity = RetrievalClarity(
+                    is_clear=True,
+                    standalone_query=query,
+                    clarifying_question="",
+                    reason=clarity.reason or "Fallback to latest query.",
+                )
+            if not clarity.is_clear and not clarity.clarifying_question:
+                clarity = RetrievalClarity(
+                    is_clear=False,
+                    standalone_query="",
+                    clarifying_question=self._default_clarifying_question(language_hint),
+                    reason=clarity.reason or "The request is ambiguous.",
+                )
+            return clarity, self._extract_usage(response, self._settings.class_model)
+        except Exception as exc:
+            print("[clarify] query clarity check failed:", exc)
+            return (
+                RetrievalClarity(
+                    is_clear=True,
+                    standalone_query=query,
+                    reason=f"clarity check failed: {exc}",
+                ),
+                None,
+            )
+
     def classify_attachment_follow_up(
         self,
         query: str,
@@ -312,6 +390,30 @@ class OpenAIGateway:
                 except Exception:
                     return None
             return None
+
+    @staticmethod
+    def _json_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        normalized = str(value).strip().lower()
+        if normalized in {"true", "yes", "y", "1"}:
+            return True
+        if normalized in {"false", "no", "n", "0"}:
+            return False
+        return default
+
+    @staticmethod
+    def _default_clarifying_question(language_hint: str) -> str:
+        normalized = normalize_language(language_hint)
+        if normalized == "kk":
+            return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, CV, DSU шәкіртақысы, мотивациялық хат немесе ұсыныс хат?"
+        if normalized == "ru":
+            return "По какой теме вы спрашиваете: студенческая виза, CV, стипендия DSU, мотивационное письмо или рекомендательное письмо?"
+        return "Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?"
 
     @staticmethod
     def _resp_to_text(resp: Any) -> str:

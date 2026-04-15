@@ -130,6 +130,22 @@ class OpenAIGatewayTests(unittest.TestCase):
 
         self.assertEqual(action, "resend_last_attachment")
 
+    def test_classify_attachment_follow_up_extracts_pending_file_action(self) -> None:
+        gateway, fake_client = self._gateway_with_output(
+            '{"attachment_action":"send_pending_attachment","explain":"user accepts the offered file"}'
+        )
+
+        action, _ = gateway.classify_attachment_follow_up(
+            "yes please",
+            history=[],
+            pending_file="italy/Visa_en.pdf",
+        )
+
+        self.assertEqual(action, "send_pending_attachment")
+        prompt = fake_client.responses.calls[0]["input"]
+        self.assertIn("Pending offered attachment source", prompt)
+        self.assertIn("send_pending_attachment", prompt)
+
     def test_answer_factual_includes_preferred_name_in_prompt(self) -> None:
         gateway, fake_client = self._gateway_with_output(
             "The code is ALPHA-123.",

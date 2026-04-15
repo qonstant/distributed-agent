@@ -24,6 +24,7 @@ from rag_service.infrastructure.prompts import prepare_document_request_prompt
 EN_PAGE_1_REFERENCE = "Especially check page 1 in the attached file; it has the most relevant details for this answer."
 RU_PAGE_1_REFERENCE = "Особенно проверьте страницу 1 в приложенном файле: там самые релевантные детали по этому ответу."
 RU_PAGE_3_REFERENCE = "Особенно проверьте страницу 3 в приложенном файле: там самые релевантные детали по этому ответу."
+EN_FILE_OFFER = "Should I send you the file with this information?"
 
 
 class FakeGateway:
@@ -41,7 +42,7 @@ class FakeGateway:
         self.sufficiency = sufficiency
         self.json_response = json_response
         self.classify_calls: list[tuple[str, list[ConversationMessage]]] = []
-        self.attachment_follow_up_calls: list[tuple[str, list[ConversationMessage]]] = []
+        self.attachment_follow_up_calls: list[tuple[str, list[ConversationMessage], str]] = []
         self.clarity_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
         self.sufficiency_calls: list[tuple[str, str, str, list[RetrievedHit], list[ConversationMessage]]] = []
         self.answer_factual_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
@@ -62,8 +63,8 @@ class FakeGateway:
         self.classify_calls.append((query, history or []))
         return self.classification, self.classification_usage
 
-    def classify_attachment_follow_up(self, query: str, history=None):
-        self.attachment_follow_up_calls.append((query, history or []))
+    def classify_attachment_follow_up(self, query: str, history=None, pending_file: str = ""):
+        self.attachment_follow_up_calls.append((query, history or [], pending_file))
         return self.attachment_action, self.attachment_action_usage
 
     def generate_greeting_reply(self, user_text: str, language_hint: str, preferred_name: str = "", history=None):
@@ -113,13 +114,28 @@ class FakeStore:
 
 
 class FakeConversationMemory:
-    def __init__(self, messages):
+    def __init__(self, messages, pending_attachment: str = ""):
         self.messages = messages
+        self.pending_attachment = pending_attachment
+        self.remembered_pending: list[tuple[str, str]] = []
+        self.cleared_pending: list[str] = []
         self.requested_ids: list[str] = []
 
     def load_messages(self, conversation_id: str):
         self.requested_ids.append(conversation_id)
         return self.messages
+
+    def load_pending_attachment(self, conversation_id: str):
+        return self.pending_attachment
+
+    def remember_pending_attachment(self, conversation_id: str, source: str):
+        self.pending_attachment = source
+        self.remembered_pending.append((conversation_id, source))
+        return True
+
+    def clear_pending_attachment(self, conversation_id: str):
+        self.pending_attachment = ""
+        self.cleared_pending.append(conversation_id)
 
 
 class QueryServiceTests(unittest.TestCase):
@@ -128,7 +144,14 @@ class QueryServiceTests(unittest.TestCase):
             ConversationMessage(role="user", text="The test code is ALPHA-123", ts=1),
             ConversationMessage(role="assistant", text="Acknowledged. I will remember ALPHA-123 for this test.", ts=2),
         ]
-        gateway = FakeGateway(Classification(intent="FACTUAL_QUESTION", explain="needs memory", language="en"))
+        gateway = FakeGateway(
+            Classification(intent="FACTUAL_QUESTION", explain="needs memory", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=False,
+                is_retrieval_related=False,
+                reason="The user asks about recent conversation memory, not documents.",
+            ),
+        )
         memory = FakeConversationMemory(history)
         service = QueryService(gateway, FakeStore(), conversation_memory=memory)
 
@@ -142,14 +165,82 @@ class QueryServiceTests(unittest.TestCase):
                 classification=Classification(intent="FACTUAL_QUESTION", explain="needs memory", language="en"),
                 usage_events=[
                     usage_event_from_model_usage("classification", gateway.classification_usage),
+                    usage_event_from_model_usage("classification", gateway.clarity_usage),
                     usage_event_from_model_usage("chat_completion", gateway.factual_usage),
                 ],
             ),
         )
         self.assertEqual(memory.requested_ids, ["conv-1"])
         self.assertEqual(gateway.classify_calls, [("What is the test code?", history)])
+        self.assertEqual(gateway.clarity_calls, [("What is the test code?", "en", "FACTUAL_QUESTION", history)])
         self.assertEqual(gateway.attachment_follow_up_calls, [])
         self.assertEqual(gateway.answer_factual_calls, [("What is the test code?", "en", "Test User", history)])
+
+    def test_factual_education_question_uses_rag_and_offers_file_without_sending(self) -> None:
+        standalone_query = "What photo is required for an Italian student visa?"
+        gateway = FakeGateway(
+            Classification(intent="FACTUAL_QUESTION", explain="asks a factual visa document detail", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                is_retrieval_related=True,
+                standalone_query=standalone_query,
+                reason="The question asks for a factual detail from the student visa document.",
+            ),
+            json_response={
+                "answer": "The visa photo must follow ICAO standards.",
+                "file": "italy/Visa_en.pdf",
+            },
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/Visa_en.pdf", "page": 3, "text": "Photo must comply with ICAO standards."},
+            )
+        ]
+        memory = FakeConversationMemory([])
+        service = QueryService(gateway, FakeStore(results), conversation_memory=memory)
+
+        result = service.handle_query("What photo do I need for visa?", conversation_id="conv-1")
+
+        self.assertEqual(
+            result.answer,
+            "The visa photo must follow ICAO standards.\n\n"
+            "Especially check page 3 in the attached file; it has the most relevant details for this answer.\n\n"
+            f"{EN_FILE_OFFER}",
+        )
+        self.assertIsNone(result.file)
+        self.assertEqual(gateway.answer_factual_calls, [])
+        self.assertEqual(gateway.clarity_calls, [("What photo do I need for visa?", "en", "FACTUAL_QUESTION", [])])
+        self.assertEqual(gateway.embedded_queries, [standalone_query])
+        self.assertEqual(gateway.sufficiency_calls, [(standalone_query, "en", "FACTUAL_QUESTION", results, [])])
+        self.assertIn("Answer the user's factual question using ONLY the provided excerpts", gateway.generated_prompts[0])
+        self.assertEqual(memory.remembered_pending, [("conv-1", "italy/Visa_en.pdf")])
+
+    def test_yes_after_factual_file_offer_sends_pending_file(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="CHIT_CHAT", explain="accepts offered file", language="en"),
+            attachment_action="send_pending_attachment",
+        )
+        memory = FakeConversationMemory(
+            [
+                ConversationMessage(
+                    role="assistant",
+                    text="The visa photo must follow ICAO standards.\n\nShould I send you the file with this information?",
+                    ts=1,
+                )
+            ],
+            pending_attachment="italy/Visa_en.pdf",
+        )
+        service = QueryService(gateway, FakeStore(), conversation_memory=memory)
+
+        result = service.handle_query("yes please", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "Sure, here is the file: Visa_en.pdf.")
+        self.assertEqual(result.file, "italy/Visa_en.pdf")
+        self.assertEqual(gateway.attachment_follow_up_calls, [("yes please", memory.messages, "italy/Visa_en.pdf")])
+        self.assertEqual(memory.cleared_pending, ["conv-1"])
+        self.assertEqual(gateway.embedded_queries, [])
 
     def test_document_request_uses_clarity_standalone_query_and_includes_history_in_prompt(self) -> None:
         history = [
@@ -191,7 +282,7 @@ class QueryServiceTests(unittest.TestCase):
                 ],
             ),
         )
-        self.assertEqual(gateway.attachment_follow_up_calls, [("Which sample guide was that?", history)])
+        self.assertEqual(gateway.attachment_follow_up_calls, [("Which sample guide was that?", history, "")])
         self.assertEqual(gateway.clarity_calls, [("Which sample guide was that?", "en", "DOCUMENT_REQUEST", history)])
         self.assertEqual(gateway.rewrite_calls, [])
         self.assertEqual(gateway.embedded_queries, ["sample onboarding guide pdf"])
@@ -664,7 +755,7 @@ class QueryServiceTests(unittest.TestCase):
                 ],
             ),
         )
-        self.assertEqual(gateway.attachment_follow_up_calls, [("Please resend the file", history)])
+        self.assertEqual(gateway.attachment_follow_up_calls, [("Please resend the file", history, "")])
         self.assertEqual(gateway.rewrite_calls, [])
         self.assertEqual(gateway.generated_prompts, [])
 
@@ -698,7 +789,7 @@ class QueryServiceTests(unittest.TestCase):
                 ],
             ),
         )
-        self.assertEqual(gateway.attachment_follow_up_calls, [("Еще раз", history)])
+        self.assertEqual(gateway.attachment_follow_up_calls, [("Еще раз", history, "")])
         self.assertEqual(gateway.answer_factual_calls, [])
         self.assertEqual(gateway.generated_prompts, [])
 

@@ -122,6 +122,50 @@ def prepare_guidance_prompt(
     )
     lines.extend(
         [
+            "Here are top document excerpts (file + page + excerpt):",
+            "",
+        ]
+    )
+    for index, hit in enumerate(top_chunks, start=1):
+        source_file = hit.meta.get("source_file") or hit.meta.get("filename") or "unknown"
+        page = hit.meta.get("page")
+        lines.append(f"[{index}] file: {source_file} page: {page}")
+        lines.append(f"excerpt: {_excerpt_from_hit(hit)}")
+        lines.append("")
+    lines.extend(
+        [
+            "Output requirements:",
+            "- Respond ONLY with valid JSON with exactly two keys: 'answer' and 'file'.",
+            "- 'answer' should be a short, step-oriented guidance or summary (<=180 words) drawn only from the excerpts. If you cannot produce a guidance wholly supported by the excerpts, set 'answer' to: \"I don't know based on the provided documents.\"",
+            "- 'file' should be the single best supporting source_file path from the excerpts (or null if none).",
+            "- Do not include page citations in 'answer'; the application adds the validated page reference separately.",
+            "- Do NOT invent, assume, or provide extra commentary. Return JSON only.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def prepare_factual_rag_prompt(
+    query: str,
+    top_chunks: List[RetrievedHit],
+    history: Optional[List[ConversationMessage]] = None,
+    preferred_name: Optional[str] = None,
+) -> str:
+    lines = [
+        "You are a document-grounded assistant. Answer the user's factual question using ONLY the provided excerpts. Do NOT invent facts.",
+        "User query:",
+        query,
+        "",
+    ]
+    lines.extend(build_personalization_lines(preferred_name))
+    lines.extend(
+        build_history_lines(
+            history,
+            "Recent conversation context (oldest to newest). Use it only to resolve references in the latest query.",
+        )
+    )
+    lines.extend(
+        [
         "Here are top document excerpts (file + page + excerpt):",
         "",
         ]
@@ -136,7 +180,7 @@ def prepare_guidance_prompt(
         [
             "Output requirements:",
             "- Respond ONLY with valid JSON with exactly two keys: 'answer' and 'file'.",
-            "- 'answer' should be a short, step-oriented guidance or summary (<=180 words) drawn only from the excerpts. If you cannot produce a guidance wholly supported by the excerpts, set 'answer' to: \"I don't know based on the provided documents.\"",
+            "- 'answer' must be a direct concise answer (<=120 words) supported only by the excerpts. If the excerpts do not contain the answer, set 'answer' to: \"I don't know based on the provided documents.\"",
             "- 'file' should be the single best supporting source_file path from the excerpts (or null if none).",
             "- Do not include page citations in 'answer'; the application adds the validated page reference separately.",
             "- Do NOT invent, assume, or provide extra commentary. Return JSON only.",

@@ -62,7 +62,7 @@ class OpenAIGateway:
             "Definitions/examples:\n"
             " - GREETING: short hello/goodbye messages (no docs needed)\n"
             " - CHIT_CHAT: small talk / thanks / compliment (no docs)\n"
-            " - FACTUAL_QUESTION: factual question about recent conversation or saved user info where no document retrieval is needed (e.g., \"What is my name?\"). Do NOT use for general world knowledge or out-of-scope travel/visa questions.\n"
+            " - FACTUAL_QUESTION: direct factual question. If it is about education-abroad documents or procedures, it will be answered using retrieval. If it is only about recent conversation or saved user info (e.g., \"What is my name?\"), no document retrieval is needed. Do NOT use for general world knowledge or out-of-scope travel/visa questions.\n"
             " - GUIDANCE: user asks for in-scope education-abroad step-by-step guidance, procedures or how-to that should be answered using documents if available, but may be synthesized from top-K excerpts (do NOT invent facts). Also use GUIDANCE when the user asks to repeat/continue a previous in-scope answer in another supported language.\n"
             " - DOCUMENT_REQUEST: user explicitly requests an in-scope education-abroad document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n"
             " - OTHER: none of the above\n\n"
@@ -414,22 +414,33 @@ class OpenAIGateway:
         self,
         query: str,
         history: Optional[List[ConversationMessage]] = None,
+        pending_file: str = "",
     ) -> tuple[str, Optional[ModelUsage]]:
-        if not history:
+        normalized_pending_file = (pending_file or "").strip()
+        if not history and not normalized_pending_file:
             return "", None
 
         history_block = self._history_block(history)
+        pending_block = (
+            f"Pending offered attachment source: {json.dumps(normalized_pending_file)}\n"
+            if normalized_pending_file
+            else "Pending offered attachment source: none\n"
+        )
         prompt = (
-            "You detect whether the latest user message is explicitly asking to resend the most recently sent assistant attachment from the recent conversation context.\n"
+            "You detect whether the latest user message is asking for an attachment.\n"
             "Return a JSON object with EXACTLY two keys:\n"
-            ' - "attachment_action": either "resend_last_attachment" or ""\n'
+            ' - "attachment_action": one of ["resend_last_attachment","send_pending_attachment",""]\n'
             ' - "explain": one short sentence explaining why\n\n'
+            'Choose "send_pending_attachment" only when there is a pending offered attachment source above and the user clearly accepts or asks to receive that offered file, '
+            'including short replies like "yes", "yes please", "send it", "да", "давай", "можно", "иә", or similar in context. '
             'Choose "resend_last_attachment" only when the user is clearly asking to send the already-mentioned file again, even in short follow-ups like "again", '
             '"one more time", "еще раз", or similar context-dependent requests. '
-            'If the user is asking what the file is about, asking a new question, or you are unsure, return "".\n\n'
+            'If the user is asking what the file is about, asking a new question, rejecting the offer, or you are unsure, return "".\n\n'
             "Respond ONLY with valid JSON. Example:\n"
             '{"attachment_action":"resend_last_attachment","explain":"user asks to send the previously sent file again"}\n'
+            '{"attachment_action":"send_pending_attachment","explain":"user accepts the offered file"}\n'
             '{"attachment_action":"","explain":"user asks about the file rather than requesting a resend"}\n\n'
+            f"{pending_block}"
             f"{history_block}"
             f"Latest user input: {json.dumps(query)}\n"
         )

@@ -27,6 +27,7 @@ SUPPORTED_PROFILE_ACTIONS = {
 SUPPORTED_ATTACHMENT_ACTIONS = {
     "",
     "resend_last_attachment",
+    "send_pending_attachment",
 }
 
 
@@ -92,6 +93,10 @@ def normalize_attachment_action(action: str) -> str:
         "resend_attachment": "resend_last_attachment",
         "resend_last_file": "resend_last_attachment",
         "send_again": "resend_last_attachment",
+        "send_pending_attachment": "send_pending_attachment",
+        "send_pending_file": "send_pending_attachment",
+        "send_offered_attachment": "send_pending_attachment",
+        "send_offered_file": "send_pending_attachment",
     }
     normalized = mapping.get(value, value)
     if normalized not in SUPPORTED_ATTACHMENT_ACTIONS:

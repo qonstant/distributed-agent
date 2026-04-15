@@ -23,6 +23,7 @@ from rag_service.domain.models import (
 )
 from rag_service.infrastructure.prompts import (
     prepare_document_request_prompt,
+    prepare_factual_rag_prompt,
     prepare_guidance_prompt,
 )
 
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
     from rag_service.infrastructure.openai_gateway import OpenAIGateway
 
 
-RETRIEVAL_INTENTS = {"GUIDANCE", "DOCUMENT_REQUEST"}
+RETRIEVAL_INTENTS = {"GUIDANCE", "DOCUMENT_REQUEST", "FACTUAL_QUESTION"}
 
 
 def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Optional[RetrievedHit]]:
@@ -84,6 +85,17 @@ def _resend_attachment_answer(attachment: ConversationAttachment, language: str)
     if normalized_language in {"ru", "russian", "русский"}:
         return f"Вот файл еще раз: {file_label}."
     return f"Here is the file again: {file_label}."
+
+
+def _send_pending_attachment_answer(file_source: str, language: str) -> str:
+    file_label = _basename(file_source)
+    normalized_language = (language or "").strip().lower()
+
+    if normalized_language in {"kk", "kazakh", "қазақ", "қазақша"}:
+        return f"Әрине, файлды жібердім: {file_label}."
+    if normalized_language in {"ru", "russian", "русский"}:
+        return f"Конечно, отправляю файл: {file_label}."
+    return f"Sure, here is the file: {file_label}."
 
 
 def _find_previously_sent_attachment(
@@ -204,6 +216,19 @@ def _append_page_reference(answer: str, hit: Optional[RetrievedHit], language: s
     return f"{answer.rstrip()}\n\n{page_reference}"
 
 
+def _file_offer_question(language: str) -> str:
+    normalized_language = (language or "").strip().lower()
+    if normalized_language == "kk":
+        return "Осы ақпарат бар файлды жіберейін бе?"
+    if normalized_language == "ru":
+        return "Отправить вам файл с этой информацией?"
+    return "Should I send you the file with this information?"
+
+
+def _append_file_offer(answer: str, language: str) -> str:
+    return f"{answer.rstrip()}\n\n{_file_offer_question(language)}"
+
+
 def _should_attach_supporting_file(answer: str) -> bool:
     normalized = (answer or "").strip().lower()
     if not normalized:
@@ -320,16 +345,27 @@ class QueryService:
                 usage_events=usage_events,
             )
 
+        pending_file = self._pending_attachment_source(conversation_id)
         latest_attachment = _find_latest_assistant_attachment(history)
-        if latest_attachment is not None:
+        if latest_attachment is not None or pending_file:
             attachment_action, attachment_action_usage = self._gateway.classify_attachment_follow_up(
                 normalized_query,
                 history=history,
+                pending_file=pending_file,
             )
             if attachment_action_usage is not None:
                 usage_events.append(usage_event_from_model_usage("classification", attachment_action_usage))
 
-            resend_source = _resend_attachment_source(latest_attachment)
+            if attachment_action == "send_pending_attachment" and pending_file:
+                self._clear_pending_attachment(conversation_id)
+                return QueryResult(
+                    answer=_send_pending_attachment_answer(pending_file, language),
+                    file=pending_file,
+                    classification=classification,
+                    usage_events=usage_events,
+                )
+
+            resend_source = _resend_attachment_source(latest_attachment) if latest_attachment is not None else None
             if attachment_action == "resend_last_attachment" and resend_source is not None:
                 return QueryResult(
                     answer=_resend_attachment_answer(latest_attachment, language),
@@ -385,25 +421,46 @@ class QueryService:
             )
 
         if intent == "FACTUAL_QUESTION":
-            answer, completion_usage = self._gateway.answer_factual(
+            clarity, clarity_usage = self._retrieval_clarity(
                 normalized_query,
                 language,
-                preferred_name=normalized_preferred_name,
-                history=history,
+                intent,
+                history,
             )
-            return QueryResult(
-                answer=answer,
-                file=None,
-                classification=classification,
-                usage_events=usage_events + [
-                    self._chat_completion_usage_event(
-                        normalized_query,
-                        history,
-                        answer,
-                        completion_usage,
+            if clarity_usage is not None:
+                usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
+
+            if clarity.is_retrieval_related:
+                if not clarity.is_clear:
+                    response_language = _effective_language(language, clarity.target_language)
+                    answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
+                    return QueryResult(
+                        answer=answer,
+                        file=None,
+                        classification=classification,
+                        usage_events=usage_events,
                     )
-                ],
-            )
+                forced_clarity = clarity
+            else:
+                answer, completion_usage = self._gateway.answer_factual(
+                    normalized_query,
+                    language,
+                    preferred_name=normalized_preferred_name,
+                    history=history,
+                )
+                return QueryResult(
+                    answer=answer,
+                    file=None,
+                    classification=classification,
+                    usage_events=usage_events + [
+                        self._chat_completion_usage_event(
+                            normalized_query,
+                            history,
+                            answer,
+                            completion_usage,
+                        )
+                    ],
+                )
 
         if forced_clarity is not None or _should_run_retrieval_clarity(intent, history):
             if forced_clarity is not None:
@@ -497,6 +554,13 @@ class QueryService:
                     history=history,
                     preferred_name=normalized_preferred_name,
                 )
+            elif retrieval_intent == "FACTUAL_QUESTION":
+                prompt = prepare_factual_rag_prompt(
+                    retrieval_query,
+                    top_chunks,
+                    history=history,
+                    preferred_name=normalized_preferred_name,
+                )
             else:
                 prompt = prepare_guidance_prompt(
                     retrieval_query,
@@ -544,15 +608,22 @@ class QueryService:
                 print(f"[query] selected supporting file={file_chosen}")
                 page_hit = _best_hit_for_file(results, file_chosen) or best_chunk
                 answer = _append_page_reference(answer, page_hit, response_language)
+            response_file = file_chosen
+            if retrieval_intent == "FACTUAL_QUESTION":
+                response_file = None
+                if self._remember_pending_attachment(conversation_id, file_chosen):
+                    answer = _append_file_offer(answer, response_language)
+            elif file_chosen:
+                self._clear_pending_attachment(conversation_id)
 
-            previous_attachment = _find_previously_sent_attachment(history, file_chosen)
+            previous_attachment = _find_previously_sent_attachment(history, response_file)
             if previous_attachment:
-                file_label = _attachment_display_label(previous_attachment, file_chosen)
+                file_label = _attachment_display_label(previous_attachment, response_file)
                 print(f"[memory] file was sent before, sending again for current answer: {file_label}")
 
             return QueryResult(
                 answer=answer,
-                file=file_chosen,
+                file=response_file,
                 classification=classification,
                 usage_events=usage_events
                 + rag_usage_events
@@ -615,6 +686,42 @@ class QueryService:
                 f"[memory] loaded {len(history)} messages for conversation_id={conversation_id}"
             )
         return history
+
+    def _pending_attachment_source(self, conversation_id: Optional[str]) -> str:
+        if not conversation_id or self._conversation_memory is None:
+            return ""
+        load_pending = getattr(self._conversation_memory, "load_pending_attachment", None)
+        if load_pending is None:
+            return ""
+        try:
+            return str(load_pending(conversation_id) or "").strip()
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            print(f"[memory] failed to load pending attachment: {exc}")
+            return ""
+
+    def _remember_pending_attachment(self, conversation_id: Optional[str], source: Optional[str]) -> bool:
+        normalized_source = _normalize_file_choice(source)
+        if not conversation_id or not normalized_source or self._conversation_memory is None:
+            return False
+        remember_pending = getattr(self._conversation_memory, "remember_pending_attachment", None)
+        if remember_pending is None:
+            return False
+        try:
+            return bool(remember_pending(conversation_id, normalized_source))
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            print(f"[memory] failed to remember pending attachment: {exc}")
+            return False
+
+    def _clear_pending_attachment(self, conversation_id: Optional[str]) -> None:
+        if not conversation_id or self._conversation_memory is None:
+            return
+        clear_pending = getattr(self._conversation_memory, "clear_pending_attachment", None)
+        if clear_pending is None:
+            return
+        try:
+            clear_pending(conversation_id)
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            print(f"[memory] failed to clear pending attachment: {exc}")
 
     @staticmethod
     def _classification_usage_event(

@@ -1,10 +1,69 @@
 package telegram
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-telegram/bot/models"
+	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
+
+func TestAskFailureUserText(t *testing.T) {
+	t.Parallel()
+
+	t.Run("hides internal attachment resolution error when partial answer exists", func(t *testing.T) {
+		t.Parallel()
+
+		text := askFailureUserText(qa.Response{Text: "answer"}, "ru")
+
+		if got, want := text, "answer"; got != want {
+			t.Fatalf("text = %q, want %q", got, want)
+		}
+		if strings.Contains(text, "read s3 object") {
+			t.Fatalf("text exposes internal error: %q", text)
+		}
+	})
+
+	t.Run("uses generic message for complete ask failure", func(t *testing.T) {
+		t.Parallel()
+
+		text := askFailureUserText(qa.Response{}, "ru")
+
+		if got, want := text, "Сейчас не удалось подготовить ответ. Попробуйте позже."; got != want {
+			t.Fatalf("text = %q, want %q", got, want)
+		}
+		if strings.Contains(text, "local api") || strings.Contains(text, "deadline") {
+			t.Fatalf("text exposes internal API details: %q", text)
+		}
+	})
+}
+
+func TestFileDeliveryFailureUserText(t *testing.T) {
+	t.Parallel()
+
+	t.Run("keeps answer without exposing send error details", func(t *testing.T) {
+		t.Parallel()
+
+		text := fileDeliveryFailureUserText(qa.Response{Text: "answer"}, "ru")
+
+		if got, want := text, "answer"; got != want {
+			t.Fatalf("text = %q, want %q", got, want)
+		}
+		if strings.Contains(text, "send") || strings.Contains(text, "error") {
+			t.Fatalf("text exposes internal delivery details: %q", text)
+		}
+	})
+
+	t.Run("uses generic message when only file delivery failed", func(t *testing.T) {
+		t.Parallel()
+
+		text := fileDeliveryFailureUserText(qa.Response{}, "ru")
+
+		if got, want := text, "Не удалось отправить файл. Попробуйте позже."; got != want {
+			t.Fatalf("text = %q, want %q", got, want)
+		}
+	})
+}
 
 func TestUnsupportedInputText(t *testing.T) {
 	t.Parallel()

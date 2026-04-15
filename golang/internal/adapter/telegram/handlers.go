@@ -79,6 +79,7 @@ func (h *Handlers) HandleDefault(ctx context.Context, b *bot.Bot, update *models
 	}
 
 	user := userFromUpdate(update)
+	replyLanguage := detectReplyLanguage(update)
 	progress := StartProgressMessage(ctx, b, update.Message.Chat.ID, update.Message.Text)
 	response, err := h.ask.Execute(ctx, user, update.Message.Text)
 	if err != nil {
@@ -93,7 +94,8 @@ func (h *Handlers) HandleDefault(ctx context.Context, b *bot.Bot, update *models
 
 		log.Printf("[defaultHandler] ask question failed for %s: %v", user.DisplayName, err)
 		if strings.TrimSpace(response.Text) != "" {
-			text := fmt.Sprintf("%s\n\n(Не удалось подготовить вложения: %v)", response.Text, err)
+			log.Printf("[defaultHandler] sending partial answer without attachments for %s", user.DisplayName)
+			text := askFailureUserText(response, replyLanguage)
 			if progress != nil {
 				_ = progress.Replace(ctx, text)
 			} else {
@@ -102,7 +104,7 @@ func (h *Handlers) HandleDefault(ctx context.Context, b *bot.Bot, update *models
 			return
 		}
 
-		text := fmt.Sprintf("Ошибка обращения к локальному API: %v", err)
+		text := askFailureUserText(response, replyLanguage)
 		if progress != nil {
 			_ = progress.Replace(ctx, text)
 		} else {
@@ -113,19 +115,44 @@ func (h *Handlers) HandleDefault(ctx context.Context, b *bot.Bot, update *models
 
 	if err := h.presenter.PresentWithProgress(ctx, b, update.Message.Chat.ID, response, progress); err != nil {
 		log.Printf("[defaultHandler] present failed for %s: %v", user.DisplayName, err)
+		text := fileDeliveryFailureUserText(response, replyLanguage)
 		if progress != nil {
-			_ = progress.Replace(
-				ctx,
-				fmt.Sprintf("%s\n\n(Не удалось отправить файл: %v)", response.Text, err),
-			)
+			_ = progress.Replace(ctx, text)
 		} else {
-			h.sendText(
-				ctx,
-				b,
-				update.Message.Chat.ID,
-				fmt.Sprintf("%s\n\n(Не удалось отправить файл: %v)", response.Text, err),
-			)
+			h.sendText(ctx, b, update.Message.Chat.ID, text)
 		}
+	}
+}
+
+func askFailureUserText(response qa.Response, language string) string {
+	if strings.TrimSpace(response.Text) != "" {
+		return response.Text
+	}
+	return temporaryServiceFailureMessage(language)
+}
+
+func fileDeliveryFailureUserText(response qa.Response, language string) string {
+	if strings.TrimSpace(response.Text) != "" {
+		return response.Text
+	}
+	switch language {
+	case "kk":
+		return "Файлды жіберу мүмкін болмады. Кейінірек қайталап көріңіз."
+	case "ru":
+		return "Не удалось отправить файл. Попробуйте позже."
+	default:
+		return "I couldn't send the file. Please try again later."
+	}
+}
+
+func temporaryServiceFailureMessage(language string) string {
+	switch language {
+	case "kk":
+		return "Қазір жауап дайындау мүмкін болмады. Кейінірек қайталап көріңіз."
+	case "ru":
+		return "Сейчас не удалось подготовить ответ. Попробуйте позже."
+	default:
+		return "I couldn't prepare an answer right now. Please try again later."
 	}
 }
 
@@ -174,13 +201,13 @@ func (h *Handlers) HandleRandomPic(ctx context.Context, b *bot.Bot, update *mode
 			return
 		}
 		log.Printf("[randomPicHandler] failed: %v", err)
-		h.sendText(ctx, b, update.Message.Chat.ID, fmt.Sprintf("Failed to send images as album: %v", err))
+		h.sendText(ctx, b, update.Message.Chat.ID, fileDeliveryFailureUserText(qa.Response{}, detectReplyLanguage(update)))
 		return
 	}
 
 	if err := h.presenter.Present(ctx, b, update.Message.Chat.ID, response); err != nil {
 		log.Printf("[randomPicHandler] present failed: %v", err)
-		h.sendText(ctx, b, update.Message.Chat.ID, fmt.Sprintf("Failed to send images as album: %v", err))
+		h.sendText(ctx, b, update.Message.Chat.ID, fileDeliveryFailureUserText(response, detectReplyLanguage(update)))
 	}
 }
 

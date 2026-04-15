@@ -162,6 +162,48 @@ def _validated_retrieved_file_choice(value, retrieved_files: set[str]) -> Option
     return None
 
 
+def _best_hit_for_file(results: List[RetrievedHit], file_chosen: Optional[str]) -> Optional[RetrievedHit]:
+    normalized_file = _normalize_file_choice(file_chosen)
+    if not normalized_file:
+        return None
+
+    chosen_name = _basename(normalized_file)
+    matching_hits: List[RetrievedHit] = []
+    for hit in results:
+        source_file = _source_file_from_hit(hit)
+        if not source_file:
+            continue
+        if source_file == normalized_file or _basename(source_file) == chosen_name:
+            matching_hits.append(hit)
+
+    if not matching_hits:
+        return None
+    return max(matching_hits, key=lambda hit: hit.score)
+
+
+def _page_reference_from_hit(hit: Optional[RetrievedHit], language: str) -> str:
+    if hit is None:
+        return ""
+
+    page = str(hit.meta.get("page") or "").strip()
+    if not page or page.lower() in {"none", "null", "nil"}:
+        return ""
+
+    normalized_language = (language or "").strip().lower()
+    if normalized_language == "kk":
+        return f"Әсіресе қосылған файлдағы {page}-бетті қараңыз: осы жауапқа қатысты ең маңызды ақпарат сол жерде."
+    if normalized_language == "ru":
+        return f"Особенно проверьте страницу {page} в приложенном файле: там самые релевантные детали по этому ответу."
+    return f"Especially check page {page} in the attached file; it has the most relevant details for this answer."
+
+
+def _append_page_reference(answer: str, hit: Optional[RetrievedHit], language: str) -> str:
+    page_reference = _page_reference_from_hit(hit, language)
+    if not page_reference:
+        return answer
+    return f"{answer.rstrip()}\n\n{page_reference}"
+
+
 def _should_attach_supporting_file(answer: str) -> bool:
     normalized = (answer or "").strip().lower()
     if not normalized:
@@ -500,6 +542,8 @@ class QueryService:
             file_chosen = llm_file_choice or supporting_file
             if file_chosen:
                 print(f"[query] selected supporting file={file_chosen}")
+                page_hit = _best_hit_for_file(results, file_chosen) or best_chunk
+                answer = _append_page_reference(answer, page_hit, response_language)
 
             previous_attachment = _find_previously_sent_attachment(history, file_chosen)
             if previous_attachment:

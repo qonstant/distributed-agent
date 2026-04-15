@@ -94,6 +94,7 @@ def prepare_document_request_prompt(
             "- 'answer' must be a short sentence telling whether the requested document exists in the provided excerpts.",
             "- If a matching document exists, 'answer' must be a short note (<=60 words) and 'file' must be the path string of that document.",
             "- If no matching document exists in the excerpts, set 'answer' to: \"I don't know based on the provided documents.\" and 'file' to null.",
+            "- Do not include page citations in 'answer'; the application adds the validated page reference separately.",
             "- Do NOT add any other keys, commentary, or explanation. Return JSON only.",
         ]
     )
@@ -137,6 +138,7 @@ def prepare_guidance_prompt(
             "- Respond ONLY with valid JSON with exactly two keys: 'answer' and 'file'.",
             "- 'answer' should be a short, step-oriented guidance or summary (<=180 words) drawn only from the excerpts. If you cannot produce a guidance wholly supported by the excerpts, set 'answer' to: \"I don't know based on the provided documents.\"",
             "- 'file' should be the single best supporting source_file path from the excerpts (or null if none).",
+            "- Do not include page citations in 'answer'; the application adds the validated page reference separately.",
             "- Do NOT invent, assume, or provide extra commentary. Return JSON only.",
         ]
     )

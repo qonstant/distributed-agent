@@ -21,6 +21,11 @@ from rag_service.domain.models import (
 from rag_service.infrastructure.prompts import prepare_document_request_prompt
 
 
+EN_PAGE_1_REFERENCE = "Especially check page 1 in the attached file; it has the most relevant details for this answer."
+RU_PAGE_1_REFERENCE = "Особенно проверьте страницу 1 в приложенном файле: там самые релевантные детали по этому ответу."
+RU_PAGE_3_REFERENCE = "Особенно проверьте страницу 3 в приложенном файле: там самые релевантные детали по этому ответу."
+
+
 class FakeGateway:
     def __init__(
         self,
@@ -173,7 +178,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(
             result,
             QueryResult(
-                answer="Use this sample.",
+                answer=f"Use this sample.\n\n{EN_PAGE_1_REFERENCE}",
                 file="docs/test-guide.pdf",
                 classification=Classification(intent="DOCUMENT_REQUEST", explain="follow-up request", language="en"),
                 usage_events=[
@@ -219,7 +224,10 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("how to apply for scholarship", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "Use the scholarship application instructions from the retrieved document.")
+        self.assertEqual(
+            result.answer,
+            f"Use the scholarship application instructions from the retrieved document.\n\n{EN_PAGE_1_REFERENCE}",
+        )
         self.assertEqual(result.file, "italy/DSU_Scholarship_en.pdf")
 
     def test_guidance_uses_retrieved_source_file_instead_of_llm_file_choice(self) -> None:
@@ -243,7 +251,7 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("how to apply for visa", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "Use the visa instructions from the retrieved document.")
+        self.assertEqual(result.answer, f"Use the visa instructions from the retrieved document.\n\n{EN_PAGE_1_REFERENCE}")
         self.assertEqual(result.file, "italy/Visa_en.pdf")
 
     def test_guidance_uses_llm_file_choice_when_it_matches_retrieved_source(self) -> None:
@@ -269,7 +277,7 @@ class QueryServiceTests(unittest.TestCase):
                 nid=2,
                 meta={
                     "source_file": "italy/DSU_Scholarship_ru.pdf",
-                    "page": 1,
+                    "page": 3,
                     "text": "Scholarship application instructions",
                 },
             ),
@@ -279,7 +287,10 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("как подать на стипендию", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "Используйте инструкцию по подаче на стипендию из найденного документа.")
+        self.assertEqual(
+            result.answer,
+            f"Используйте инструкцию по подаче на стипендию из найденного документа.\n\n{RU_PAGE_3_REFERENCE}",
+        )
         self.assertEqual(result.file, "italy/DSU_Scholarship_ru.pdf")
 
     def test_guidance_matches_llm_file_choice_by_basename_when_retrieved_source_has_prefix(self) -> None:
@@ -437,7 +448,7 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("student visa", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "Use this sample.")
+        self.assertEqual(result.answer, f"Use this sample.\n\n{EN_PAGE_1_REFERENCE}")
         self.assertEqual(result.file, "italy/Visa_en.pdf")
         self.assertEqual(gateway.embedded_queries, ["What documents are needed for an Italian student visa?"])
         self.assertEqual(store.search_calls[0]["query_text"], "What documents are needed for an Italian student visa?")
@@ -472,7 +483,7 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("Все все вообще", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "Use this sample.")
+        self.assertEqual(result.answer, f"Use this sample.\n\n{RU_PAGE_1_REFERENCE}")
         self.assertEqual(result.file, "italy/Visa_ru.pdf")
         self.assertEqual(gateway.clarity_calls, [("Все все вообще", "ru", "CHIT_CHAT", history)])
         self.assertEqual(gateway.embedded_queries, [standalone_query])
@@ -514,7 +525,8 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "To apply for an Italian student visa, prepare the required documents and book an appointment.",
+            "To apply for an Italian student visa, prepare the required documents and book an appointment."
+            f"\n\n{EN_PAGE_1_REFERENCE}",
         )
         self.assertEqual(result.file, "italy/Visa_en.pdf")
         self.assertEqual(store.search_calls[0]["language"], "en")

@@ -56,7 +56,7 @@ class OpenAIGateway:
             " - \"preferred_name\": extracted preferred name if the user is telling you what to call them, else \"\"\n\n"
             "Assistant scope:\n"
             " - This assistant is only for education/study-abroad support.\n"
-            " - In scope: university admission abroad, admission documents, student visas for study/enrollment, DSU scholarship, CV, motivation letter, and recommendation letter.\n"
+            " - In scope: university admission abroad, admission documents, student visas for study/enrollment, scholarship, CV, motivation letter, and recommendation letter.\n"
             " - Out of scope: tourist visas, travel visas, work visas, business visas, family visas, general immigration, travel itineraries, hotels, tourism, and unrelated general knowledge.\n"
             " - For out-of-scope requests, choose OTHER. Do NOT choose GUIDANCE or DOCUMENT_REQUEST.\n\n"
             "Definitions/examples:\n"
@@ -253,17 +253,21 @@ class OpenAIGateway:
             "whether it is specific enough to run retrieval now, or whether the assistant should ask exactly one clarifying question first.\n\n"
             "Current corpus scope:\n"
             " - Country defaults to Italy. Do NOT ask for country just because it is missing.\n"
-            " - Supported topics include: Italian student visa, CV, DSU scholarship, motivation letter, and recommendation letter.\n"
+            " - Supported topics include: Italian student visa, CV, scholarship, motivation letter, and recommendation letter.\n"
             " - Retrieval-related means education/study-abroad only.\n"
             " - A visa question is in scope only when it is about a student/study/enrollment visa.\n"
             " - Tourist visas, travel visas, work visas, business visas, family visas, general immigration, tourism, flights, hotels, and travel itineraries are out of scope. For these, set is_retrieval_related to false.\n\n"
             "Treat short/lazy queries as clear when the topic is identifiable. Examples of clear queries: "
-            "\"visa docs\", \"cv help\", \"dsu money\", \"motivation letter structure\", \"recommendation letter who\".\n"
+            "\"visa docs\", \"cv help\", \"scholarship money\", \"motivation letter structure\", \"recommendation letter who\".\n"
             "Ask a clarification only when the missing detail would change which supported education-abroad document/topic should be searched. "
             "Examples of unclear queries: \"what documents do I need?\", \"how to apply?\", \"send file\", \"что нужно?\", \"қалай тапсырам?\".\n"
             "For a generic visa query without enough context, ask whether the user means the student visa; do not assume tourist or student.\n"
             "If the recent conversation contains an assistant clarification question, combine the latest user reply with that context. "
             "If the combined meaning is clear, produce a complete standalone search query.\n\n"
+            "Short follow-up handling:\n"
+            " - If the assistant just asked a clarification question and the latest user reply is a confirmation like \"yes\", \"да\", \"иә\", treat it as confirming the assistant's proposed topic and produce a standalone query.\n"
+            " - If the assistant offered choices like documents vs process and the user replies \"all\", \"both\", \"everything\", \"все\", \"все вообще\", or similar, do NOT ask again; produce a broad standalone query covering both parts.\n"
+            " - If the user asks a short continuation like \"then?\" or \"потом?\" after an in-scope answer, keep the same topic from history and ask for the next step in the standalone query.\n\n"
             "If the classifier intent is OTHER, use the recent conversation to decide whether the latest message is a continuation of a document clarification. "
             "If it is not a document request/guidance question and not a clarification follow-up, set is_retrieval_related to false and leave standalone_query and clarifying_question empty.\n\n"
             "Return ONLY valid JSON with exactly these keys:\n"
@@ -276,7 +280,7 @@ class OpenAIGateway:
             "Do not answer the user. Do not mention internal retrieval, embeddings, metadata, or files unless the user asked for a file.\n\n"
             "Examples:\n"
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","reason":"The visa document topic is clear."}\n'
-            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?","reason":"The user asks for documents but not the process."}\n'
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?","reason":"The user asks for documents but not the process."}\n'
             '{"is_retrieval_related":false,"is_clear":false,"standalone_query":"","clarifying_question":"","reason":"The user is not asking a document-grounded question."}\n\n'
             f"{history_block}"
             f"Classifier intent: {json.dumps(intent)}\n"
@@ -344,11 +348,13 @@ class OpenAIGateway:
             "Your job is NOT to answer the user. Decide whether the retrieved excerpts are enough to answer the latest standalone query, "
             "or whether the assistant should ask exactly one more clarifying question first.\n\n"
             "Scope:\n"
-            " - The corpus currently covers Italy education-abroad topics: student visa, CV, DSU scholarship, motivation letter, and recommendation letter.\n"
+            " - The corpus currently covers Italy education-abroad topics: student visa, CV, scholarship, motivation letter, and recommendation letter.\n"
             " - Sufficient means the excerpts directly discuss the requested topic and contain enough information to produce a grounded answer or send the requested document.\n"
             " - Insufficient means the excerpts are empty, mostly about the wrong document/topic, the query still lacks a detail that changes which document should be searched, or the requested information is not visible in the excerpts.\n"
             " - If the query asks a generic unsupported country/topic but the excerpts are only Italy docs, ask a clarification instead of guessing.\n"
-            " - Prefer asking one concise clarification over answering from weak or mismatched excerpts.\n\n"
+            " - Treat broad queries like \"everything\", \"all\", \"general overview\", \"все\", or \"все вообще\" as sufficient when the excerpts are on the right topic; the answer generator can summarize what is available.\n"
+            " - Do NOT ask the user to choose between documents and process when the query asks for a broad overview and the excerpts cover the same topic.\n"
+            " - Prefer asking one concise clarification only when the excerpts are weak, empty, mismatched, or cannot identify the requested education-abroad topic.\n\n"
             "Return ONLY valid JSON with exactly these keys:\n"
             ' - "is_sufficient": boolean\n'
             ' - "clarifying_question": string; if is_sufficient is false, ask one concise question in '
@@ -357,7 +363,7 @@ class OpenAIGateway:
             "Do not mention internal retrieval, embeddings, scores, metadata, or top-K.\n\n"
             "Examples:\n"
             '{"is_sufficient":true,"clarifying_question":"","reason":"The excerpts directly cover Italian student visa documents."}\n'
-            '{"is_sufficient":false,"clarifying_question":"Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?","reason":"The excerpts do not identify the requested document topic."}\n\n'
+            '{"is_sufficient":false,"clarifying_question":"Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?","reason":"The excerpts do not identify the requested document topic."}\n\n'
             f"{history_block}"
             f"Classifier intent: {json.dumps(intent)}\n"
             f"Standalone query: {json.dumps(query)}\n\n"
@@ -499,19 +505,19 @@ class OpenAIGateway:
     def _default_clarifying_question(language_hint: str) -> str:
         normalized = normalize_language(language_hint)
         if normalized == "kk":
-            return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, CV, DSU шәкіртақысы, мотивациялық хат немесе ұсыныс хат?"
+            return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
         if normalized == "ru":
-            return "По какой теме вы спрашиваете: студенческая виза, CV, стипендия DSU, мотивационное письмо или рекомендательное письмо?"
-        return "Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?"
+            return "По какой теме вы спрашиваете: студенческая виза, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
+        return "Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?"
 
     @staticmethod
     def _default_retrieval_follow_up_question(language_hint: str) -> str:
         normalized = normalize_language(language_hint)
         if normalized == "kk":
-            return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: студенттік виза, CV, DSU шәкіртақысы, мотивациялық хат немесе ұсыныс хат?"
+            return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: студенттік виза, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
         if normalized == "ru":
-            return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, CV, стипендия DSU, мотивационное письмо или рекомендательное письмо?"
-        return "To find the right answer in the documents, which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?"
+            return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
+        return "To find the right answer in the documents, which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?"
 
     @staticmethod
     def _retrieval_excerpts_block(top_chunks: List[RetrievedHit]) -> str:

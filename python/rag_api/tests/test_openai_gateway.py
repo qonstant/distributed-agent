@@ -162,11 +162,13 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("Treat short/lazy queries as clear", prompt)
         self.assertIn("Tourist visas, travel visas, work visas", prompt)
         self.assertIn("For a generic visa query without enough context, ask whether the user means the student visa", prompt)
+        self.assertIn("Short follow-up handling", prompt)
+        self.assertIn("все вообще", prompt)
         self.assertIn('"is_retrieval_related": boolean', prompt)
 
     def test_clarify_or_rewrite_query_returns_question_when_unclear(self) -> None:
         gateway, _ = self._gateway_with_output(
-            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?","reason":"topic missing"}'
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?","reason":"topic missing"}'
         )
 
         clarity, _ = gateway.clarify_or_rewrite_query("what documents do I need?", "en", "GUIDANCE")
@@ -175,7 +177,7 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertTrue(clarity.is_retrieval_related)
         self.assertEqual(
             clarity.clarifying_question,
-            "Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
+            "Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
         )
 
     def test_clarify_or_rewrite_query_can_mark_other_as_not_retrieval_related(self) -> None:
@@ -220,6 +222,7 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("retrieval sufficiency judge", prompt)
         self.assertIn("Retrieved excerpts", prompt)
         self.assertIn("italy/Visa_en.pdf", prompt)
+        self.assertIn("Do NOT ask the user to choose between documents and process", prompt)
         self.assertIn('"is_sufficient": boolean', prompt)
 
     def test_assess_retrieval_sufficiency_returns_clarifying_question_when_context_is_weak(self) -> None:

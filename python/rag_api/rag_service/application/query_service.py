@@ -167,10 +167,10 @@ def _should_run_retrieval_clarity(intent: str, history: List[ConversationMessage
 def _fallback_clarifying_question(language: str) -> str:
     normalized_language = (language or "").strip().lower()
     if normalized_language == "kk":
-        return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, CV, DSU шәкіртақысы, мотивациялық хат немесе ұсыныс хат?"
+        return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
     if normalized_language == "ru":
-        return "По какой теме вы спрашиваете: студенческая виза, CV, стипендия DSU, мотивационное письмо или рекомендательное письмо?"
-    return "Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?"
+        return "По какой теме вы спрашиваете: студенческая виза, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
+    return "Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?"
 
 
 def _out_of_scope_answer(language: str) -> str:
@@ -178,16 +178,16 @@ def _out_of_scope_answer(language: str) -> str:
     if normalized_language == "kk":
         return (
             "Мен тек шетелде оқу бойынша сұрақтарға көмектесе аламын: оқуға түсу, "
-            "студенттік виза, шәкіртақылар, CV, мотивациялық және ұсыныс хаттар."
+            "студенттік виза, шәкіртақы, CV, мотивациялық және ұсыныс хаттар."
         )
     if normalized_language == "ru":
         return (
             "Я могу помогать только с вопросами про обучение за рубежом: поступление, "
-            "студенческую визу, стипендии, CV, мотивационное и рекомендательное письма."
+            "студенческую визу, стипендию, CV, мотивационное и рекомендательное письма."
         )
     return (
         "I can help only with education-abroad questions: admission, student visas, "
-        "scholarships, CVs, motivation letters, and recommendation letters."
+        "scholarship, CVs, motivation letters, and recommendation letters."
     )
 
 
@@ -196,8 +196,8 @@ def _fallback_retrieval_follow_up_question(language: str) -> str:
     if normalized_language == "kk":
         return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: студенттік виза, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
     if normalized_language == "ru":
-        return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, CV, стипендии, мотивационное письмо или рекомендательное письмо?"
-    return "To find the right answer in the documents, which topic do you mean: student visa, CV, scholarships, motivation letter, or recommendation letter?"
+        return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
+    return "To find the right answer in the documents, which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?"
 
 
 class QueryService:
@@ -263,6 +263,29 @@ class QueryService:
                     usage_events=usage_events,
                 )
 
+        forced_clarity: Optional[RetrievalClarity] = None
+        if intent == "CHIT_CHAT" and history:
+            clarity, clarity_usage = self._retrieval_clarity(
+                normalized_query,
+                language,
+                intent,
+                history,
+            )
+            if clarity_usage is not None:
+                usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
+
+            if clarity.is_retrieval_related:
+                if not clarity.is_clear:
+                    answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(language)
+                    return QueryResult(
+                        answer=answer,
+                        file=None,
+                        classification=classification,
+                        usage_events=usage_events,
+                    )
+                forced_clarity = clarity
+                intent = "GUIDANCE"
+
         if intent in ("GREETING", "CHIT_CHAT"):
             greeting, completion_usage = self._gateway.generate_greeting_reply(
                 normalized_query,
@@ -306,15 +329,18 @@ class QueryService:
                 ],
             )
 
-        if _should_run_retrieval_clarity(intent, history):
-            clarity, clarity_usage = self._retrieval_clarity(
-                normalized_query,
-                language,
-                intent,
-                history,
-            )
-            if clarity_usage is not None:
-                usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
+        if forced_clarity is not None or _should_run_retrieval_clarity(intent, history):
+            if forced_clarity is not None:
+                clarity = forced_clarity
+            else:
+                clarity, clarity_usage = self._retrieval_clarity(
+                    normalized_query,
+                    language,
+                    intent,
+                    history,
+                )
+                if clarity_usage is not None:
+                    usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
 
             if not clarity.is_retrieval_related:
                 return QueryResult(

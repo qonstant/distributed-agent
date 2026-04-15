@@ -201,7 +201,7 @@ class QueryServiceTests(unittest.TestCase):
     def test_guidance_falls_back_to_best_source_file_when_llm_omits_file(self) -> None:
         gateway = FakeGateway(
             Classification(intent="GUIDANCE", explain="supported guidance", language="en"),
-            json_response={"answer": "Use the DSU application instructions from the retrieved document.", "file": None},
+            json_response={"answer": "Use the scholarship application instructions from the retrieved document.", "file": None},
         )
         results = [
             RetrievedHit(
@@ -210,16 +210,16 @@ class QueryServiceTests(unittest.TestCase):
                 meta={
                     "source_file": "italy/DSU_Scholarship_en.pdf",
                     "page": 1,
-                    "text": "DSU application instructions",
+                    "text": "Scholarship application instructions",
                 },
             )
         ]
         store = FakeStore(results)
         service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
 
-        result = service.handle_query("how to apply for dsu", conversation_id="conv-1")
+        result = service.handle_query("how to apply for scholarship", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "Use the DSU application instructions from the retrieved document.")
+        self.assertEqual(result.answer, "Use the scholarship application instructions from the retrieved document.")
         self.assertEqual(result.file, "italy/DSU_Scholarship_en.pdf")
 
     def test_guidance_uses_retrieved_source_file_instead_of_llm_file_choice(self) -> None:
@@ -255,7 +255,7 @@ class QueryServiceTests(unittest.TestCase):
             RetrievedHit(
                 score=0.9,
                 nid=1,
-                meta={"source_file": "italy/DSU_Scholarship_en.pdf", "page": 1, "text": "DSU excerpt"},
+                meta={"source_file": "italy/DSU_Scholarship_en.pdf", "page": 1, "text": "Scholarship excerpt"},
             )
         ]
         store = FakeStore(results)
@@ -265,7 +265,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "To find the right answer in the documents, which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
+            "To find the right answer in the documents, which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
         )
         self.assertIsNone(result.file)
 
@@ -274,7 +274,7 @@ class QueryServiceTests(unittest.TestCase):
             Classification(intent="GUIDANCE", explain="supported guidance", language="en"),
             sufficiency=RetrievalSufficiency(
                 is_sufficient=False,
-                clarifying_question="Are you asking about the student visa or DSU scholarship?",
+                clarifying_question="Are you asking about the student visa or scholarship?",
                 reason="The retrieved excerpts do not resolve the topic.",
             ),
         )
@@ -290,7 +290,7 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("how does it work?", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "Are you asking about the student visa or DSU scholarship?")
+        self.assertEqual(result.answer, "Are you asking about the student visa or scholarship?")
         self.assertIsNone(result.file)
         self.assertEqual(gateway.sufficiency_calls, [("how does it work?", "en", "GUIDANCE", results, [])])
         self.assertEqual(gateway.generated_prompts, [])
@@ -300,7 +300,7 @@ class QueryServiceTests(unittest.TestCase):
             Classification(intent="GUIDANCE", explain="supported guidance", language="ru"),
             sufficiency=RetrievalSufficiency(
                 is_sufficient=False,
-                clarifying_question="Уточните, пожалуйста, вы спрашиваете про студенческую визу, CV или стипендию DSU?",
+                clarifying_question="Уточните, пожалуйста, вы спрашиваете про студенческую визу, CV или стипендию?",
                 reason="No retrieved excerpts are available.",
             ),
         )
@@ -311,7 +311,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "Уточните, пожалуйста, вы спрашиваете про студенческую визу, CV или стипендию DSU?",
+            "Уточните, пожалуйста, вы спрашиваете про студенческую визу, CV или стипендию?",
         )
         self.assertIsNone(result.file)
         self.assertEqual(gateway.sufficiency_calls, [("что нужно?", "ru", "GUIDANCE", [], [])])
@@ -322,7 +322,7 @@ class QueryServiceTests(unittest.TestCase):
             Classification(intent="GUIDANCE", explain="ambiguous docs question", language="en"),
             clarity=RetrievalClarity(
                 is_clear=False,
-                clarifying_question="Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
+                clarifying_question="Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
                 reason="The requested document topic is missing.",
             ),
         )
@@ -334,7 +334,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(
             result,
             QueryResult(
-                answer="Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
+                answer="Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
                 file=None,
                 classification=Classification(intent="GUIDANCE", explain="ambiguous docs question", language="en"),
                 usage_events=[
@@ -351,7 +351,7 @@ class QueryServiceTests(unittest.TestCase):
         history = [
             ConversationMessage(
                 role="assistant",
-                text="Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
+                text="Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
                 ts=1,
             )
         ]
@@ -381,6 +381,66 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(store.search_calls[0]["query_text"], "What documents are needed for an Italian student visa?")
         self.assertEqual(gateway.clarity_calls, [("student visa", "en", "OTHER", history)])
 
+    def test_chit_chat_follow_up_after_clarification_can_run_rag(self) -> None:
+        history = [
+            ConversationMessage(
+                role="assistant",
+                text="Что именно вас интересует по подаче на студенческую визу: документы или процесс подачи?",
+                ts=1,
+            )
+        ]
+        standalone_query = "Полный обзор подачи на студенческую визу в Италию: документы и процесс подачи"
+        gateway = FakeGateway(
+            Classification(intent="CHIT_CHAT", explain="short broad reply", language="ru"),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query=standalone_query,
+                reason="The user asked for all visa application details after a clarification question.",
+            ),
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/Visa_ru.pdf", "page": 1, "text": "student visa process and documents"},
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("Все все вообще", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "Use this sample.")
+        self.assertEqual(result.file, "italy/Visa_ru.pdf")
+        self.assertEqual(gateway.clarity_calls, [("Все все вообще", "ru", "CHIT_CHAT", history)])
+        self.assertEqual(gateway.embedded_queries, [standalone_query])
+        self.assertEqual(store.search_calls[0]["query_text"], standalone_query)
+
+    def test_chit_chat_with_history_still_greets_when_not_retrieval_related(self) -> None:
+        history = [
+            ConversationMessage(role="assistant", text="I can help with education-abroad documents.", ts=1),
+        ]
+        gateway = FakeGateway(
+            Classification(intent="CHIT_CHAT", explain="thanks", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=False,
+                standalone_query="",
+                clarifying_question="",
+                reason="The user is thanking the assistant.",
+                is_retrieval_related=False,
+            ),
+        )
+        store = FakeStore()
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("thanks", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "hello")
+        self.assertIsNone(result.file)
+        self.assertEqual(gateway.clarity_calls, [("thanks", "en", "CHIT_CHAT", history)])
+        self.assertEqual(gateway.embedded_queries, [])
+        self.assertEqual(store.search_calls, [])
+
     def test_other_with_history_returns_scope_message_when_not_retrieval_related(self) -> None:
         history = [
             ConversationMessage(role="assistant", text="I can help with admissions documents.", ts=1),
@@ -402,7 +462,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "I can help only with education-abroad questions: admission, student visas, DSU scholarships, CVs, motivation letters, and recommendation letters.",
+            "I can help only with education-abroad questions: admission, student visas, scholarship, CVs, motivation letters, and recommendation letters.",
         )
         self.assertEqual(gateway.clarity_calls, [("never mind", "en", "OTHER", history)])
         self.assertEqual(gateway.answer_factual_calls, [])
@@ -426,7 +486,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "I can help only with education-abroad questions: admission, student visas, DSU scholarships, CVs, motivation letters, and recommendation letters.",
+            "I can help only with education-abroad questions: admission, student visas, scholarship, CVs, motivation letters, and recommendation letters.",
         )
         self.assertIsNone(result.file)
         self.assertEqual(gateway.clarity_calls, [("How do I get a tourist visa for Italy?", "en", "GUIDANCE", [])])
@@ -443,7 +503,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "Я могу помогать только с вопросами про обучение за рубежом: поступление, студенческую визу, DSU, CV, мотивационное и рекомендательное письма.",
+            "Я могу помогать только с вопросами про обучение за рубежом: поступление, студенческую визу, стипендию, CV, мотивационное и рекомендательное письма.",
         )
         self.assertIsNone(result.file)
         self.assertEqual(gateway.clarity_calls, [])

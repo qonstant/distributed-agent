@@ -97,6 +97,19 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn('Prefer "ru" for standard Russian wording such as "Как меня зовут?"', prompt)
         self.assertIn('Choose "kk" only when there are clear Kazakh signals', prompt)
 
+    def test_classify_query_prompt_limits_scope_to_education_abroad(self) -> None:
+        gateway, fake_client = self._gateway_with_output(
+            '{"intent":"OTHER","explain":"tourist visa is outside education-abroad scope","language":"en","profile_action":"","preferred_name":""}'
+        )
+
+        classification, _ = gateway.classify_query("How do I get an Italian tourist visa?")
+
+        self.assertEqual(classification.intent, "OTHER")
+        prompt = fake_client.responses.calls[0]["input"]
+        self.assertIn("only for education/study-abroad support", prompt)
+        self.assertIn("tourist visas", prompt)
+        self.assertIn("For out-of-scope requests, choose OTHER", prompt)
+
     def test_classify_attachment_follow_up_extracts_resend_action(self) -> None:
         gateway, _ = self._gateway_with_output(
             '{"attachment_action":"resend_last_attachment","explain":"user asks to resend the previous file"}'
@@ -146,6 +159,8 @@ class OpenAIGatewayTests(unittest.TestCase):
         prompt = fake_client.responses.calls[0]["input"]
         self.assertIn("Country defaults to Italy", prompt)
         self.assertIn("Treat short/lazy queries as clear", prompt)
+        self.assertIn("Tourist visas, travel visas, work visas", prompt)
+        self.assertIn("For a generic visa query without enough context, ask whether the user means the student visa", prompt)
         self.assertIn('"is_retrieval_related": boolean', prompt)
 
     def test_clarify_or_rewrite_query_returns_question_when_unclear(self) -> None:

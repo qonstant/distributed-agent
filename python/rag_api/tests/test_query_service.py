@@ -209,6 +209,30 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(result.answer, "Use the DSU application instructions from the retrieved document.")
         self.assertEqual(result.file, "italy/DSU_Scholarship_en.pdf")
 
+    def test_guidance_uses_retrieved_source_file_instead_of_llm_file_choice(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="supported guidance", language="en"),
+            json_response={"answer": "Use the visa instructions from the retrieved document.", "file": "wrong.pdf"},
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={
+                    "source_file": "italy/Visa_en.pdf",
+                    "page": 1,
+                    "text": "Student visa instructions",
+                },
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("how to apply for visa", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "Use the visa instructions from the retrieved document.")
+        self.assertEqual(result.file, "italy/Visa_en.pdf")
+
     def test_guidance_does_not_attach_file_for_unknown_answer(self) -> None:
         gateway = FakeGateway(
             Classification(intent="GUIDANCE", explain="unsupported guidance", language="en"),
@@ -288,12 +312,12 @@ class QueryServiceTests(unittest.TestCase):
         result = service.handle_query("student visa", conversation_id="conv-1")
 
         self.assertEqual(result.answer, "Use this sample.")
-        self.assertEqual(result.file, "docs/test-guide.pdf")
+        self.assertEqual(result.file, "italy/Visa_en.pdf")
         self.assertEqual(gateway.embedded_queries, ["What documents are needed for an Italian student visa?"])
         self.assertEqual(store.search_calls[0]["query_text"], "What documents are needed for an Italian student visa?")
         self.assertEqual(gateway.clarity_calls, [("student visa", "en", "OTHER", history)])
 
-    def test_other_with_history_uses_llm_clarity_instead_of_marker_matching(self) -> None:
+    def test_other_with_history_returns_scope_message_when_not_retrieval_related(self) -> None:
         history = [
             ConversationMessage(role="assistant", text="I can help with admissions documents.", ts=1),
         ]
@@ -312,9 +336,54 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("never mind", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "The test code is ALPHA-123.")
+        self.assertEqual(
+            result.answer,
+            "I can help only with education-abroad questions: admission, student visas, DSU scholarships, CVs, motivation letters, and recommendation letters.",
+        )
         self.assertEqual(gateway.clarity_calls, [("never mind", "en", "OTHER", history)])
-        self.assertEqual(gateway.answer_factual_calls, [("never mind", "en", "", history)])
+        self.assertEqual(gateway.answer_factual_calls, [])
+        self.assertEqual(store.search_calls, [])
+
+    def test_guidance_out_of_scope_clarity_blocks_retrieval_even_for_retrieval_intent(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="user asks visa guidance", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=False,
+                standalone_query="",
+                clarifying_question="",
+                reason="The user asks about a tourist visa, not education abroad.",
+                is_retrieval_related=False,
+            ),
+        )
+        store = FakeStore()
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("How do I get a tourist visa for Italy?", conversation_id="conv-1")
+
+        self.assertEqual(
+            result.answer,
+            "I can help only with education-abroad questions: admission, student visas, DSU scholarships, CVs, motivation letters, and recommendation letters.",
+        )
+        self.assertIsNone(result.file)
+        self.assertEqual(gateway.clarity_calls, [("How do I get a tourist visa for Italy?", "en", "GUIDANCE", [])])
+        self.assertEqual(gateway.embedded_queries, [])
+        self.assertEqual(gateway.generated_prompts, [])
+        self.assertEqual(store.search_calls, [])
+
+    def test_other_without_history_returns_scope_message_without_factual_answer(self) -> None:
+        gateway = FakeGateway(Classification(intent="OTHER", explain="tourism request", language="ru"))
+        store = FakeStore()
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("Как получить туристическую визу в Италию?", conversation_id="conv-1")
+
+        self.assertEqual(
+            result.answer,
+            "Я могу помогать только с вопросами про обучение за рубежом: поступление, студенческую визу, DSU, CV, мотивационное и рекомендательное письма.",
+        )
+        self.assertIsNone(result.file)
+        self.assertEqual(gateway.clarity_calls, [])
+        self.assertEqual(gateway.answer_factual_calls, [])
         self.assertEqual(store.search_calls, [])
 
     def test_document_request_resends_same_file_when_user_explicitly_asks(self) -> None:

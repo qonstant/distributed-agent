@@ -172,6 +172,24 @@ def _fallback_clarifying_question(language: str) -> str:
     return "Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?"
 
 
+def _out_of_scope_answer(language: str) -> str:
+    normalized_language = (language or "").strip().lower()
+    if normalized_language == "kk":
+        return (
+            "Мен тек шетелде оқу бойынша сұрақтарға көмектесе аламын: оқуға түсу, "
+            "студенттік виза, шәкіртақы, CV, мотивациялық және ұсыныс хаттар."
+        )
+    if normalized_language == "ru":
+        return (
+            "Я могу помогать только с вопросами про обучение за рубежом: поступление, "
+            "студенческую визу, стипендия, CV, мотивационное и рекомендательное письма."
+        )
+    return (
+        "I can help only with education-abroad questions: admission, student visas, "
+        "DSU scholarships, scholarship, CVs, motivation letters, and recommendation letters."
+    )
+
+
 class QueryService:
     def __init__(self, gateway: "OpenAIGateway", store, conversation_memory=None) -> None:
         self._gateway = gateway
@@ -288,132 +306,120 @@ class QueryService:
             if clarity_usage is not None:
                 usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
 
-            if clarity.is_retrieval_related or intent in RETRIEVAL_INTENTS:
-                if not clarity.is_clear:
-                    answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(language)
-                    return QueryResult(
-                        answer=answer,
-                        file=None,
-                        classification=classification,
-                        usage_events=usage_events,
-                    )
+            if not clarity.is_retrieval_related:
+                return QueryResult(
+                    answer=_out_of_scope_answer(language),
+                    file=None,
+                    classification=classification,
+                    usage_events=usage_events,
+                )
 
-                retrieval_query = (clarity.standalone_query or "").strip() or normalized_query
-                retrieval_intent = intent if intent in RETRIEVAL_INTENTS else "GUIDANCE"
-                rewrite_usage = None
+            if not clarity.is_clear:
+                answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(language)
+                return QueryResult(
+                    answer=answer,
+                    file=None,
+                    classification=classification,
+                    usage_events=usage_events,
+                )
 
-                try:
-                    query_embedding, embedding_usage = self._gateway.embed_text(retrieval_query)
-                except Exception as exc:  # pragma: no cover - exercised through API behavior
-                    raise RuntimeError(f"embedding failed: {exc}") from exc
+            retrieval_query = (clarity.standalone_query or "").strip() or normalized_query
+            retrieval_intent = intent if intent in RETRIEVAL_INTENTS else "GUIDANCE"
+            rewrite_usage = None
 
-                try:
-                    results = self._store.search(
-                        query_embedding,
-                        k=max(1, int(raw_k or 64)),
-                        language=language,
-                        query_text=retrieval_query,
-                    )
-                except Exception as exc:  # pragma: no cover - exercised through API behavior
-                    raise RuntimeError(f"search failed: {exc}") from exc
+            try:
+                query_embedding, embedding_usage = self._gateway.embed_text(retrieval_query)
+            except Exception as exc:  # pragma: no cover - exercised through API behavior
+                raise RuntimeError(f"embedding failed: {exc}") from exc
 
-                if not results:
+            try:
+                results = self._store.search(
+                    query_embedding,
+                    k=max(1, int(raw_k or 64)),
+                    language=language,
+                    query_text=retrieval_query,
+                )
+            except Exception as exc:  # pragma: no cover - exercised through API behavior
+                raise RuntimeError(f"search failed: {exc}") from exc
+
+            if not results:
+                return QueryResult(
+                    answer="I don't know based on the provided documents.",
+                    file=None,
+                    classification=classification,
+                    usage_events=usage_events + self._rag_usage_events(
+                        retrieval_query,
+                        rewrite_usage,
+                        embedding_usage,
+                    ),
+                )
+
+            best_file_agg, best_chunk = _aggregate_by_file(results)
+            supporting_file = _source_file_from_hit(best_chunk) or _normalize_file_choice(best_file_agg)
+            top_n = max(1, int(top_for_llm or 8))
+            top_chunks = results[:top_n]
+
+            if retrieval_intent == "DOCUMENT_REQUEST":
+                prompt = prepare_document_request_prompt(
+                    retrieval_query,
+                    top_chunks,
+                    history=history,
+                    preferred_name=normalized_preferred_name,
+                )
+            else:
+                prompt = prepare_guidance_prompt(
+                    retrieval_query,
+                    top_chunks,
+                    history=history,
+                    preferred_name=normalized_preferred_name,
+                )
+
+            if language_label:
+                prompt = f"Answer in the same language as detected: {language_label}\n\n" + prompt
+            else:
+                prompt = "Answer in the same language as the user's query if possible.\n\n" + prompt
+
+            llm_json, completion_usage = self._gateway.generate_json_response(prompt, max_tokens=512)
+
+            if isinstance(llm_json, dict) and "answer" in llm_json and "file" in llm_json:
+                answer = str(llm_json.get("answer", "")).strip()
+            else:
+                if best_chunk is None:
                     return QueryResult(
                         answer="I don't know based on the provided documents.",
                         file=None,
-                        classification=classification,
-                        usage_events=usage_events + self._rag_usage_events(
-                            retrieval_query,
-                            rewrite_usage,
-                            embedding_usage,
-                        ),
                     )
+                chunk_meta = best_chunk.meta
+                answer = (chunk_meta.get("text") or chunk_meta.get("md") or "").strip()
 
-                best_file_agg, best_chunk = _aggregate_by_file(results)
-                top_n = max(1, int(top_for_llm or 8))
-                top_chunks = results[:top_n]
+            if not answer:
+                answer = "I don't know based on the provided documents."
+            if len(answer) > 1600:
+                answer = answer[:1600].rstrip() + "..."
 
-                if retrieval_intent == "DOCUMENT_REQUEST":
-                    prompt = prepare_document_request_prompt(
-                        retrieval_query,
-                        top_chunks,
-                        history=history,
-                        preferred_name=normalized_preferred_name,
-                    )
-                else:
-                    prompt = prepare_guidance_prompt(
-                        retrieval_query,
-                        top_chunks,
-                        history=history,
-                        preferred_name=normalized_preferred_name,
-                    )
+            file_chosen = supporting_file if _should_attach_supporting_file(answer) else None
+            if file_chosen:
+                print(f"[query] selected supporting file={file_chosen}")
 
-                if language_label:
-                    prompt = f"Answer in the same language as detected: {language_label}\n\n" + prompt
-                else:
-                    prompt = "Answer in the same language as the user's query if possible.\n\n" + prompt
+            previous_attachment = _find_previously_sent_attachment(history, file_chosen)
+            if previous_attachment:
+                file_label = _attachment_display_label(previous_attachment, file_chosen)
+                print(f"[memory] file was sent before, sending again for current answer: {file_label}")
 
-                llm_json, completion_usage = self._gateway.generate_json_response(prompt, max_tokens=512)
+            return QueryResult(
+                answer=answer,
+                file=file_chosen,
+                classification=classification,
+                usage_events=usage_events
+                + self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
+                + [self._prompt_completion_usage_event(prompt, answer, completion_usage)],
+            )
 
-                if isinstance(llm_json, dict) and "answer" in llm_json and "file" in llm_json:
-                    answer = str(llm_json.get("answer", "")).strip()
-                    file_chosen = _normalize_file_choice(llm_json.get("file"))
-                else:
-                    if best_chunk is None:
-                        return QueryResult(
-                            answer="I don't know based on the provided documents.",
-                            file=None,
-                        )
-                    chunk_meta = best_chunk.meta
-                    answer = (chunk_meta.get("text") or chunk_meta.get("md") or "").strip()
-                    file_chosen = _normalize_file_choice(
-                        chunk_meta.get("source_file")
-                        or chunk_meta.get("filename")
-                        or best_file_agg
-                    )
-
-                if not answer:
-                    answer = "I don't know based on the provided documents."
-                if len(answer) > 1600:
-                    answer = answer[:1600].rstrip() + "..."
-
-                if not file_chosen and _should_attach_supporting_file(answer):
-                    file_chosen = _source_file_from_hit(best_chunk) or _normalize_file_choice(best_file_agg)
-                    if file_chosen:
-                        print(f"[query] using fallback supporting file={file_chosen}")
-
-                previous_attachment = _find_previously_sent_attachment(history, file_chosen)
-                if previous_attachment:
-                    file_label = _attachment_display_label(previous_attachment, file_chosen)
-                    print(f"[memory] file was sent before, sending again for current answer: {file_label}")
-
-                return QueryResult(
-                    answer=answer,
-                    file=file_chosen,
-                    classification=classification,
-                    usage_events=usage_events
-                    + self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
-                    + [self._prompt_completion_usage_event(prompt, answer, completion_usage)],
-                )
-
-        answer, completion_usage = self._gateway.answer_factual(
-            normalized_query,
-            language,
-            preferred_name=normalized_preferred_name,
-            history=history,
-        )
         return QueryResult(
-            answer=answer,
+            answer=_out_of_scope_answer(language),
             file=None,
             classification=classification,
-            usage_events=usage_events + [
-                self._chat_completion_usage_event(
-                    normalized_query,
-                    history,
-                    answer,
-                    completion_usage,
-                )
-            ],
+            usage_events=usage_events,
         )
 
     def _retrieval_clarity(

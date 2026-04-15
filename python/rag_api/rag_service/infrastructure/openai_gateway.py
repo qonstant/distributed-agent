@@ -239,8 +239,8 @@ class OpenAIGateway:
         language_name = self._language_name(language_hint) or "the user's language"
         prompt = (
             "You are a clarification gate for a document-grounded RAG assistant.\n"
-            "Your job is to decide whether the latest user message is specific enough to run document retrieval now, "
-            "or whether the assistant should ask exactly one clarifying question first.\n\n"
+            "Your job is to decide whether the latest user message is related to document retrieval, "
+            "whether it is specific enough to run retrieval now, or whether the assistant should ask exactly one clarifying question first.\n\n"
             "Current corpus scope:\n"
             " - Country defaults to Italy. Do NOT ask for country just because it is missing.\n"
             " - Supported topics include: Italian student visa, CV, DSU scholarship, motivation letter, and recommendation letter.\n\n"
@@ -250,7 +250,10 @@ class OpenAIGateway:
             "Examples of unclear queries: \"what documents do I need?\", \"how to apply?\", \"send file\", \"что нужно?\", \"қалай тапсырам?\".\n"
             "If the recent conversation contains an assistant clarification question, combine the latest user reply with that context. "
             "If the combined meaning is clear, produce a complete standalone search query.\n\n"
+            "If the classifier intent is OTHER, use the recent conversation to decide whether the latest message is a continuation of a document clarification. "
+            "If it is not a document request/guidance question and not a clarification follow-up, set is_retrieval_related to false and leave standalone_query and clarifying_question empty.\n\n"
             "Return ONLY valid JSON with exactly these keys:\n"
+            ' - "is_retrieval_related": boolean\n'
             ' - "is_clear": boolean\n'
             ' - "standalone_query": string; if is_clear is true, this must be a complete retrieval query\n'
             ' - "clarifying_question": string; if is_clear is false, ask one concise question in '
@@ -258,8 +261,9 @@ class OpenAIGateway:
             ' - "reason": one short sentence\n\n'
             "Do not answer the user. Do not mention internal retrieval, embeddings, metadata, or files unless the user asked for a file.\n\n"
             "Examples:\n"
-            '{"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","reason":"The visa document topic is clear."}\n'
-            '{"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?","reason":"The user asks for documents but not the process."}\n\n'
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","reason":"The visa document topic is clear."}\n'
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?","reason":"The user asks for documents but not the process."}\n'
+            '{"is_retrieval_related":false,"is_clear":false,"standalone_query":"","clarifying_question":"","reason":"The user is not asking a document-grounded question."}\n\n'
             f"{history_block}"
             f"Classifier intent: {json.dumps(intent)}\n"
             f"Latest user input: {json.dumps(query)}\n"
@@ -278,13 +282,17 @@ class OpenAIGateway:
                 standalone_query=str(parsed.get("standalone_query") or "").strip(),
                 clarifying_question=str(parsed.get("clarifying_question") or "").strip(),
                 reason=str(parsed.get("reason") or "").strip(),
+                is_retrieval_related=self._json_bool(parsed.get("is_retrieval_related"), default=True),
             )
+            if not clarity.is_retrieval_related:
+                return clarity, self._extract_usage(response, self._settings.class_model)
             if clarity.is_clear and not clarity.standalone_query:
                 clarity = RetrievalClarity(
                     is_clear=True,
                     standalone_query=query,
                     clarifying_question="",
                     reason=clarity.reason or "Fallback to latest query.",
+                    is_retrieval_related=True,
                 )
             if not clarity.is_clear and not clarity.clarifying_question:
                 clarity = RetrievalClarity(
@@ -292,6 +300,7 @@ class OpenAIGateway:
                     standalone_query="",
                     clarifying_question=self._default_clarifying_question(language_hint),
                     reason=clarity.reason or "The request is ambiguous.",
+                    is_retrieval_related=True,
                 )
             return clarity, self._extract_usage(response, self._settings.class_model)
         except Exception as exc:

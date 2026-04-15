@@ -249,6 +249,30 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(store.search_calls[0]["query_text"], "What documents are needed for an Italian student visa?")
         self.assertEqual(gateway.clarity_calls, [("student visa", "en", "OTHER", history)])
 
+    def test_other_with_history_uses_llm_clarity_instead_of_marker_matching(self) -> None:
+        history = [
+            ConversationMessage(role="assistant", text="I can help with admissions documents.", ts=1),
+        ]
+        gateway = FakeGateway(
+            Classification(intent="OTHER", explain="not a retrieval question", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=False,
+                standalone_query="",
+                clarifying_question="",
+                reason="The user is not asking a document-grounded question.",
+                is_retrieval_related=False,
+            ),
+        )
+        store = FakeStore()
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("never mind", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "The test code is ALPHA-123.")
+        self.assertEqual(gateway.clarity_calls, [("never mind", "en", "OTHER", history)])
+        self.assertEqual(gateway.answer_factual_calls, [("never mind", "en", "", history)])
+        self.assertEqual(store.search_calls, [])
+
     def test_document_request_resends_same_file_when_user_explicitly_asks(self) -> None:
         history = [
             ConversationMessage(

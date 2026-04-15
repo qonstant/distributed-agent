@@ -132,32 +132,46 @@ class OpenAIGatewayTests(unittest.TestCase):
 
     def test_clarify_or_rewrite_query_returns_standalone_query_when_clear(self) -> None:
         gateway, fake_client = self._gateway_with_output(
-            '{"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","reason":"visa topic is clear"}',
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","reason":"visa topic is clear"}',
             usage=SimpleNamespace(input_tokens=18, output_tokens=7, total_tokens=25),
         )
 
         clarity, usage = gateway.clarify_or_rewrite_query("visa docs", "en", "GUIDANCE")
 
         self.assertTrue(clarity.is_clear)
+        self.assertTrue(clarity.is_retrieval_related)
         self.assertEqual(clarity.standalone_query, "What documents are needed for an Italian student visa?")
         self.assertEqual(clarity.clarifying_question, "")
         self.assertIsNotNone(usage)
         prompt = fake_client.responses.calls[0]["input"]
         self.assertIn("Country defaults to Italy", prompt)
         self.assertIn("Treat short/lazy queries as clear", prompt)
+        self.assertIn('"is_retrieval_related": boolean', prompt)
 
     def test_clarify_or_rewrite_query_returns_question_when_unclear(self) -> None:
         gateway, _ = self._gateway_with_output(
-            '{"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?","reason":"topic missing"}'
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?","reason":"topic missing"}'
         )
 
         clarity, _ = gateway.clarify_or_rewrite_query("what documents do I need?", "en", "GUIDANCE")
 
         self.assertFalse(clarity.is_clear)
+        self.assertTrue(clarity.is_retrieval_related)
         self.assertEqual(
             clarity.clarifying_question,
             "Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
         )
+
+    def test_clarify_or_rewrite_query_can_mark_other_as_not_retrieval_related(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"is_retrieval_related":false,"is_clear":false,"standalone_query":"","clarifying_question":"","reason":"not a document question"}'
+        )
+
+        clarity, _ = gateway.clarify_or_rewrite_query("random unrelated reply", "en", "OTHER")
+
+        self.assertFalse(clarity.is_retrieval_related)
+        self.assertFalse(clarity.is_clear)
+        self.assertEqual(clarity.clarifying_question, "")
 
 
 if __name__ == "__main__":

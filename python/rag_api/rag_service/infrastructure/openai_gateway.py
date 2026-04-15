@@ -261,12 +261,14 @@ class OpenAIGateway:
             "\"visa docs\", \"cv help\", \"scholarship money\", \"motivation letter structure\", \"recommendation letter who\".\n"
             "Ask a clarification only when the missing detail would change which supported education-abroad document/topic should be searched. "
             "Examples of unclear queries: \"what documents do I need?\", \"how to apply?\", \"send file\", \"что нужно?\", \"қалай тапсырам?\".\n"
+            "Do NOT ask sub-aspect clarifications inside an already identified topic. If the user asks about a detail such as visa photo format, photo size, background, funds, appointment, CV structure, scholarship documents, or recommendation-letter requirements, treat it as clear and search that detail. "
+            "For example, \"what photo format is needed for the visa\" is clear; do not ask whether they mean size, background, or something else.\n"
             "For a generic visa query without enough context, ask whether the user means the student visa; do not assume tourist or student.\n"
             "If the recent conversation contains an assistant clarification question, combine the latest user reply with that context. "
             "If the combined meaning is clear, produce a complete standalone search query.\n\n"
             "Short follow-up handling:\n"
             " - If the assistant just asked a clarification question and the latest user reply is a confirmation like \"yes\", \"да\", \"иә\", treat it as confirming the assistant's proposed topic and produce a standalone query.\n"
-            " - If the assistant offered choices like documents vs process and the user replies \"all\", \"both\", \"everything\", \"все\", \"все вообще\", or similar, do NOT ask again; produce a broad standalone query covering both parts.\n"
+            " - If the assistant offered choices like documents vs process, size vs background, or any other sub-aspects, and the user replies \"all\", \"both\", \"everything\", \"все\", \"все я сказал\", \"все вообще\", or similar, do NOT ask again; produce a broad standalone query covering all available details for the already identified topic.\n"
             " - If the user asks a short continuation like \"then?\" or \"потом?\" after an in-scope answer, keep the same topic from history and ask for the next step in the standalone query.\n\n"
             "Language-switch follow-up handling:\n"
             " - If the latest user asks to answer/send/explain the previous in-scope topic in another supported language, set is_retrieval_related true, is_clear true, and reuse the previous in-scope topic as standalone_query.\n"
@@ -285,6 +287,7 @@ class OpenAIGateway:
             "Do not answer the user. Do not mention internal retrieval, embeddings, metadata, or files unless the user asked for a file.\n\n"
             "Examples:\n"
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","target_language":"","reason":"The visa document topic is clear."}\n'
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"All available photo format requirements for an Italian student visa, including size, background, and ICAO standards if present in the documents.","clarifying_question":"","target_language":"","reason":"The visa photo detail is specific enough to search."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply for an Italian student visa?","clarifying_question":"","target_language":"en","reason":"The user asks to continue the previous visa topic in English."}\n'
             '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?","target_language":"","reason":"The user asks for documents but not the process."}\n'
             '{"is_retrieval_related":false,"is_clear":false,"standalone_query":"","clarifying_question":"","target_language":"","reason":"The user is not asking a document-grounded question."}\n\n'
@@ -364,6 +367,8 @@ class OpenAIGateway:
             " - If the query asks a generic unsupported country/topic but the excerpts are only Italy docs, ask a clarification instead of guessing.\n"
             " - Treat broad queries like \"everything\", \"all\", \"general overview\", \"все\", or \"все вообще\" as sufficient when the excerpts are on the right topic; the answer generator can summarize what is available.\n"
             " - Do NOT ask the user to choose between documents and process when the query asks for a broad overview and the excerpts cover the same topic.\n"
+            " - Do NOT ask the user to choose sub-aspects inside an already identified document topic. For example, if the query asks about visa photo format and the excerpts mention photo requirements, mark sufficient; do not ask whether they mean size, background, or another photo detail.\n"
+            " - If the excerpts only cover part of a broad detail question, still mark sufficient when they directly address the topic. The answer generator must say only what is available in the excerpts and avoid inventing missing details.\n"
             " - Prefer asking one concise clarification only when the excerpts are weak, empty, mismatched, or cannot identify the requested education-abroad topic.\n\n"
             "Return ONLY valid JSON with exactly these keys:\n"
             ' - "is_sufficient": boolean\n'
@@ -373,6 +378,7 @@ class OpenAIGateway:
             "Do not mention internal retrieval, embeddings, scores, metadata, or top-K.\n\n"
             "Examples:\n"
             '{"is_sufficient":true,"clarifying_question":"","reason":"The excerpts directly cover Italian student visa documents."}\n'
+            '{"is_sufficient":true,"clarifying_question":"","reason":"The excerpts directly mention student visa photo requirements, so the answer can state the available details without asking for a sub-aspect."}\n'
             '{"is_sufficient":false,"clarifying_question":"Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?","reason":"The excerpts do not identify the requested document topic."}\n\n'
             f"{history_block}"
             f"Classifier intent: {json.dumps(intent)}\n"

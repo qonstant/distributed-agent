@@ -215,6 +215,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.embedded_queries, [standalone_query])
         self.assertEqual(gateway.sufficiency_calls, [(standalone_query, "en", "FACTUAL_QUESTION", results, [])])
         self.assertIn("Answer the user's factual question using ONLY the provided excerpts", gateway.generated_prompts[0])
+        self.assertIn("answer with the available details", gateway.generated_prompts[0])
         self.assertEqual(memory.remembered_pending, [("conv-1", "italy/Visa_en.pdf")])
 
     def test_yes_after_factual_file_offer_sends_pending_file(self) -> None:

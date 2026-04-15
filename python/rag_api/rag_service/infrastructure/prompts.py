@@ -181,6 +181,7 @@ def prepare_factual_rag_prompt(
             "Output requirements:",
             "- Respond ONLY with valid JSON with exactly two keys: 'answer' and 'file'.",
             "- 'answer' must be a direct concise answer (<=120 words) supported only by the excerpts. If the excerpts do not contain the answer, set 'answer' to: \"I don't know based on the provided documents.\"",
+            "- If the user asks for all details of a subtopic but the excerpts contain only some details, answer with the available details and make clear that only those details are present in the provided excerpts.",
             "- 'file' should be the single best supporting source_file path from the excerpts (or null if none).",
             "- Do not include page citations in 'answer'; the application adds the validated page reference separately.",
             "- Do NOT invent, assume, or provide extra commentary. Return JSON only.",

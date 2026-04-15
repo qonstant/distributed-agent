@@ -177,6 +177,8 @@ class OpenAIGatewayTests(unittest.TestCase):
         prompt = fake_client.responses.calls[0]["input"]
         self.assertIn("Country defaults to Italy", prompt)
         self.assertIn("Treat short/lazy queries as clear", prompt)
+        self.assertIn("Do NOT ask sub-aspect clarifications inside an already identified topic", prompt)
+        self.assertIn("what photo format is needed for the visa", prompt)
         self.assertIn("Tourist visas, travel visas, work visas", prompt)
         self.assertIn("For a generic visa query without enough context, ask whether the user means the student visa", prompt)
         self.assertIn("Short follow-up handling", prompt)
@@ -254,6 +256,8 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("Retrieved excerpts", prompt)
         self.assertIn("italy/Visa_en.pdf", prompt)
         self.assertIn("Do NOT ask the user to choose between documents and process", prompt)
+        self.assertIn("Do NOT ask the user to choose sub-aspects inside an already identified document topic", prompt)
+        self.assertIn("visa photo format", prompt)
         self.assertIn('"is_sufficient": boolean', prompt)
 
     def test_assess_retrieval_sufficiency_returns_clarifying_question_when_context_is_weak(self) -> None:

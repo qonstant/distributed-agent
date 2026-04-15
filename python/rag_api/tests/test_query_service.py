@@ -478,6 +478,49 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.embedded_queries, [standalone_query])
         self.assertEqual(store.search_calls[0]["query_text"], standalone_query)
 
+    def test_language_switch_follow_up_reruns_rag_in_requested_language(self) -> None:
+        history = [
+            ConversationMessage(
+                role="assistant",
+                text="Для подачи на студенческую визу в Италию необходимо подготовить документы.",
+                ts=1,
+                attachments=[ConversationAttachment(name="Visa_ru.pdf", kind="document", source="italy/Visa_ru.pdf")],
+            )
+        ]
+        gateway = FakeGateway(
+            Classification(intent="OTHER", explain="language switch follow-up", language="ru"),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query="How to apply for an Italian student visa?",
+                reason="The user asks to continue the previous visa topic in English.",
+                target_language="en",
+            ),
+            json_response={
+                "answer": "To apply for an Italian student visa, prepare the required documents and book an appointment.",
+                "file": "italy/Visa_en.pdf",
+            },
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/Visa_en.pdf", "page": 1, "text": "student visa application process"},
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("А можно на Английском?", conversation_id="conv-1")
+
+        self.assertEqual(
+            result.answer,
+            "To apply for an Italian student visa, prepare the required documents and book an appointment.",
+        )
+        self.assertEqual(result.file, "italy/Visa_en.pdf")
+        self.assertEqual(store.search_calls[0]["language"], "en")
+        self.assertEqual(store.search_calls[0]["query_text"], "How to apply for an Italian student visa?")
+        self.assertIn("Answer in the same language as detected/requested: English", gateway.generated_prompts[0])
+
     def test_chit_chat_with_history_still_greets_when_not_retrieval_related(self) -> None:
         history = [
             ConversationMessage(role="assistant", text="I can help with education-abroad documents.", ts=1),

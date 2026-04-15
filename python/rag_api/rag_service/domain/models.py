@@ -117,6 +117,7 @@ class RetrievalClarity:
     clarifying_question: str = ""
     reason: str = ""
     is_retrieval_related: bool = True
+    target_language: str = ""
 
 
 @dataclass(frozen=True)

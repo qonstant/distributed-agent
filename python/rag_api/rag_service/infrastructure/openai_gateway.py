@@ -63,7 +63,7 @@ class OpenAIGateway:
             " - GREETING: short hello/goodbye messages (no docs needed)\n"
             " - CHIT_CHAT: small talk / thanks / compliment (no docs)\n"
             " - FACTUAL_QUESTION: factual question about recent conversation or saved user info where no document retrieval is needed (e.g., \"What is my name?\"). Do NOT use for general world knowledge or out-of-scope travel/visa questions.\n"
-            " - GUIDANCE: user asks for in-scope education-abroad step-by-step guidance, procedures or how-to that should be answered using documents if available, but may be synthesized from top-K excerpts (do NOT invent facts)\n"
+            " - GUIDANCE: user asks for in-scope education-abroad step-by-step guidance, procedures or how-to that should be answered using documents if available, but may be synthesized from top-K excerpts (do NOT invent facts). Also use GUIDANCE when the user asks to repeat/continue a previous in-scope answer in another supported language.\n"
             " - DOCUMENT_REQUEST: user explicitly requests an in-scope education-abroad document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n"
             " - OTHER: none of the above\n\n"
             "Language rules:\n"
@@ -268,6 +268,10 @@ class OpenAIGateway:
             " - If the assistant just asked a clarification question and the latest user reply is a confirmation like \"yes\", \"да\", \"иә\", treat it as confirming the assistant's proposed topic and produce a standalone query.\n"
             " - If the assistant offered choices like documents vs process and the user replies \"all\", \"both\", \"everything\", \"все\", \"все вообще\", or similar, do NOT ask again; produce a broad standalone query covering both parts.\n"
             " - If the user asks a short continuation like \"then?\" or \"потом?\" after an in-scope answer, keep the same topic from history and ask for the next step in the standalone query.\n\n"
+            "Language-switch follow-up handling:\n"
+            " - If the latest user asks to answer/send/explain the previous in-scope topic in another supported language, set is_retrieval_related true, is_clear true, and reuse the previous in-scope topic as standalone_query.\n"
+            " - Set target_language to the requested language code when the user asks for another language: English -> en, Russian -> ru, Kazakh -> kk.\n"
+            " - Examples: \"Can you do it in English?\", \"А можно на английском?\", \"а на русском?\", \"қазақша бола ма?\".\n\n"
             "If the classifier intent is OTHER, use the recent conversation to decide whether the latest message is a continuation of a document clarification. "
             "If it is not a document request/guidance question and not a clarification follow-up, set is_retrieval_related to false and leave standalone_query and clarifying_question empty.\n\n"
             "Return ONLY valid JSON with exactly these keys:\n"
@@ -276,12 +280,14 @@ class OpenAIGateway:
             ' - "standalone_query": string; if is_clear is true, this must be a complete retrieval query\n'
             ' - "clarifying_question": string; if is_clear is false, ask one concise question in '
             f"{language_name}\n"
+            ' - "target_language": string; one of ["en","ru","kk",""]; set only when the user explicitly asks to answer in another supported language\n'
             ' - "reason": one short sentence\n\n'
             "Do not answer the user. Do not mention internal retrieval, embeddings, metadata, or files unless the user asked for a file.\n\n"
             "Examples:\n"
-            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","reason":"The visa document topic is clear."}\n'
-            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?","reason":"The user asks for documents but not the process."}\n'
-            '{"is_retrieval_related":false,"is_clear":false,"standalone_query":"","clarifying_question":"","reason":"The user is not asking a document-grounded question."}\n\n'
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","target_language":"","reason":"The visa document topic is clear."}\n'
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply for an Italian student visa?","clarifying_question":"","target_language":"en","reason":"The user asks to continue the previous visa topic in English."}\n'
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?","target_language":"","reason":"The user asks for documents but not the process."}\n'
+            '{"is_retrieval_related":false,"is_clear":false,"standalone_query":"","clarifying_question":"","target_language":"","reason":"The user is not asking a document-grounded question."}\n\n'
             f"{history_block}"
             f"Classifier intent: {json.dumps(intent)}\n"
             f"Latest user input: {json.dumps(query)}\n"
@@ -295,12 +301,14 @@ class OpenAIGateway:
             )
             raw_text = self._resp_to_text(response) or ""
             parsed = self._extract_json(raw_text) or {}
+            target_language_raw = str(parsed.get("target_language") or "").strip()
             clarity = RetrievalClarity(
                 is_clear=self._json_bool(parsed.get("is_clear"), default=True),
                 standalone_query=str(parsed.get("standalone_query") or "").strip(),
                 clarifying_question=str(parsed.get("clarifying_question") or "").strip(),
                 reason=str(parsed.get("reason") or "").strip(),
                 is_retrieval_related=self._json_bool(parsed.get("is_retrieval_related"), default=True),
+                target_language=normalize_language(target_language_raw) if target_language_raw else "",
             )
             if not clarity.is_retrieval_related:
                 return clarity, self._extract_usage(response, self._settings.class_model)
@@ -311,6 +319,7 @@ class OpenAIGateway:
                     clarifying_question="",
                     reason=clarity.reason or "Fallback to latest query.",
                     is_retrieval_related=True,
+                    target_language=clarity.target_language,
                 )
             if not clarity.is_clear and not clarity.clarifying_question:
                 clarity = RetrievalClarity(
@@ -319,6 +328,7 @@ class OpenAIGateway:
                     clarifying_question=self._default_clarifying_question(language_hint),
                     reason=clarity.reason or "The request is ambiguous.",
                     is_retrieval_related=True,
+                    target_language=clarity.target_language,
                 )
             return clarity, self._extract_usage(response, self._settings.class_model)
         except Exception as exc:

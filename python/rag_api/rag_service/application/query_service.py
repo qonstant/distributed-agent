@@ -19,6 +19,7 @@ from rag_service.domain.models import (
     RetrievalSufficiency,
     RetrievedHit,
     UsageEventRecord,
+    normalize_language,
 )
 from rag_service.infrastructure.prompts import (
     prepare_document_request_prompt,
@@ -179,6 +180,16 @@ def _language_label(language: str) -> str:
     return mapping.get(normalized, (language or "").strip())
 
 
+def _effective_language(language: str, target_language: str = "") -> str:
+    target = (target_language or "").strip()
+    if not target:
+        return language
+    normalized_target = normalize_language(target)
+    if normalized_target in {"en", "ru", "kk"}:
+        return normalized_target
+    return language
+
+
 def _should_run_retrieval_clarity(intent: str, history: List[ConversationMessage]) -> bool:
     if intent in RETRIEVAL_INTENTS:
         return True
@@ -254,7 +265,6 @@ class QueryService:
         ]
         intent = classification.intent
         language = classification.language or ""
-        language_label = _language_label(language)
         print(
             f"[query] classifier -> intent={intent} lang={language} "
             f"explain={classification.explain}"
@@ -299,7 +309,8 @@ class QueryService:
 
             if clarity.is_retrieval_related:
                 if not clarity.is_clear:
-                    answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(language)
+                    response_language = _effective_language(language, clarity.target_language)
+                    answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
                     return QueryResult(
                         answer=answer,
                         file=None,
@@ -374,7 +385,8 @@ class QueryService:
                 )
 
             if not clarity.is_clear:
-                answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(language)
+                response_language = _effective_language(language, clarity.target_language)
+                answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
                 return QueryResult(
                     answer=answer,
                     file=None,
@@ -384,6 +396,8 @@ class QueryService:
 
             retrieval_query = (clarity.standalone_query or "").strip() or normalized_query
             retrieval_intent = intent if intent in RETRIEVAL_INTENTS else "GUIDANCE"
+            response_language = _effective_language(language, clarity.target_language)
+            response_language_label = _language_label(response_language)
             rewrite_usage = None
 
             try:
@@ -395,7 +409,7 @@ class QueryService:
                 results = self._store.search(
                     query_embedding,
                     k=max(1, int(raw_k or 64)),
-                    language=language,
+                    language=response_language,
                     query_text=retrieval_query,
                 )
             except Exception as exc:  # pragma: no cover - exercised through API behavior
@@ -406,7 +420,7 @@ class QueryService:
             rag_usage_events = self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
             sufficiency, sufficiency_usage = self._retrieval_sufficiency(
                 retrieval_query,
-                language,
+                response_language,
                 retrieval_intent,
                 top_chunks,
                 history,
@@ -420,7 +434,7 @@ class QueryService:
             if not results or not sufficiency.is_sufficient:
                 answer = (
                     (sufficiency.clarifying_question or "").strip()
-                    or _fallback_retrieval_follow_up_question(language)
+                    or _fallback_retrieval_follow_up_question(response_language)
                 )
                 return QueryResult(
                     answer=answer,
@@ -449,8 +463,8 @@ class QueryService:
                     preferred_name=normalized_preferred_name,
                 )
 
-            if language_label:
-                prompt = f"Answer in the same language as detected: {language_label}\n\n" + prompt
+            if response_language_label:
+                prompt = f"Answer in the same language as detected/requested: {response_language_label}\n\n" + prompt
             else:
                 prompt = "Answer in the same language as the user's query if possible.\n\n" + prompt
 
@@ -462,7 +476,7 @@ class QueryService:
             else:
                 if best_chunk is None:
                     return QueryResult(
-                        answer=_fallback_retrieval_follow_up_question(language),
+                        answer=_fallback_retrieval_follow_up_question(response_language),
                         file=None,
                         classification=classification,
                         usage_events=usage_events + rag_usage_events + sufficiency_usage_events,
@@ -472,7 +486,7 @@ class QueryService:
 
             if not answer or not _should_attach_supporting_file(answer):
                 return QueryResult(
-                    answer=_fallback_retrieval_follow_up_question(language),
+                    answer=_fallback_retrieval_follow_up_question(response_language),
                     file=None,
                     classification=classification,
                     usage_events=usage_events

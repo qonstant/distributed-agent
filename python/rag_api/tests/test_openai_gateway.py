@@ -146,7 +146,7 @@ class OpenAIGatewayTests(unittest.TestCase):
 
     def test_clarify_or_rewrite_query_returns_standalone_query_when_clear(self) -> None:
         gateway, fake_client = self._gateway_with_output(
-            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","reason":"visa topic is clear"}',
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","target_language":"","reason":"visa topic is clear"}',
             usage=SimpleNamespace(input_tokens=18, output_tokens=7, total_tokens=25),
         )
 
@@ -156,6 +156,7 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertTrue(clarity.is_retrieval_related)
         self.assertEqual(clarity.standalone_query, "What documents are needed for an Italian student visa?")
         self.assertEqual(clarity.clarifying_question, "")
+        self.assertEqual(clarity.target_language, "")
         self.assertIsNotNone(usage)
         prompt = fake_client.responses.calls[0]["input"]
         self.assertIn("Country defaults to Italy", prompt)
@@ -163,8 +164,22 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("Tourist visas, travel visas, work visas", prompt)
         self.assertIn("For a generic visa query without enough context, ask whether the user means the student visa", prompt)
         self.assertIn("Short follow-up handling", prompt)
+        self.assertIn("Language-switch follow-up handling", prompt)
+        self.assertIn('"target_language": string', prompt)
         self.assertIn("все вообще", prompt)
         self.assertIn('"is_retrieval_related": boolean', prompt)
+
+    def test_clarify_or_rewrite_query_returns_target_language_for_language_switch(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply for an Italian student visa?","clarifying_question":"","target_language":"English","reason":"user asks for the previous answer in English"}'
+        )
+
+        clarity, _ = gateway.clarify_or_rewrite_query("А можно на английском?", "ru", "OTHER")
+
+        self.assertTrue(clarity.is_clear)
+        self.assertTrue(clarity.is_retrieval_related)
+        self.assertEqual(clarity.standalone_query, "How to apply for an Italian student visa?")
+        self.assertEqual(clarity.target_language, "en")
 
     def test_clarify_or_rewrite_query_returns_question_when_unclear(self) -> None:
         gateway, _ = self._gateway_with_output(

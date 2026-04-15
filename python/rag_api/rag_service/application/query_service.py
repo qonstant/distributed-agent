@@ -138,6 +138,29 @@ def _source_file_from_hit(hit: Optional[RetrievedHit]) -> Optional[str]:
     return _normalize_file_choice(hit.meta.get("source_file") or hit.meta.get("filename"))
 
 
+def _source_files_from_hits(results: List[RetrievedHit]) -> set[str]:
+    files: set[str] = set()
+    for hit in results:
+        source_file = _source_file_from_hit(hit)
+        if source_file:
+            files.add(source_file)
+    return files
+
+
+def _validated_retrieved_file_choice(value, retrieved_files: set[str]) -> Optional[str]:
+    file_choice = _normalize_file_choice(value)
+    if not file_choice:
+        return None
+    if file_choice in retrieved_files:
+        return file_choice
+
+    chosen_name = _basename(file_choice)
+    for retrieved_file in retrieved_files:
+        if _basename(retrieved_file) == chosen_name:
+            return retrieved_file
+    return None
+
+
 def _should_attach_supporting_file(answer: str) -> bool:
     normalized = (answer or "").strip().lower()
     if not normalized:
@@ -408,6 +431,8 @@ class QueryService:
 
             best_file_agg, best_chunk = _aggregate_by_file(results)
             supporting_file = _source_file_from_hit(best_chunk) or _normalize_file_choice(best_file_agg)
+            retrieved_files = _source_files_from_hits(results)
+            llm_file_choice = None
 
             if retrieval_intent == "DOCUMENT_REQUEST":
                 prompt = prepare_document_request_prompt(
@@ -433,6 +458,7 @@ class QueryService:
 
             if isinstance(llm_json, dict) and "answer" in llm_json and "file" in llm_json:
                 answer = str(llm_json.get("answer", "")).strip()
+                llm_file_choice = _validated_retrieved_file_choice(llm_json.get("file"), retrieved_files)
             else:
                 if best_chunk is None:
                     return QueryResult(
@@ -457,7 +483,7 @@ class QueryService:
             if len(answer) > 1600:
                 answer = answer[:1600].rstrip() + "..."
 
-            file_chosen = supporting_file
+            file_chosen = llm_file_choice or supporting_file
             if file_chosen:
                 print(f"[query] selected supporting file={file_chosen}")
 

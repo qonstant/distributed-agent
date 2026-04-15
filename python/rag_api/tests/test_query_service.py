@@ -246,6 +246,68 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(result.answer, "Use the visa instructions from the retrieved document.")
         self.assertEqual(result.file, "italy/Visa_en.pdf")
 
+    def test_guidance_uses_llm_file_choice_when_it_matches_retrieved_source(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="supported guidance", language="ru"),
+            json_response={
+                "answer": "Используйте инструкцию по подаче на стипендию из найденного документа.",
+                "file": "italy/DSU_Scholarship_ru.pdf",
+            },
+        )
+        results = [
+            RetrievedHit(
+                score=0.95,
+                nid=1,
+                meta={
+                    "source_file": "italy/Visa_ru.pdf",
+                    "page": 1,
+                    "text": "Student visa instructions",
+                },
+            ),
+            RetrievedHit(
+                score=0.7,
+                nid=2,
+                meta={
+                    "source_file": "italy/DSU_Scholarship_ru.pdf",
+                    "page": 1,
+                    "text": "Scholarship application instructions",
+                },
+            ),
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("как подать на стипендию", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "Используйте инструкцию по подаче на стипендию из найденного документа.")
+        self.assertEqual(result.file, "italy/DSU_Scholarship_ru.pdf")
+
+    def test_guidance_matches_llm_file_choice_by_basename_when_retrieved_source_has_prefix(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="supported guidance", language="ru"),
+            json_response={
+                "answer": "Используйте инструкцию по подаче на стипендию из найденного документа.",
+                "file": "DSU_Scholarship_ru.pdf",
+            },
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={
+                    "source_file": "italy/DSU_Scholarship_ru.pdf",
+                    "page": 1,
+                    "text": "Scholarship application instructions",
+                },
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("как подать на стипендию", conversation_id="conv-1")
+
+        self.assertEqual(result.file, "italy/DSU_Scholarship_ru.pdf")
+
     def test_guidance_asks_follow_up_for_unknown_answer(self) -> None:
         gateway = FakeGateway(
             Classification(intent="GUIDANCE", explain="unsupported guidance", language="en"),

@@ -121,3 +121,4 @@ secrets.json
 *.csv
 __pycache__
 *.vscode
+*.docx

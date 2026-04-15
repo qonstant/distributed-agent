@@ -13,6 +13,13 @@ Supports:
 This variant adds an optional `--doc-prefix` (short `-d`) CLI argument that will be
 prepended to the `source_file` value written into the markdown frontmatter.
 
+Generated frontmatter is intentionally lean and retrieval-oriented:
+  - source_file
+  - canonical_doc_id
+  - country
+  - language
+  - doc_type
+
 Run:
     python markdown.py input.pdf -o output.md --doc-prefix italy
     python markdown.py input.pdf -o output.md -d italy
@@ -20,6 +27,7 @@ Run:
 
 Example:
     python markdown.py residence_permit_ru.pdf -o residence_permit_ru.md -d italy
+    python markdown.py -d italy
 """
 from __future__ import annotations
 import sys
@@ -28,16 +36,98 @@ import os
 import shutil
 import json
 import hashlib
-from pathlib import Path
-from datetime import datetime
+from pathlib import Path, PurePosixPath
 from typing import Optional, Tuple, List, Dict, Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_DOCX2PDF_OUTPUT_DIR = SCRIPT_DIR.parent / "docx2pdf" / "output"
+DEFAULT_DOCS_MD_DIR = SCRIPT_DIR / "docs_md"
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
+LANGUAGE_SUFFIX_RE = re.compile(r"_(kk|ru|en)$", flags=re.IGNORECASE)
+DOC_TYPE_ALIASES = {
+    "application": "application",
+    "apply": "application",
+    "cv": "cv",
+    "lom": "motivation_letter",
+    "motivation_letter": "motivation_letter",
+    "letter_of_motivation": "motivation_letter",
+    "lor": "recommendation_letter",
+    "recommendation_letter": "recommendation_letter",
+    "letter_of_recommendation": "recommendation_letter",
+    "residence_permit": "residence_permit",
+    "permit": "residence_permit",
+    "visa": "visa",
+}
 
 # ------------------ Utilities ------------------
 def ensure_dir(p: Path) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+def normalize_slug(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
+    return re.sub(r"_+", "_", normalized).strip("_")
+
+def split_language_suffix(stem: str) -> Tuple[str, str]:
+    normalized = normalize_slug(stem)
+    match = LANGUAGE_SUFFIX_RE.search(normalized)
+    if not match:
+        return normalized, ""
+    return normalized[: -len(match.group(0))], match.group(1).lower()
+
+def normalize_doc_type(value: str) -> str:
+    normalized = normalize_slug(value)
+    return DOC_TYPE_ALIASES.get(normalized, normalized)
+
+def build_source_file(original_source: str, doc_prefix: Optional[str]) -> str:
+    source = str(original_source or "").replace("\\", "/").lstrip("./")
+    source = re.sub(r"/+", "/", source).strip("/")
+    if doc_prefix:
+        prefix = str(doc_prefix).replace("\\", "/").strip("/")
+        if prefix and source and not source.startswith(f"{prefix}/"):
+            source = f"{prefix}/{source}"
+        elif prefix and not source:
+            source = prefix
+    return source
+
+def infer_country(source_file: str) -> str:
+    parts = PurePosixPath(source_file).parts
+    if len(parts) >= 2:
+        return normalize_slug(parts[0])
+    return ""
+
+def infer_language(source_file: str) -> str:
+    return split_language_suffix(PurePosixPath(source_file).stem)[1]
+
+def infer_doc_type(source_file: str) -> str:
+    stem = PurePosixPath(source_file).stem
+    base, _ = split_language_suffix(stem)
+    return normalize_doc_type(base)
+
+def infer_canonical_doc_id(source_file: str, country: str, doc_type: str) -> str:
+    stem = PurePosixPath(source_file).stem
+    base, _ = split_language_suffix(stem)
+    doc_key = normalize_doc_type(base) or normalize_slug(base) or normalize_doc_type(doc_type)
+    return normalize_slug("_".join(part for part in (country, doc_key) if part))
+
+def build_frontmatter(existing: Optional[Dict[str, Any]], original_source: str, doc_prefix: Optional[str]) -> Dict[str, Any]:
+    current = existing or {}
+    source_file = build_source_file(str(current.get("source_file") or original_source or ""), doc_prefix)
+    country = normalize_slug(str(current.get("country") or infer_country(source_file) or ""))
+    language = normalize_slug(
+        str(current.get("language") or current.get("lang") or infer_language(source_file) or "")
+    )
+    doc_type = normalize_doc_type(str(current.get("doc_type") or infer_doc_type(source_file) or ""))
+    canonical_doc_id = normalize_slug(
+        str(current.get("canonical_doc_id") or infer_canonical_doc_id(source_file, country, doc_type) or "")
+    )
+    return {
+        "source_file": source_file,
+        "canonical_doc_id": canonical_doc_id,
+        "country": country,
+        "language": language,
+        "doc_type": doc_type,
+    }
 
 def _short_hash(data: bytes, n: int = 8) -> str:
     return hashlib.sha1(data).hexdigest()[:n]
@@ -119,8 +209,7 @@ def docx_to_md_mammoth_flat(src: Path, dst: Path, verbose: bool = False) -> bool
         warnings = result.messages
     md = mdify(html, heading_style="ATX")
     md = replace_all_image_markdown_with_placeholder(md)
-    fm = {"source_file": src.name, "converted_at": datetime.utcnow().isoformat() + "Z", "notes": "mammoth->markdownify (images replaced with placeholder)"}
-    content = "---\n" + json.dumps(fm, indent=2) + "\n---\n\n"
+    content = ""
     if warnings:
         content += "<!-- mammoth warnings:\n" + "\n".join(map(str, warnings)) + "\n-->\n\n"
     content += md
@@ -236,7 +325,6 @@ def pdf_to_md_pdfplumber_flat(src: Path, dst: Path, leading_slash: bool = True, 
         raise RuntimeError("pdfplumber required. Install: pip install pdfplumber")
     ensure_dir(dst.parent)
     out_lines_all = []
-    meta = {"source_file": src.name, "converted_at": datetime.utcnow().isoformat() + "Z", "notes": "pdfplumber fallback (images replaced with placeholders)"}
     with pdfplumber.open(str(src)) as pdf:
         if verbose:
             print(f"[pdf_to_md_pdfplumber_flat] opened PDF, pages: {len(pdf.pages)}")
@@ -274,7 +362,7 @@ def pdf_to_md_pdfplumber_flat(src: Path, dst: Path, leading_slash: bool = True, 
                 if -1 in imgs_by_para:
                     for (local_path, s3_key) in imgs_by_para[-1]:
                         out_lines_all.append(IMAGE_PLACEHOLDER)
-    dst.write_text("---\n" + json.dumps(meta, indent=2) + "\n---\n\n" + "\n".join(out_lines_all), encoding="utf-8")
+    dst.write_text("\n".join(out_lines_all), encoding="utf-8")
     if verbose:
         print(f"[pdf_to_md_pdfplumber_flat] wrote {dst}")
     return True
@@ -313,25 +401,17 @@ def write_frontmatter(md_path: Path, fm: Dict[str, Any], body: str) -> None:
 
 def update_frontmatter_source(md_path: Path, original_src_name: str, doc_prefix: Optional[str], verbose: bool = False) -> None:
     """
-    Update (or create) JSON frontmatter 'source_file' with optional doc_prefix.
-    If frontmatter exists, it will be modified; if not, a new frontmatter is added.
-    original_src_name should be a filename like 'residence_permit.pdf' (used when frontmatter missing).
+    Update (or create) compact retrieval metadata frontmatter.
+    If frontmatter exists, known metadata fields are normalized and rewritten.
+    original_src_name should be a source-relative path like 'italy/residence_permit_ru.pdf'
+    when available so country/language/doc_type can be inferred automatically.
     """
     text = md_path.read_text(encoding="utf-8")
     fm, body = extract_frontmatter(text)
-    if not fm:
-        fm = {"source_file": original_src_name, "converted_at": datetime.utcnow().isoformat() + "Z", "notes": "converted (images replaced with placeholder)"}
-    # ensure source_file present
-    src_name = fm.get("source_file") or original_src_name
-    if doc_prefix:
-        doc_prefix_clean = str(doc_prefix).rstrip('/')
-        if not str(src_name).startswith(f"{doc_prefix_clean}/"):
-            src_name = f"{doc_prefix_clean}/{src_name}"
-    fm["source_file"] = src_name
-    # write back
-    write_frontmatter(md_path, fm, body)
+    normalized_fm = build_frontmatter(fm, original_src_name, doc_prefix)
+    write_frontmatter(md_path, normalized_fm, body)
     if verbose:
-        print(f"[update_frontmatter_source] source_file set to: {fm['source_file']} in {md_path}")
+        print(f"[update_frontmatter_source] metadata set to: {normalized_fm} in {md_path}")
 
 # ------------------ Orchestrator: convert input files to markdown only ------------------
 def convert_to_markdown(src: str, dst: Optional[str] = None, leading_slash: bool = True, verbose: bool = False, rasterize_pages: bool = False) -> Path:
@@ -385,6 +465,8 @@ def _iter_supported_files(src_dir: Path, output_dir: Optional[Path] = None) -> L
     for path in sorted(src_dir.rglob("*")):
         if not path.is_file():
             continue
+        if path.name.startswith("~$"):
+            continue
         if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
         if resolved_output_dir and _is_relative_to(path, resolved_output_dir):
@@ -424,7 +506,7 @@ def convert_directory_to_markdown(
                 verbose=verbose,
                 rasterize_pages=rasterize_pages,
             )
-            update_frontmatter_source(out_md, src_path.name, doc_prefix, verbose=verbose)
+            update_frontmatter_source(out_md, rel_path.as_posix(), doc_prefix, verbose=verbose)
             converted.append(out_md)
             print(f"Converted: {src_path} -> {out_md}")
         except Exception as exc:
@@ -437,8 +519,23 @@ def convert_directory_to_markdown(
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser(description="Convert PDF/DOCX/TXT/MD files to Markdown; images replaced with placeholder.")
-    p.add_argument("input", help="input file or directory")
-    p.add_argument("-o", "--output", help="output markdown file path for a file, or output directory for a directory input")
+    p.add_argument(
+        "input",
+        nargs="?",
+        default=str(DEFAULT_DOCX2PDF_OUTPUT_DIR),
+        help=(
+            "input file or directory "
+            f"(default: {DEFAULT_DOCX2PDF_OUTPUT_DIR})"
+        ),
+    )
+    p.add_argument(
+        "-o",
+        "--output",
+        help=(
+            "output markdown file path for a file, or output directory for a directory input "
+            f"(default for directory input: {DEFAULT_DOCS_MD_DIR})"
+        ),
+    )
     p.add_argument("-d", "--doc-prefix", dest="doc_prefix", default=None, help="optional path/prefix to prepend to source_file in frontmatter (e.g. 'italy')")
     p.add_argument("--no-leading-slash", action="store_true", help="ignored in this mode (kept for compatibility)")
     p.add_argument("--verbose", action="store_true", help="print debug logs")
@@ -448,9 +545,10 @@ if __name__ == "__main__":
     try:
         input_path = Path(args.input)
         if input_path.is_dir():
+            output_dir = args.output or str(DEFAULT_DOCS_MD_DIR)
             converted, errors = convert_directory_to_markdown(
                 args.input,
-                args.output,
+                output_dir,
                 doc_prefix=args.doc_prefix,
                 leading_slash=lead,
                 verbose=args.verbose,

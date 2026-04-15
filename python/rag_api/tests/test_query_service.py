@@ -68,8 +68,10 @@ class FakeGateway:
 class FakeStore:
     def __init__(self, results=None) -> None:
         self.results = results or []
+        self.search_calls = []
 
-    def search(self, query_embedding, k: int = 64):
+    def search(self, query_embedding, k: int = 64, **filters):
+        self.search_calls.append({"query_embedding": query_embedding, "k": k, **filters})
         return self.results[:k]
 
 
@@ -131,7 +133,8 @@ class QueryServiceTests(unittest.TestCase):
                 meta={"source_file": "docs/test-guide.pdf", "page": 1, "text": "sample document excerpt"},
             )
         ]
-        service = QueryService(gateway, FakeStore(results), conversation_memory=memory)
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=memory)
 
         result = service.handle_query("Which sample guide was that?", conversation_id="conv-1", preferred_name="Test User")
 
@@ -157,6 +160,8 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.attachment_follow_up_calls, [("Which sample guide was that?", history)])
         self.assertEqual(gateway.rewrite_calls, [("Which sample guide was that?", history)])
         self.assertEqual(gateway.embedded_queries, ["sample onboarding guide pdf"])
+        self.assertEqual(store.search_calls[0]["language"], "en")
+        self.assertEqual(store.search_calls[0]["query_text"], "sample onboarding guide pdf")
         self.assertEqual(len(gateway.generated_prompts), 1)
         self.assertIn("Preferred user name: Test User", gateway.generated_prompts[0])
         self.assertIn("Recent conversation context", gateway.generated_prompts[0])

@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 .PHONY: help \
-	rag-build rag-up rag-down rag-clean \
+	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
 	go-build go-up go-down go-clean \
 	db-up db-down db-smoke db-smoke-test \
 	migrateup migrateup1 migratedown migratedown1 \
@@ -13,6 +13,14 @@ RAG_IMAGE := rag
 RAG_DOCKERFILE := python/rag_api/Dockerfile
 RAG_BUILD_CTX := python/rag_api
 RAG_COMPOSE_FILE := python/rag_api/docker-compose.yml
+RAG_LEGACY_DIR := python/RAG
+RAG_MARKDOWN_TOOL := $(RAG_LEGACY_DIR)/markdown/markdown.py
+RAG_DOCX2PDF_OUTPUT_DIR := $(RAG_LEGACY_DIR)/docx2pdf/output
+RAG_MARKDOWN_DST_DIR := $(RAG_LEGACY_DIR)/markdown/docs_md
+RAG_NOTEBOOK := rag.ipynb
+RAG_NOTEBOOK_OUTPUT := rag.executed.ipynb
+RAG_OUT_DIR := out
+RAG_DOC_PREFIX ?= italy
 
 GO_IMAGE := distributed-agent-go
 GO_DOCKERFILE := golang/Dockerfile
@@ -36,6 +44,8 @@ help:
 	@echo "  make rag-up"
 	@echo "  make rag-down"
 	@echo "  make rag-clean"
+	@echo "  make rag-chunks-md"
+	@echo "  make rag-chunks-manual"
 	@echo ""
 	@echo "Go backend:"
 	@echo "  make go-build"
@@ -86,6 +96,20 @@ rag-down:
 
 rag-clean: 
 	-docker rmi -f "$(RAG_IMAGE)" || true
+
+rag-chunks-md:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	"$(PYTHON)" "$(RAG_MARKDOWN_TOOL)" "$(RAG_DOCX2PDF_OUTPUT_DIR)" -o "$(RAG_MARKDOWN_DST_DIR)" -d "$(RAG_DOC_PREFIX)"
+
+rag-chunks-manual: rag-chunks-md
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	test -n "$$OPENAI_API_KEY" || (echo "OPENAI_API_KEY is not set" && exit 1); \
+	mkdir -p "$(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)"; \
+	cd "$(RAG_LEGACY_DIR)" && \
+	"$(PYTHON)" -m jupyter nbconvert --to notebook --execute "$(RAG_NOTEBOOK)" \
+		--ExecutePreprocessor.timeout=-1 \
+		--output "$(RAG_NOTEBOOK_OUTPUT)" \
+		--output-dir "$(RAG_OUT_DIR)"
 
 # ----------------------------
 # Go backend

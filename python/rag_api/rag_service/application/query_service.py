@@ -278,7 +278,12 @@ class QueryService:
                 raise RuntimeError(f"embedding failed: {exc}") from exc
 
             try:
-                results = self._store.search(query_embedding, k=max(1, int(raw_k or 64)))
+                results = self._store.search(
+                    query_embedding,
+                    k=max(1, int(raw_k or 64)),
+                    language=language,
+                    query_text=retrieval_query,
+                )
             except Exception as exc:  # pragma: no cover - exercised through API behavior
                 raise RuntimeError(f"search failed: {exc}") from exc
 

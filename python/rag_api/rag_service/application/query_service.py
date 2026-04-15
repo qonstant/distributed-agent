@@ -16,6 +16,7 @@ from rag_service.domain.models import (
     ConversationMessage,
     QueryResult,
     RetrievalClarity,
+    RetrievalSufficiency,
     RetrievedHit,
     UsageEventRecord,
 )
@@ -177,17 +178,26 @@ def _out_of_scope_answer(language: str) -> str:
     if normalized_language == "kk":
         return (
             "Мен тек шетелде оқу бойынша сұрақтарға көмектесе аламын: оқуға түсу, "
-            "студенттік виза, шәкіртақы, CV, мотивациялық және ұсыныс хаттар."
+            "студенттік виза, шәкіртақылар, CV, мотивациялық және ұсыныс хаттар."
         )
     if normalized_language == "ru":
         return (
             "Я могу помогать только с вопросами про обучение за рубежом: поступление, "
-            "студенческую визу, стипендия, CV, мотивационное и рекомендательное письма."
+            "студенческую визу, стипендии, CV, мотивационное и рекомендательное письма."
         )
     return (
         "I can help only with education-abroad questions: admission, student visas, "
-        "DSU scholarships, scholarship, CVs, motivation letters, and recommendation letters."
+        "scholarships, CVs, motivation letters, and recommendation letters."
     )
+
+
+def _fallback_retrieval_follow_up_question(language: str) -> str:
+    normalized_language = (language or "").strip().lower()
+    if normalized_language == "kk":
+        return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: студенттік виза, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
+    if normalized_language == "ru":
+        return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, CV, стипендии, мотивационное письмо или рекомендательное письмо?"
+    return "To find the right answer in the documents, which topic do you mean: student visa, CV, scholarships, motivation letter, or recommendation letter?"
 
 
 class QueryService:
@@ -342,22 +352,36 @@ class QueryService:
             except Exception as exc:  # pragma: no cover - exercised through API behavior
                 raise RuntimeError(f"search failed: {exc}") from exc
 
-            if not results:
+            top_n = max(1, int(top_for_llm or 8))
+            top_chunks = results[:top_n]
+            rag_usage_events = self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
+            sufficiency, sufficiency_usage = self._retrieval_sufficiency(
+                retrieval_query,
+                language,
+                retrieval_intent,
+                top_chunks,
+                history,
+            )
+            sufficiency_usage_events = (
+                [usage_event_from_model_usage("classification", sufficiency_usage)]
+                if sufficiency_usage is not None
+                else []
+            )
+
+            if not results or not sufficiency.is_sufficient:
+                answer = (
+                    (sufficiency.clarifying_question or "").strip()
+                    or _fallback_retrieval_follow_up_question(language)
+                )
                 return QueryResult(
-                    answer="I don't know based on the provided documents.",
+                    answer=answer,
                     file=None,
                     classification=classification,
-                    usage_events=usage_events + self._rag_usage_events(
-                        retrieval_query,
-                        rewrite_usage,
-                        embedding_usage,
-                    ),
+                    usage_events=usage_events + rag_usage_events + sufficiency_usage_events,
                 )
 
             best_file_agg, best_chunk = _aggregate_by_file(results)
             supporting_file = _source_file_from_hit(best_chunk) or _normalize_file_choice(best_file_agg)
-            top_n = max(1, int(top_for_llm or 8))
-            top_chunks = results[:top_n]
 
             if retrieval_intent == "DOCUMENT_REQUEST":
                 prompt = prepare_document_request_prompt(
@@ -386,18 +410,28 @@ class QueryService:
             else:
                 if best_chunk is None:
                     return QueryResult(
-                        answer="I don't know based on the provided documents.",
+                        answer=_fallback_retrieval_follow_up_question(language),
                         file=None,
+                        classification=classification,
+                        usage_events=usage_events + rag_usage_events + sufficiency_usage_events,
                     )
                 chunk_meta = best_chunk.meta
                 answer = (chunk_meta.get("text") or chunk_meta.get("md") or "").strip()
 
-            if not answer:
-                answer = "I don't know based on the provided documents."
+            if not answer or not _should_attach_supporting_file(answer):
+                return QueryResult(
+                    answer=_fallback_retrieval_follow_up_question(language),
+                    file=None,
+                    classification=classification,
+                    usage_events=usage_events
+                    + rag_usage_events
+                    + sufficiency_usage_events
+                    + [self._prompt_completion_usage_event(prompt, answer, completion_usage)],
+                )
             if len(answer) > 1600:
                 answer = answer[:1600].rstrip() + "..."
 
-            file_chosen = supporting_file if _should_attach_supporting_file(answer) else None
+            file_chosen = supporting_file
             if file_chosen:
                 print(f"[query] selected supporting file={file_chosen}")
 
@@ -411,7 +445,8 @@ class QueryService:
                 file=file_chosen,
                 classification=classification,
                 usage_events=usage_events
-                + self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
+                + rag_usage_events
+                + sufficiency_usage_events
                 + [self._prompt_completion_usage_event(prompt, answer, completion_usage)],
             )
 
@@ -439,6 +474,26 @@ class QueryService:
         except Exception as exc:  # pragma: no cover - defensive fallback
             print("[clarify] clarity gateway failed:", exc)
             return RetrievalClarity(is_clear=True, standalone_query=query), None
+
+    def _retrieval_sufficiency(
+        self,
+        query: str,
+        language: str,
+        intent: str,
+        top_chunks: List[RetrievedHit],
+        history: List[ConversationMessage],
+    ) -> Tuple[RetrievalSufficiency, object]:
+        try:
+            return self._gateway.assess_retrieval_sufficiency(
+                query,
+                language,
+                intent,
+                top_chunks,
+                history=history,
+            )
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            print("[sufficiency] retrieval sufficiency gateway failed:", exc)
+            return RetrievalSufficiency(is_sufficient=True, reason=f"sufficiency failed: {exc}"), None
 
     def _load_history(self, conversation_id: Optional[str]) -> List[ConversationMessage]:
         if not conversation_id or self._conversation_memory is None:

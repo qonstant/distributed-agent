@@ -11,6 +11,8 @@ from rag_service.domain.models import (
     ConversationMessage,
     ModelUsage,
     RetrievalClarity,
+    RetrievalSufficiency,
+    RetrievedHit,
     normalize_attachment_action,
     normalize_intent,
     normalize_language,
@@ -326,6 +328,72 @@ class OpenAIGateway:
                 None,
             )
 
+    def assess_retrieval_sufficiency(
+        self,
+        query: str,
+        language_hint: str,
+        intent: str,
+        top_chunks: List[RetrievedHit],
+        history: Optional[List[ConversationMessage]] = None,
+    ) -> tuple[RetrievalSufficiency, Optional[ModelUsage]]:
+        history_block = self._history_block(history)
+        language_name = self._language_name(language_hint) or "the user's language"
+        excerpts_block = self._retrieval_excerpts_block(top_chunks)
+        prompt = (
+            "You are a retrieval sufficiency judge for a document-grounded education-abroad RAG assistant.\n"
+            "Your job is NOT to answer the user. Decide whether the retrieved excerpts are enough to answer the latest standalone query, "
+            "or whether the assistant should ask exactly one more clarifying question first.\n\n"
+            "Scope:\n"
+            " - The corpus currently covers Italy education-abroad topics: student visa, CV, DSU scholarship, motivation letter, and recommendation letter.\n"
+            " - Sufficient means the excerpts directly discuss the requested topic and contain enough information to produce a grounded answer or send the requested document.\n"
+            " - Insufficient means the excerpts are empty, mostly about the wrong document/topic, the query still lacks a detail that changes which document should be searched, or the requested information is not visible in the excerpts.\n"
+            " - If the query asks a generic unsupported country/topic but the excerpts are only Italy docs, ask a clarification instead of guessing.\n"
+            " - Prefer asking one concise clarification over answering from weak or mismatched excerpts.\n\n"
+            "Return ONLY valid JSON with exactly these keys:\n"
+            ' - "is_sufficient": boolean\n'
+            ' - "clarifying_question": string; if is_sufficient is false, ask one concise question in '
+            f"{language_name}\n"
+            ' - "reason": one short sentence\n\n'
+            "Do not mention internal retrieval, embeddings, scores, metadata, or top-K.\n\n"
+            "Examples:\n"
+            '{"is_sufficient":true,"clarifying_question":"","reason":"The excerpts directly cover Italian student visa documents."}\n'
+            '{"is_sufficient":false,"clarifying_question":"Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?","reason":"The excerpts do not identify the requested document topic."}\n\n'
+            f"{history_block}"
+            f"Classifier intent: {json.dumps(intent)}\n"
+            f"Standalone query: {json.dumps(query)}\n\n"
+            f"{excerpts_block}"
+        )
+        try:
+            response = self._client.responses.create(
+                model=self._settings.class_model,
+                input=prompt,
+                max_output_tokens=160,
+                temperature=0.0,
+            )
+            raw_text = self._resp_to_text(response) or ""
+            parsed = self._extract_json(raw_text) or {}
+            sufficiency = RetrievalSufficiency(
+                is_sufficient=self._json_bool(parsed.get("is_sufficient"), default=True),
+                clarifying_question=str(parsed.get("clarifying_question") or "").strip(),
+                reason=str(parsed.get("reason") or "").strip(),
+            )
+            if not sufficiency.is_sufficient and not sufficiency.clarifying_question:
+                sufficiency = RetrievalSufficiency(
+                    is_sufficient=False,
+                    clarifying_question=self._default_retrieval_follow_up_question(language_hint),
+                    reason=sufficiency.reason or "The retrieved excerpts are not sufficient.",
+                )
+            return sufficiency, self._extract_usage(response, self._settings.class_model)
+        except Exception as exc:
+            print("[sufficiency] retrieval sufficiency check failed:", exc)
+            return (
+                RetrievalSufficiency(
+                    is_sufficient=True,
+                    reason=f"sufficiency check failed: {exc}",
+                ),
+                None,
+            )
+
     def classify_attachment_follow_up(
         self,
         query: str,
@@ -435,6 +503,31 @@ class OpenAIGateway:
         if normalized == "ru":
             return "По какой теме вы спрашиваете: студенческая виза, CV, стипендия DSU, мотивационное письмо или рекомендательное письмо?"
         return "Which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?"
+
+    @staticmethod
+    def _default_retrieval_follow_up_question(language_hint: str) -> str:
+        normalized = normalize_language(language_hint)
+        if normalized == "kk":
+            return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: студенттік виза, CV, DSU шәкіртақысы, мотивациялық хат немесе ұсыныс хат?"
+        if normalized == "ru":
+            return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, CV, стипендия DSU, мотивационное письмо или рекомендательное письмо?"
+        return "To find the right answer in the documents, which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?"
+
+    @staticmethod
+    def _retrieval_excerpts_block(top_chunks: List[RetrievedHit]) -> str:
+        if not top_chunks:
+            return "Retrieved excerpts: none\n"
+
+        lines = ["Retrieved excerpts:"]
+        for index, hit in enumerate(top_chunks, start=1):
+            source_file = hit.meta.get("source_file") or hit.meta.get("filename") or "unknown"
+            page = hit.meta.get("page")
+            text = (hit.meta.get("text") or hit.meta.get("md") or "").strip()
+            excerpt = text[:1000].replace("\n", " ").strip()
+            lines.append(f"[{index}] file: {source_file} page: {page}")
+            lines.append(f"excerpt: {excerpt}")
+            lines.append("")
+        return "\n".join(lines)
 
     @staticmethod
     def _resp_to_text(resp: Any) -> str:

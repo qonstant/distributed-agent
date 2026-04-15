@@ -16,6 +16,7 @@ fake_openai_module.OpenAI = FakeOpenAI
 sys.modules.setdefault("openai", fake_openai_module)
 
 from rag_service.infrastructure.openai_gateway import OpenAIGateway
+from rag_service.domain.models import RetrievedHit
 
 
 class FakeResponses:
@@ -187,6 +188,49 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertFalse(clarity.is_retrieval_related)
         self.assertFalse(clarity.is_clear)
         self.assertEqual(clarity.clarifying_question, "")
+
+    def test_assess_retrieval_sufficiency_returns_sufficient_when_context_matches(self) -> None:
+        gateway, fake_client = self._gateway_with_output(
+            '{"is_sufficient":true,"clarifying_question":"","reason":"The excerpts directly cover the visa topic."}',
+            usage=SimpleNamespace(input_tokens=21, output_tokens=6, total_tokens=27),
+        )
+        chunks = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={
+                    "source_file": "italy/Visa_en.pdf",
+                    "page": 1,
+                    "text": "Italian student visa document requirements.",
+                },
+            )
+        ]
+
+        sufficiency, usage = gateway.assess_retrieval_sufficiency(
+            "What documents are needed for an Italian student visa?",
+            "en",
+            "GUIDANCE",
+            chunks,
+        )
+
+        self.assertTrue(sufficiency.is_sufficient)
+        self.assertEqual(sufficiency.clarifying_question, "")
+        self.assertIsNotNone(usage)
+        prompt = fake_client.responses.calls[0]["input"]
+        self.assertIn("retrieval sufficiency judge", prompt)
+        self.assertIn("Retrieved excerpts", prompt)
+        self.assertIn("italy/Visa_en.pdf", prompt)
+        self.assertIn('"is_sufficient": boolean', prompt)
+
+    def test_assess_retrieval_sufficiency_returns_clarifying_question_when_context_is_weak(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"is_sufficient":false,"clarifying_question":"Which education-abroad topic do you mean?","reason":"The excerpts are empty."}'
+        )
+
+        sufficiency, _ = gateway.assess_retrieval_sufficiency("how does it work?", "en", "GUIDANCE", [])
+
+        self.assertFalse(sufficiency.is_sufficient)
+        self.assertEqual(sufficiency.clarifying_question, "Which education-abroad topic do you mean?")
 
 
 if __name__ == "__main__":

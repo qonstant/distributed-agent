@@ -15,6 +15,7 @@ from rag_service.domain.models import (
     ModelUsage,
     QueryResult,
     RetrievalClarity,
+    RetrievalSufficiency,
     RetrievedHit,
 )
 from rag_service.infrastructure.prompts import prepare_document_request_prompt
@@ -26,15 +27,18 @@ class FakeGateway:
         classification: Classification,
         attachment_action: str = "",
         clarity: RetrievalClarity | None = None,
+        sufficiency: RetrievalSufficiency | None = None,
         json_response=None,
     ) -> None:
         self.classification = classification
         self.attachment_action = attachment_action
         self.clarity = clarity
+        self.sufficiency = sufficiency
         self.json_response = json_response
         self.classify_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.attachment_follow_up_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.clarity_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
+        self.sufficiency_calls: list[tuple[str, str, str, list[RetrievedHit], list[ConversationMessage]]] = []
         self.answer_factual_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
         self.rewrite_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.embedded_queries: list[str] = []
@@ -44,6 +48,7 @@ class FakeGateway:
         self.greeting_usage = ModelUsage(model="gpt-4o-mini", input_tokens=10, output_tokens=3, total_tokens=13)
         self.factual_usage = ModelUsage(model="gpt-4o-mini", input_tokens=16, output_tokens=7, total_tokens=23)
         self.clarity_usage = ModelUsage(model="gpt-4o-mini", input_tokens=18, output_tokens=5, total_tokens=23)
+        self.sufficiency_usage = ModelUsage(model="gpt-4o-mini", input_tokens=22, output_tokens=6, total_tokens=28)
         self.rewrite_usage = ModelUsage(model="gpt-4o-mini", input_tokens=20, output_tokens=4, total_tokens=24)
         self.embedding_usage = ModelUsage(model="text-embedding-3-small", input_tokens=9, output_tokens=0, total_tokens=9)
         self.json_usage = ModelUsage(model="gpt-4o-mini", input_tokens=30, output_tokens=8, total_tokens=38)
@@ -74,6 +79,12 @@ class FakeGateway:
         if history:
             return RetrievalClarity(is_clear=True, standalone_query="sample onboarding guide pdf"), self.clarity_usage
         return RetrievalClarity(is_clear=True, standalone_query=query), self.clarity_usage
+
+    def assess_retrieval_sufficiency(self, query: str, language_hint: str, intent: str, top_chunks, history=None):
+        self.sufficiency_calls.append((query, language_hint, intent, top_chunks, history or []))
+        if self.sufficiency is not None:
+            return self.sufficiency, self.sufficiency_usage
+        return RetrievalSufficiency(is_sufficient=True, reason="retrieved excerpts are enough"), self.sufficiency_usage
 
     def embed_text(self, text: str):
         self.embedded_queries.append(text)
@@ -170,6 +181,7 @@ class QueryServiceTests(unittest.TestCase):
                     usage_event_from_model_usage("classification", gateway.attachment_action_usage),
                     usage_event_from_model_usage("classification", gateway.clarity_usage),
                     usage_event_from_model_usage("embedding", gateway.embedding_usage),
+                    usage_event_from_model_usage("classification", gateway.sufficiency_usage),
                     usage_event_from_model_usage("chat_completion", gateway.json_usage),
                 ],
             ),
@@ -180,6 +192,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.embedded_queries, ["sample onboarding guide pdf"])
         self.assertEqual(store.search_calls[0]["language"], "en")
         self.assertEqual(store.search_calls[0]["query_text"], "sample onboarding guide pdf")
+        self.assertEqual(gateway.sufficiency_calls, [("sample onboarding guide pdf", "en", "DOCUMENT_REQUEST", results, history)])
         self.assertEqual(len(gateway.generated_prompts), 1)
         self.assertIn("Preferred user name: Test User", gateway.generated_prompts[0])
         self.assertIn("Recent conversation context", gateway.generated_prompts[0])
@@ -233,7 +246,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(result.answer, "Use the visa instructions from the retrieved document.")
         self.assertEqual(result.file, "italy/Visa_en.pdf")
 
-    def test_guidance_does_not_attach_file_for_unknown_answer(self) -> None:
+    def test_guidance_asks_follow_up_for_unknown_answer(self) -> None:
         gateway = FakeGateway(
             Classification(intent="GUIDANCE", explain="unsupported guidance", language="en"),
             json_response={"answer": "I don't know based on the provided documents.", "file": None},
@@ -250,8 +263,59 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("unsupported question", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "I don't know based on the provided documents.")
+        self.assertEqual(
+            result.answer,
+            "To find the right answer in the documents, which topic do you mean: student visa, CV, DSU scholarship, motivation letter, or recommendation letter?",
+        )
         self.assertIsNone(result.file)
+
+    def test_guidance_asks_post_retrieval_question_when_results_are_insufficient(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="supported guidance", language="en"),
+            sufficiency=RetrievalSufficiency(
+                is_sufficient=False,
+                clarifying_question="Are you asking about the student visa or DSU scholarship?",
+                reason="The retrieved excerpts do not resolve the topic.",
+            ),
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/Visa_en.pdf", "page": 1, "text": "student visa excerpt"},
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("how does it work?", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "Are you asking about the student visa or DSU scholarship?")
+        self.assertIsNone(result.file)
+        self.assertEqual(gateway.sufficiency_calls, [("how does it work?", "en", "GUIDANCE", results, [])])
+        self.assertEqual(gateway.generated_prompts, [])
+
+    def test_guidance_asks_post_retrieval_question_when_no_results(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="supported guidance", language="ru"),
+            sufficiency=RetrievalSufficiency(
+                is_sufficient=False,
+                clarifying_question="Уточните, пожалуйста, вы спрашиваете про студенческую визу, CV или стипендию DSU?",
+                reason="No retrieved excerpts are available.",
+            ),
+        )
+        store = FakeStore([])
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("что нужно?", conversation_id="conv-1")
+
+        self.assertEqual(
+            result.answer,
+            "Уточните, пожалуйста, вы спрашиваете про студенческую визу, CV или стипендию DSU?",
+        )
+        self.assertIsNone(result.file)
+        self.assertEqual(gateway.sufficiency_calls, [("что нужно?", "ru", "GUIDANCE", [], [])])
+        self.assertEqual(gateway.generated_prompts, [])
 
     def test_guidance_asks_clarifying_question_without_search_when_unclear(self) -> None:
         gateway = FakeGateway(

@@ -120,6 +120,13 @@ class RetrievalClarity:
 
 
 @dataclass(frozen=True)
+class RetrievalSufficiency:
+    is_sufficient: bool
+    clarifying_question: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class UsageEventRecord:
     event_type: str
     input_tokens: int = 0

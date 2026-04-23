@@ -36,6 +36,7 @@ Production:
 - `ADMIN_BIND_HOST` optional, defaults to `127.0.0.1`
 - `ADMIN_HOST_PORT` optional, defaults to `3910`
 - `ADMIN_CORS_ORIGINS` optional, comma-separated, defaults to `*`
+- `ADMIN_COOKIE_SECURE` optional, defaults to `true` in CI deploy
 
 Test branch equivalents use `_TEST` suffix:
 
@@ -47,6 +48,7 @@ Test branch equivalents use `_TEST` suffix:
 - `ADMIN_BIND_HOST_TEST` optional, defaults to `127.0.0.1`
 - `ADMIN_HOST_PORT_TEST` optional
 - `ADMIN_CORS_ORIGINS_TEST` optional
+- `ADMIN_COOKIE_SECURE_TEST` optional, defaults to `true` in CI deploy
 
 `ADMIN_DATABASE_URL` must use SQLAlchemy's asyncpg dialect, for example:
 

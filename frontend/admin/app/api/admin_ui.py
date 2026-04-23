@@ -1,3 +1,4 @@
+import os
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -29,6 +30,13 @@ from ..schemas import ClassifierIntent
 router = APIRouter(prefix="/admin-ui", tags=["admin-ui"], include_in_schema=False)
 templates = Jinja2Templates(directory="app/templates")
 CLASSIFIER_INTENTS = [intent.value for intent in ClassifierIntent]
+
+
+def cookie_secure_enabled() -> bool:
+    raw = os.getenv("ADMIN_COOKIE_SECURE")
+    if raw is not None:
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("APP_ENV", "development").strip().lower() in {"prod", "production"}
 
 
 def render_template(request: Request, name: str, context: dict, status_code: int = 200):
@@ -121,7 +129,7 @@ async def login(
         key="admin_token",
         value=access_token,
         httponly=True,
-        secure=False,
+        secure=cookie_secure_enabled(),
         samesite="lax",
     )
     return response

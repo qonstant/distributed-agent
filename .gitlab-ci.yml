@@ -21,6 +21,8 @@ variables:
   BOT_CONTAINER_NAME: "study-bot"
   GOLANG_IMAGE_NAME: "golang-agent:latest"
   GOLANG_CONTAINER_NAME: "golang-agent"
+  ADMIN_IMAGE_NAME: "admin-panel:latest"
+  ADMIN_CONTAINER_NAME: "admin-panel"
 
 test-golang-prod:
   stage: test
@@ -380,4 +382,113 @@ prepare-golang-db-files-test:
     - chmod 600 /opt/golang-db/.env
     - echo "Copied DB files to /opt/golang-db"
     - find /opt/golang-db -maxdepth 3 -type f | sort
+
+################################################################################
+# ADMIN PANEL (frontend/admin)
+################################################################################
+build-admin-image-prod:
+  stage: build
+  tags:
+    - vps2
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/admin/Dockerfile
+        - frontend/admin/docker-compose.yml
+  script:
+    - cd frontend/admin
+    - docker build --no-cache -t "${ADMIN_IMAGE_NAME}" .
+
+build-admin-image-test:
+  stage: build
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/admin/Dockerfile
+        - frontend/admin/docker-compose.yml
+  script:
+    - cd frontend/admin
+    - docker build --no-cache -t "${ADMIN_IMAGE_NAME}" .
+
+deploy-admin-prod:
+  stage: deploy
+  tags:
+    - vps2
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/admin/Dockerfile
+        - frontend/admin/docker-compose.yml
+  script:
+    - cd frontend/admin
+    - 'test -n "${ADMIN_DATABASE_URL}" || (echo "ADMIN_DATABASE_URL is not set" && exit 1)'
+    - 'test -n "${ADMIN_SECRET_KEY}" || (echo "ADMIN_SECRET_KEY is not set" && exit 1)'
+    - 'test -n "${ADMIN_USERNAME}" || (echo "ADMIN_USERNAME is not set" && exit 1)'
+    - 'test -n "${ADMIN_PASSWORD}" || (echo "ADMIN_PASSWORD is not set" && exit 1)'
+    - 'printf "APP_ENV=production\n" > .env'
+    - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_IMAGE_NAME}" >> .env'
+    - 'printf "ADMIN_CONTAINER_NAME=%s\n" "${ADMIN_CONTAINER_NAME}" >> .env'
+    - 'printf "ADMIN_BIND_HOST=%s\n" "${ADMIN_BIND_HOST:-127.0.0.1}" >> .env'
+    - 'printf "ADMIN_HOST_PORT=%s\n" "${ADMIN_HOST_PORT:-3910}" >> .env'
+    - 'printf "DATABASE_URL=%s\n" "${ADMIN_DATABASE_URL}" >> .env'
+    - 'printf "SECRET_KEY=%s\n" "${ADMIN_SECRET_KEY}" >> .env'
+    - 'printf "ACCESS_TOKEN_EXPIRE_MINUTES=%s\n" "${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES:-60}" >> .env'
+    - 'printf "ALGORITHM=%s\n" "${ADMIN_ALGORITHM:-HS256}" >> .env'
+    - 'printf "ADMIN_USERNAME=%s\n" "${ADMIN_USERNAME}" >> .env'
+    - 'printf "ADMIN_PASSWORD=%s\n" "${ADMIN_PASSWORD}" >> .env'
+    - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS:-*}" >> .env'
+    - chmod 600 .env
+    - docker-compose build web
+    - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" alembic upgrade head
+    - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" python scripts/create_admin.py
+    - docker-compose down --remove-orphans || true
+    - docker-compose up -d --no-build web
+    - sleep 3
+    - 'docker logs "${ADMIN_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${ADMIN_CONTAINER_NAME}" python -c "import urllib.request; print(urllib.request.urlopen(''http://127.0.0.1:8000/health'', timeout=3).read().decode())" || true'
+    - 'shred -u .env || rm -f .env || true'
+
+deploy-admin-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/admin/Dockerfile
+        - frontend/admin/docker-compose.yml
+  script:
+    - cd frontend/admin
+    - 'test -n "${ADMIN_DATABASE_URL_TEST}" || (echo "ADMIN_DATABASE_URL_TEST is not set" && exit 1)'
+    - 'test -n "${ADMIN_SECRET_KEY_TEST}" || (echo "ADMIN_SECRET_KEY_TEST is not set" && exit 1)'
+    - 'test -n "${ADMIN_USERNAME_TEST}" || (echo "ADMIN_USERNAME_TEST is not set" && exit 1)'
+    - 'test -n "${ADMIN_PASSWORD_TEST}" || (echo "ADMIN_PASSWORD_TEST is not set" && exit 1)'
+    - 'printf "APP_ENV=production\n" > .env'
+    - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_IMAGE_NAME}" >> .env'
+    - 'printf "ADMIN_CONTAINER_NAME=%s\n" "${ADMIN_CONTAINER_NAME}" >> .env'
+    - 'printf "ADMIN_BIND_HOST=%s\n" "${ADMIN_BIND_HOST_TEST:-127.0.0.1}" >> .env'
+    - 'printf "ADMIN_HOST_PORT=%s\n" "${ADMIN_HOST_PORT_TEST:-3910}" >> .env'
+    - 'printf "DATABASE_URL=%s\n" "${ADMIN_DATABASE_URL_TEST}" >> .env'
+    - 'printf "SECRET_KEY=%s\n" "${ADMIN_SECRET_KEY_TEST}" >> .env'
+    - 'printf "ACCESS_TOKEN_EXPIRE_MINUTES=%s\n" "${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES_TEST:-60}" >> .env'
+    - 'printf "ALGORITHM=%s\n" "${ADMIN_ALGORITHM_TEST:-HS256}" >> .env'
+    - 'printf "ADMIN_USERNAME=%s\n" "${ADMIN_USERNAME_TEST}" >> .env'
+    - 'printf "ADMIN_PASSWORD=%s\n" "${ADMIN_PASSWORD_TEST}" >> .env'
+    - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS_TEST:-*}" >> .env'
+    - chmod 600 .env
+    - docker-compose build web
+    - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" alembic upgrade head
+    - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" python scripts/create_admin.py
+    - docker-compose down --remove-orphans || true
+    - docker-compose up -d --no-build web
+    - sleep 3
+    - 'docker logs "${ADMIN_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${ADMIN_CONTAINER_NAME}" python -c "import urllib.request; print(urllib.request.urlopen(''http://127.0.0.1:8000/health'', timeout=3).read().decode())" || true'
+    - 'shred -u .env || rm -f .env || true'
     

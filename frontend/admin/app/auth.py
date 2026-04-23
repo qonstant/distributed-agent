@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional
 
+from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -10,11 +11,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import User
 
-SECRET_KEY = os.getenv("SECRET_KEY", "supersecret")
+load_dotenv()
+
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+IS_PRODUCTION = APP_ENV in {"prod", "production"}
+
+
+def _required_env(name: str, default: str = "") -> str:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    if IS_PRODUCTION:
+        raise RuntimeError(f"{name} is required when APP_ENV=production")
+    return default
+
+
+SECRET_KEY = _required_env("SECRET_KEY", "dev-secret-change-me")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", os.getenv("INITIAL_ADMIN_USERNAME", "Unibothelper"))
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", os.getenv("INITIAL_ADMIN_PASSWORD", "unibot123456"))
+ADMIN_USERNAME = _required_env(
+    "ADMIN_USERNAME",
+    os.getenv("INITIAL_ADMIN_USERNAME", "Unibothelper"),
+)
+ADMIN_PASSWORD = _required_env(
+    "ADMIN_PASSWORD",
+    os.getenv("INITIAL_ADMIN_PASSWORD", "unibot123456"),
+)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/admin/token")
 
 

@@ -1,19 +1,33 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import public, admin, admin_auth
-from app.api import admin_ui
+from .api import admin_ui
 
 app = FastAPI(title="Telegram Access Control (Async)")
 
-# CORS (в dev можно "*", в проде — конкретные домены)
+
+def _cors_origins() -> list[str]:
+    raw = os.getenv("CORS_ALLOW_ORIGINS", os.getenv("ADMIN_CORS_ORIGINS", "*"))
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    return origins or ["*"]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ⚠ заменить в production
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health", include_in_schema=False)
+async def health():
+    return {"status": "ok"}
+
 
 # Routers
 app.include_router(public.router)

@@ -6,8 +6,7 @@ alembic
 python-dotenv
 python-multipart
 pyjwt
-pydantic
+pydantic<2
 httpx
 python-jose[cryptography]
 jinja2
-

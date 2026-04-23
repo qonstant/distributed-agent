@@ -3,6 +3,7 @@ import os
 import random
 import sys
 
+from dotenv import load_dotenv
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -11,10 +12,23 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.db import AsyncSessionLocal
 from app.models import User
 
-INITIAL_ADMIN_USERNAME = os.getenv(
-    "ADMIN_USERNAME",
-    os.getenv("INITIAL_ADMIN_USERNAME", "Unibothelper"),
-)
+load_dotenv()
+
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+IS_PRODUCTION = APP_ENV in {"prod", "production"}
+
+
+def required_admin_username() -> str:
+    username = os.getenv("ADMIN_USERNAME") or os.getenv("INITIAL_ADMIN_USERNAME")
+    username = (username or "").strip()
+    if username:
+        return username
+    if IS_PRODUCTION:
+        raise RuntimeError("ADMIN_USERNAME is required when APP_ENV=production")
+    return "Unibothelper"
+
+
+INITIAL_ADMIN_USERNAME = required_admin_username()
 
 
 async def generate_fake_telegram_id(session) -> int:
@@ -35,6 +49,12 @@ async def create_admin():
         existing = result.scalars().first()
 
         if existing:
+            if not existing.is_admin:
+                existing.is_admin = True
+                await session.commit()
+                print(f"Existing user '{INITIAL_ADMIN_USERNAME}' promoted to admin")
+                return
+
             print(f"Admin '{INITIAL_ADMIN_USERNAME}' already exists")
             return
 

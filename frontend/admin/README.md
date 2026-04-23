@@ -7,7 +7,7 @@ FastAPI admin panel for user access, conversations, usage events, and audit acti
 ```bash
 cp .env.example .env
 docker-compose --profile local up -d --build
-docker-compose run --rm web alembic upgrade head
+docker-compose run --rm web python scripts/check_schema.py
 docker-compose run --rm web python scripts/create_admin.py
 ```
 
@@ -51,6 +51,14 @@ Test branch equivalents use `_TEST` suffix:
 ```text
 postgresql+asyncpg://postgres:<password>@10.66.66.1:5432/postgres
 ```
+
+The admin panel uses the same database schema as the Go bot. Deploy validates
+that the Go migrations have already created the required tables, then creates or
+promotes the configured admin user. It does not run admin-owned Alembic
+migrations against the shared bot database.
+
+Admin Alembic migrations are disabled by default with a runtime guard. The
+admin app should not create, drop, or alter tables in deployed environments.
 
 Keep `ADMIN_BIND_HOST=127.0.0.1` unless you intentionally put the admin panel
 behind a private reverse proxy, VPN, or firewall. Setting it to `0.0.0.0` exposes

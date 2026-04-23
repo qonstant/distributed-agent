@@ -444,7 +444,7 @@ deploy-admin-prod:
     - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS:-*}" >> .env'
     - chmod 600 .env
     - docker-compose build web
-    - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" alembic upgrade head
+    - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" python scripts/check_schema.py
     - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" python scripts/create_admin.py
     - docker-compose down --remove-orphans || true
     - docker-compose up -d --no-build web
@@ -483,7 +483,7 @@ deploy-admin-test:
     - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS_TEST:-*}" >> .env'
     - chmod 600 .env
     - docker-compose build web
-    - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" alembic upgrade head
+    - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" python scripts/check_schema.py
     - docker run --rm --env-file .env --network host "${ADMIN_IMAGE_NAME}" python scripts/create_admin.py
     - docker-compose down --remove-orphans || true
     - docker-compose up -d --no-build web

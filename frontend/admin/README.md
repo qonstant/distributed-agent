@@ -32,6 +32,7 @@ Production:
 - `ADMIN_SECRET_KEY`
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
+- `ADMIN_TELEGRAM_ID`
 - `ADMIN_BIND_HOST` optional, defaults to `127.0.0.1`
 - `ADMIN_HOST_PORT` optional, defaults to `3910`
 - `ADMIN_CORS_ORIGINS` optional, comma-separated, defaults to `*`
@@ -42,6 +43,7 @@ Test branch equivalents use `_TEST` suffix:
 - `ADMIN_SECRET_KEY_TEST`
 - `ADMIN_USERNAME_TEST`
 - `ADMIN_PASSWORD_TEST`
+- `ADMIN_TELEGRAM_ID_TEST`
 - `ADMIN_BIND_HOST_TEST` optional, defaults to `127.0.0.1`
 - `ADMIN_HOST_PORT_TEST` optional
 - `ADMIN_CORS_ORIGINS_TEST` optional
@@ -54,11 +56,14 @@ postgresql+asyncpg://postgres:<password>@10.66.66.1:5432/postgres
 
 The admin panel uses the same database schema as the Go bot. Deploy validates
 that the Go migrations have already created the required tables, then creates or
-promotes the configured admin user. It does not run admin-owned Alembic
-migrations against the shared bot database.
+promotes the configured admin user. It does not own database migrations. If the
+schema needs to change, add the migration under `golang/db/migrations`.
 
-Admin Alembic migrations are disabled by default with a runtime guard. The
-admin app should not create, drop, or alter tables in deployed environments.
+`ADMIN_TELEGRAM_ID` should be the real Telegram user ID of the admin account.
+The deploy script promotes that existing user if present, or creates an admin
+row with that Telegram ID if it does not exist yet. `ADMIN_USERNAME` and
+`ADMIN_PASSWORD` are admin panel login credentials; `ADMIN_USERNAME` does not
+need to match the Telegram username stored in the `users` table.
 
 Keep `ADMIN_BIND_HOST=127.0.0.1` unless you intentionally put the admin panel
 behind a private reverse proxy, VPN, or firewall. Setting it to `0.0.0.0` exposes

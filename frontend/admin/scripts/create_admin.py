@@ -1,6 +1,5 @@
 import asyncio
 import os
-import random
 import sys
 
 from dotenv import load_dotenv
@@ -31,52 +30,86 @@ def required_admin_username() -> str:
 INITIAL_ADMIN_USERNAME = required_admin_username()
 
 
-async def generate_fake_telegram_id(session) -> int:
-    while True:
-        fake_id = random.randint(10**9, 10**10 - 1)
-        result = await session.execute(
-            select(User).where(User.telegram_id == fake_id)
-        )
-        if not result.scalars().first():
-            return fake_id
+def required_admin_telegram_id() -> int:
+    raw = os.getenv("ADMIN_TELEGRAM_ID") or os.getenv("INITIAL_ADMIN_TELEGRAM_ID")
+    raw = (raw or "").strip()
+    if not raw:
+        if IS_PRODUCTION:
+            raise RuntimeError("ADMIN_TELEGRAM_ID is required when APP_ENV=production")
+        return -1
+
+    try:
+        telegram_id = int(raw)
+    except ValueError as exc:
+        raise RuntimeError("ADMIN_TELEGRAM_ID must be an integer") from exc
+
+    if telegram_id == 0:
+        raise RuntimeError("ADMIN_TELEGRAM_ID must not be 0")
+    if IS_PRODUCTION and telegram_id < 0:
+        raise RuntimeError("ADMIN_TELEGRAM_ID must be a real positive Telegram user ID")
+
+    return telegram_id
+
+
+ADMIN_TELEGRAM_ID = required_admin_telegram_id()
+
+
+async def save_admin(session, user: User, action: str) -> None:
+    if not user.username:
+        user.username = INITIAL_ADMIN_USERNAME
+    user.telegram_id = ADMIN_TELEGRAM_ID
+    user.is_admin = True
+    user.is_blocked = False
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise RuntimeError(
+            "Failed to save admin user. Check that ADMIN_TELEGRAM_ID is not "
+            "already used by another user."
+        ) from exc
+
+    print(action)
+    print(f"Username: {INITIAL_ADMIN_USERNAME}")
+    print(f"Telegram ID: {ADMIN_TELEGRAM_ID}")
 
 
 async def create_admin():
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(User).where(User.username == INITIAL_ADMIN_USERNAME)
+            select(User).where(User.telegram_id == ADMIN_TELEGRAM_ID)
         )
         existing = result.scalars().first()
 
         if existing:
-            if not existing.is_admin:
-                existing.is_admin = True
-                await session.commit()
-                print(f"Existing user '{INITIAL_ADMIN_USERNAME}' promoted to admin")
-                return
-
-            print(f"Admin '{INITIAL_ADMIN_USERNAME}' already exists")
+            await save_admin(session, existing, "Existing Telegram user promoted to admin")
             return
 
-        telegram_id = await generate_fake_telegram_id(session)
+        result = await session.execute(
+            select(User).where(
+                User.username == INITIAL_ADMIN_USERNAME,
+                User.is_admin.is_(True),
+            )
+        )
+        existing_admin = result.scalars().first()
+        if existing_admin:
+            await save_admin(
+                session,
+                existing_admin,
+                "Existing admin user updated with configured Telegram ID",
+            )
+            return
 
         admin_user = User(
             username=INITIAL_ADMIN_USERNAME,
-            telegram_id=telegram_id,
+            telegram_id=ADMIN_TELEGRAM_ID,
             is_admin=True,
             is_blocked=False,
         )
 
         session.add(admin_user)
-
-        try:
-            await session.commit()
-            print("Admin created successfully")
-            print(f"Username: {INITIAL_ADMIN_USERNAME}")
-            print(f"Telegram ID (fake): {telegram_id}")
-        except IntegrityError as exc:
-            await session.rollback()
-            print("Error creating admin:", exc)
+        await save_admin(session, admin_user, "Admin created successfully")
 
 
 if __name__ == "__main__":

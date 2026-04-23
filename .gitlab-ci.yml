@@ -430,6 +430,7 @@ deploy-admin-prod:
     - 'test -n "${ADMIN_SECRET_KEY}" || (echo "ADMIN_SECRET_KEY is not set" && exit 1)'
     - 'test -n "${ADMIN_USERNAME}" || (echo "ADMIN_USERNAME is not set" && exit 1)'
     - 'test -n "${ADMIN_PASSWORD}" || (echo "ADMIN_PASSWORD is not set" && exit 1)'
+    - 'test -n "${ADMIN_TELEGRAM_ID}" || (echo "ADMIN_TELEGRAM_ID is not set" && exit 1)'
     - 'printf "APP_ENV=production\n" > .env'
     - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_IMAGE_NAME}" >> .env'
     - 'printf "ADMIN_CONTAINER_NAME=%s\n" "${ADMIN_CONTAINER_NAME}" >> .env'
@@ -441,6 +442,7 @@ deploy-admin-prod:
     - 'printf "ALGORITHM=%s\n" "${ADMIN_ALGORITHM:-HS256}" >> .env'
     - 'printf "ADMIN_USERNAME=%s\n" "${ADMIN_USERNAME}" >> .env'
     - 'printf "ADMIN_PASSWORD=%s\n" "${ADMIN_PASSWORD}" >> .env'
+    - 'printf "ADMIN_TELEGRAM_ID=%s\n" "${ADMIN_TELEGRAM_ID}" >> .env'
     - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS:-*}" >> .env'
     - chmod 600 .env
     - docker-compose build web
@@ -469,6 +471,7 @@ deploy-admin-test:
     - 'test -n "${ADMIN_SECRET_KEY_TEST}" || (echo "ADMIN_SECRET_KEY_TEST is not set" && exit 1)'
     - 'test -n "${ADMIN_USERNAME_TEST}" || (echo "ADMIN_USERNAME_TEST is not set" && exit 1)'
     - 'test -n "${ADMIN_PASSWORD_TEST}" || (echo "ADMIN_PASSWORD_TEST is not set" && exit 1)'
+    - 'test -n "${ADMIN_TELEGRAM_ID_TEST}" || (echo "ADMIN_TELEGRAM_ID_TEST is not set" && exit 1)'
     - 'printf "APP_ENV=production\n" > .env'
     - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_IMAGE_NAME}" >> .env'
     - 'printf "ADMIN_CONTAINER_NAME=%s\n" "${ADMIN_CONTAINER_NAME}" >> .env'
@@ -480,6 +483,7 @@ deploy-admin-test:
     - 'printf "ALGORITHM=%s\n" "${ADMIN_ALGORITHM_TEST:-HS256}" >> .env'
     - 'printf "ADMIN_USERNAME=%s\n" "${ADMIN_USERNAME_TEST}" >> .env'
     - 'printf "ADMIN_PASSWORD=%s\n" "${ADMIN_PASSWORD_TEST}" >> .env'
+    - 'printf "ADMIN_TELEGRAM_ID=%s\n" "${ADMIN_TELEGRAM_ID_TEST}" >> .env'
     - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS_TEST:-*}" >> .env'
     - chmod 600 .env
     - docker-compose build web

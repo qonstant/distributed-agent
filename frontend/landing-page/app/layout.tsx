@@ -1,11 +1,8 @@
 import type React from "react"
 import type { Metadata } from "next"
 import Script from "next/script"
-import { Geist } from "next/font/google"
 import { Analytics } from "@vercel/analytics/next"
 import "./globals.css"
-
-const _geist = Geist({ subsets: ["latin", "cyrillic"] })
 
 export const metadata: Metadata = {
   title: "nomadmit - Your Path to European Education",
@@ -28,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={_geist.className}>
+    <html lang="en">
       <head>
         {/* Remove extension-injected attributes BEFORE React hydration */}
         <Script id="remove-ext-attrs" strategy="beforeInteractive">

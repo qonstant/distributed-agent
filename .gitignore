@@ -122,3 +122,5 @@ secrets.json
 __pycache__
 *.vscode
 *.docx
+alembic.ini
+alembic/

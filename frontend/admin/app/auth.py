@@ -27,21 +27,6 @@ def _required_env(name: str, default: str = "") -> str:
     return default
 
 
-def _required_int_env(name: str, default: str = "") -> int:
-    raw = _required_env(name, default)
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise RuntimeError(f"{name} must be an integer") from exc
-
-    if value == 0:
-        raise RuntimeError(f"{name} must not be 0")
-    if IS_PRODUCTION and value < 0:
-        raise RuntimeError(f"{name} must be a real positive Telegram user ID")
-
-    return value
-
-
 SECRET_KEY = _required_env("SECRET_KEY", "dev-secret-change-me")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
@@ -53,7 +38,6 @@ ADMIN_PASSWORD = _required_env(
     "ADMIN_PASSWORD",
     os.getenv("INITIAL_ADMIN_PASSWORD", "unibot123456"),
 )
-ADMIN_TELEGRAM_ID = _required_int_env("ADMIN_TELEGRAM_ID", "-1")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/admin/token")
 
 
@@ -68,10 +52,7 @@ async def authenticate_admin(db: AsyncSession, username: str, password: str):
         return None
 
     result = await db.execute(
-        select(User).where(
-            User.telegram_id == ADMIN_TELEGRAM_ID,
-            User.is_admin.is_(True),
-        )
+        select(User).where(User.username == username, User.is_admin.is_(True))
     )
     user = result.scalars().first()
 

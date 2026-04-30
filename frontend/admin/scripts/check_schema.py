@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("ADMIN_DATABASE_URL") or os.getenv("DATABASE_URL")
 
 REQUIRED_COLUMNS = {
     "users": {
@@ -103,7 +103,7 @@ def inspect_schema(connection) -> list[str]:
 
 async def main() -> int:
     if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is not set")
+        raise RuntimeError("ADMIN_DATABASE_URL or DATABASE_URL is not set")
 
     engine = create_async_engine(DATABASE_URL, future=True, pool_pre_ping=True)
     try:

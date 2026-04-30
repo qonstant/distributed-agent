@@ -23,6 +23,40 @@ variables:
   GOLANG_CONTAINER_NAME: "golang-agent"
   ADMIN_IMAGE_NAME: "admin-panel:latest"
   ADMIN_CONTAINER_NAME: "admin-panel"
+  LANDING_IMAGE_NAME: "landing-page:latest"
+  LANDING_CONTAINER_NAME: "landing-page"
+
+test-landing-prod:
+  stage: test
+  tags:
+    - vps1
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/landing-page/package.json
+  script:
+    - cd frontend/landing-page
+    - corepack enable
+    - pnpm install --frozen-lockfile
+    - pnpm exec tsc --noEmit
+    - pnpm build
+
+test-landing-test:
+  stage: test
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/landing-page/package.json
+  script:
+    - cd frontend/landing-page
+    - corepack enable
+    - pnpm install --frozen-lockfile
+    - pnpm exec tsc --noEmit
+    - pnpm build
 
 test-golang-prod:
   stage: test
@@ -185,6 +219,93 @@ deploy-rag-test:
       for name, count in sorted(counts.items()):
           print(f"[rag] {count:3d}  {name}")
       PY
+    - 'shred -u .env || rm -f .env || true'
+
+################################################################################
+# LANDING PAGE (frontend/landing-page)
+################################################################################
+build-landing-image-prod:
+  stage: build
+  tags:
+    - vps1
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/landing-page/Dockerfile
+        - frontend/landing-page/docker-compose.yml
+  script:
+    - cd frontend/landing-page
+    - 'LANDING_DEPLOY_IMAGE="landing-page:${CI_COMMIT_SHORT_SHA}"'
+    - 'docker build --no-cache --build-arg NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL:-}" --label app=landing-page --label git_sha="${CI_COMMIT_SHA}" -t "${LANDING_DEPLOY_IMAGE}" .'
+
+build-landing-image-test:
+  stage: build
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/landing-page/Dockerfile
+        - frontend/landing-page/docker-compose.yml
+  script:
+    - cd frontend/landing-page
+    - 'LANDING_DEPLOY_IMAGE="landing-page:test-${CI_COMMIT_SHORT_SHA}"'
+    - 'docker build --no-cache --build-arg NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL_TEST:-}" --label app=landing-page --label git_sha="${CI_COMMIT_SHA}" -t "${LANDING_DEPLOY_IMAGE}" .'
+
+deploy-landing-prod:
+  stage: deploy
+  tags:
+    - vps1
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/landing-page/Dockerfile
+        - frontend/landing-page/docker-compose.yml
+  script:
+    - cd frontend/landing-page
+    - 'LANDING_DEPLOY_IMAGE="landing-page:${CI_COMMIT_SHORT_SHA}"'
+    - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_DEPLOY_IMAGE}" > .env'
+    - 'printf "LANDING_CONTAINER_NAME=%s\n" "${LANDING_CONTAINER_NAME}" >> .env'
+    - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST:-127.0.0.1}" >> .env'
+    - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT:-3000}" >> .env'
+    - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${LANDING_NEXT_PUBLIC_SCRIPT_URL:-}" >> .env'
+    - chmod 600 .env
+    - docker-compose down --remove-orphans || true
+    - docker-compose up -d --no-build web
+    - sleep 3
+    - 'docker logs "${LANDING_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${LANDING_CONTAINER_NAME}" node -e "fetch(''http://127.0.0.1:3000/api/health'').then((res)=>res.text()).then((body)=>console.log(body)).catch((err)=>{console.error(err); process.exit(1)})"'
+    - docker image prune -a -f --filter "label=app=landing-page" --filter "until=168h" || true
+    - 'shred -u .env || rm -f .env || true'
+
+deploy-landing-test:
+  stage: deploy
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/landing-page/Dockerfile
+        - frontend/landing-page/docker-compose.yml
+  script:
+    - cd frontend/landing-page
+    - 'LANDING_DEPLOY_IMAGE="landing-page:test-${CI_COMMIT_SHORT_SHA}"'
+    - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_DEPLOY_IMAGE}" > .env'
+    - 'printf "LANDING_CONTAINER_NAME=%s\n" "${LANDING_CONTAINER_NAME}" >> .env'
+    - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST_TEST:-127.0.0.1}" >> .env'
+    - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT_TEST:-3000}" >> .env'
+    - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${LANDING_NEXT_PUBLIC_SCRIPT_URL_TEST:-}" >> .env'
+    - chmod 600 .env
+    - docker-compose down --remove-orphans || true
+    - docker-compose up -d --no-build web
+    - sleep 3
+    - 'docker logs "${LANDING_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${LANDING_CONTAINER_NAME}" node -e "fetch(''http://127.0.0.1:3000/api/health'').then((res)=>res.text()).then((body)=>console.log(body)).catch((err)=>{console.error(err); process.exit(1)})"'
+    - docker image prune -a -f --filter "label=app=landing-page" --filter "until=168h" || true
     - 'shred -u .env || rm -f .env || true'
 
 ################################################################################

@@ -2,6 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
+	landing-build landing-up landing-down \
 	go-build go-up go-down go-clean \
 	db-up db-down db-smoke db-smoke-test \
 	migrateup migrateup1 migratedown migratedown1 \
@@ -21,6 +22,10 @@ RAG_NOTEBOOK := rag.ipynb
 RAG_NOTEBOOK_OUTPUT := rag.executed.ipynb
 RAG_OUT_DIR := out
 RAG_DOC_PREFIX ?= italy
+
+LANDING_DIR := frontend/landing-page
+LANDING_COMPOSE_FILE := $(LANDING_DIR)/docker-compose.yml
+LANDING_IMAGE_NAME := landing-page:latest
 
 GO_IMAGE := distributed-agent-go
 GO_DOCKERFILE := golang/Dockerfile
@@ -46,6 +51,11 @@ help:
 	@echo "  make rag-clean"
 	@echo "  make rag-chunks-md"
 	@echo "  make rag-chunks-manual"
+	@echo ""
+	@echo "Landing page:"
+	@echo "  make landing-build"
+	@echo "  make landing-up"
+	@echo "  make landing-down"
 	@echo ""
 	@echo "Go backend:"
 	@echo "  make go-build"
@@ -110,6 +120,21 @@ rag-chunks-manual: rag-chunks-md
 		--ExecutePreprocessor.timeout=-1 \
 		--output "$(RAG_NOTEBOOK_OUTPUT)" \
 		--output-dir "$(RAG_OUT_DIR)"
+
+# ----------------------------
+# Landing page
+# ----------------------------
+
+landing-build:
+	@set -a; [ -f "$(LANDING_DIR)/.env" ] && source "$(LANDING_DIR)/.env" || true; set +a; \
+	cd "$(LANDING_DIR)" && docker build --build-arg NEXT_PUBLIC_SCRIPT_URL="$$NEXT_PUBLIC_SCRIPT_URL" -t "$(LANDING_IMAGE_NAME)" .
+
+landing-up:
+	@set -a; [ -f "$(LANDING_DIR)/.env" ] && source "$(LANDING_DIR)/.env" || true; set +a; \
+	docker compose -f "$(LANDING_COMPOSE_FILE)" up -d --build
+
+landing-down:
+	docker compose -f "$(LANDING_COMPOSE_FILE)" down
 
 # ----------------------------
 # Go backend

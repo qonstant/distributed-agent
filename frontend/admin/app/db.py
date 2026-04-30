@@ -11,7 +11,7 @@ if not DATABASE_URL:
 
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True,          # для production лучше False
+    echo=False,
     future=True,
     pool_pre_ping=True,
 )

@@ -21,6 +21,7 @@ type Client struct {
 type queryRequest struct {
 	Query          string `json:"query"`
 	ConversationID string `json:"conversation_id,omitempty"`
+	PreferredName  string `json:"preferred_name,omitempty"`
 }
 
 func NewClient(apiURL string) *Client {
@@ -33,17 +34,18 @@ func NewClient(apiURL string) *Client {
 }
 
 func (c *Client) Ask(ctx context.Context, question qa.Question) (qa.DraftResponse, error) {
-	return c.ask(ctx, question, "")
+	return c.ask(ctx, question, "", "")
 }
 
-func (c *Client) AskWithConversation(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
-	return c.ask(ctx, question, conversationID)
+func (c *Client) AskWithConversation(ctx context.Context, question qa.Question, conversationID, preferredName string) (qa.DraftResponse, error) {
+	return c.ask(ctx, question, conversationID, preferredName)
 }
 
-func (c *Client) ask(ctx context.Context, question qa.Question, conversationID string) (qa.DraftResponse, error) {
+func (c *Client) ask(ctx context.Context, question qa.Question, conversationID, preferredName string) (qa.DraftResponse, error) {
 	body := queryRequest{
 		Query:          question.Text,
 		ConversationID: strings.TrimSpace(conversationID),
+		PreferredName:  strings.TrimSpace(preferredName),
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -68,8 +70,24 @@ func (c *Client) ask(ctx context.Context, question qa.Question, conversationID s
 	}
 
 	var result struct {
-		Answer string `json:"answer"`
-		File   string `json:"file"`
+		Answer         string `json:"answer"`
+		File           string `json:"file"`
+		Classification *struct {
+			Intent        string `json:"intent"`
+			Explain       string `json:"explain"`
+			Language      string `json:"language"`
+			Model         string `json:"model"`
+			Version       string `json:"version"`
+			ProfileAction string `json:"profile_action"`
+			PreferredName string `json:"preferred_name"`
+		} `json:"classification"`
+		UsageEvents []struct {
+			EventType     string  `json:"event_type"`
+			InputTokens   int     `json:"input_tokens"`
+			OutputTokens  int     `json:"output_tokens"`
+			TotalTokens   int     `json:"total_tokens"`
+			EstimatedCost float64 `json:"estimated_cost"`
+		} `json:"usage_events"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return qa.DraftResponse{}, fmt.Errorf("decode response: %w", err)
@@ -80,6 +98,26 @@ func (c *Client) ask(ctx context.Context, question qa.Question, conversationID s
 		draft.AttachmentRefs = append(draft.AttachmentRefs, qa.AttachmentRef{
 			Source: file,
 			Kind:   qa.AttachmentDocument,
+		})
+	}
+	if result.Classification != nil {
+		draft.Classification = &qa.MessageClassification{
+			Intent:            strings.TrimSpace(result.Classification.Intent),
+			Explain:           strings.TrimSpace(result.Classification.Explain),
+			DetectedLanguage:  strings.TrimSpace(result.Classification.Language),
+			ClassifierModel:   strings.TrimSpace(result.Classification.Model),
+			ClassifierVersion: strings.TrimSpace(result.Classification.Version),
+			ProfileAction:     strings.TrimSpace(result.Classification.ProfileAction),
+			PreferredName:     strings.TrimSpace(result.Classification.PreferredName),
+		}
+	}
+	for _, item := range result.UsageEvents {
+		draft.UsageEvents = append(draft.UsageEvents, qa.UsageEvent{
+			EventType:     strings.TrimSpace(item.EventType),
+			InputTokens:   item.InputTokens,
+			OutputTokens:  item.OutputTokens,
+			TotalTokens:   item.TotalTokens,
+			EstimatedCost: item.EstimatedCost,
 		})
 	}
 

@@ -1,0 +1,38 @@
+
+services:
+  db:
+    image: postgres:15
+    profiles:
+      - local
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-telegram_access}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "${ADMIN_DB_BIND_HOST:-127.0.0.1}:${ADMIN_DB_HOST_PORT:-5432}:5432"
+
+  web:
+    image: ${ADMIN_IMAGE_NAME:-admin-panel:latest}
+    container_name: ${ADMIN_CONTAINER_NAME:-admin-panel}
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=*
+    ports:
+      - "${ADMIN_BIND_HOST:-127.0.0.1}:${ADMIN_HOST_PORT:-3910}:8000"
+    environment:
+      - APP_ENV=${APP_ENV:-development}
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      - ALGORITHM=${ALGORITHM:-HS256}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - ADMIN_COOKIE_SECURE=${ADMIN_COOKIE_SECURE:-false}
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-*}
+
+volumes:
+  db_data:

@@ -2,9 +2,12 @@ package chatmemory
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
 
 type fakeStore struct {
@@ -77,7 +80,7 @@ func TestMemoryRememberTurnAndContext(t *testing.T) {
 		t.Fatal("Context().ID is empty")
 	}
 
-	if err := memory.RememberTurn(ctx, 42, conversation.ID, "hello", "world"); err != nil {
+	if err := memory.RememberTurn(ctx, 42, conversation.ID, "hello", "world", nil); err != nil {
 		t.Fatalf("RememberTurn() error = %v", err)
 	}
 
@@ -127,6 +130,7 @@ func TestMemoryKeepsOnlyLatestEightMessages(t *testing.T) {
 			conversation.ID,
 			fmt.Sprintf("user-%d", turn),
 			fmt.Sprintf("assistant-%d", turn),
+			nil,
 		); err != nil {
 			t.Fatalf("RememberTurn() turn %d error = %v", turn, err)
 		}
@@ -166,5 +170,106 @@ func TestMemoryStartsNewConversationWhenListExpired(t *testing.T) {
 	}
 	if got := conversation.ID; got == "stale-conversation" {
 		t.Fatalf("Context().ID = %q, want new conversation id", got)
+	}
+}
+
+func TestMemoryTruncatesAssistantMessageBeforeSaving(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeStore()
+	memory := New(store, Config{
+		TTL:               2 * time.Hour,
+		MaxItems:          8,
+		AssistantMaxChars: 15,
+		Now: func() time.Time {
+			return time.Unix(1774920000, 0)
+		},
+	})
+
+	ctx := context.Background()
+	conversation, err := memory.Context(ctx, 42)
+	if err != nil {
+		t.Fatalf("Context() error = %v", err)
+	}
+
+	if err := memory.RememberTurn(ctx, 42, conversation.ID, "hello", "abcdefghijklmnopqrstuv", nil); err != nil {
+		t.Fatalf("RememberTurn() error = %v", err)
+	}
+
+	payloads := store.lists[memory.messagesKey(conversation.ID)]
+	if len(payloads) != 2 {
+		t.Fatalf("len(payloads) = %d, want 2", len(payloads))
+	}
+
+	var assistant qa.ConversationMessage
+	if err := json.Unmarshal([]byte(payloads[0]), &assistant); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if got, want := assistant.Role, qa.ConversationRoleAssistant; got != want {
+		t.Fatalf("assistant.Role = %q, want %q", got, want)
+	}
+	if got, want := assistant.Text, "abcde\n...\nrstuv"; got != want {
+		t.Fatalf("assistant.Text = %q, want %q", got, want)
+	}
+
+	var user qa.ConversationMessage
+	if err := json.Unmarshal([]byte(payloads[1]), &user); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if got, want := user.Text, "hello"; got != want {
+		t.Fatalf("user.Text = %q, want %q", got, want)
+	}
+}
+
+func TestMemoryStoresAssistantAttachments(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeStore()
+	memory := New(store, Config{
+		TTL:      2 * time.Hour,
+		MaxItems: 8,
+		Now: func() time.Time {
+			return time.Unix(1774920000, 0)
+		},
+	})
+
+	ctx := context.Background()
+	conversation, err := memory.Context(ctx, 42)
+	if err != nil {
+		t.Fatalf("Context() error = %v", err)
+	}
+
+	err = memory.RememberTurn(
+		ctx,
+		42,
+		conversation.ID,
+		"send it again",
+		"Here is the file.",
+		[]qa.ConversationAttachment{
+			{Source: "docs/sample.pdf", Name: "sample.pdf", Kind: qa.AttachmentDocument},
+			{Source: "photos/example.png", Name: "example.png", Kind: qa.AttachmentPhoto},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RememberTurn() error = %v", err)
+	}
+
+	payloads := store.lists[memory.messagesKey(conversation.ID)]
+	if len(payloads) != 2 {
+		t.Fatalf("len(payloads) = %d, want 2", len(payloads))
+	}
+
+	var assistant qa.ConversationMessage
+	if err := json.Unmarshal([]byte(payloads[0]), &assistant); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if len(assistant.Attachments) != 2 {
+		t.Fatalf("len(assistant.Attachments) = %d, want 2", len(assistant.Attachments))
+	}
+	if got, want := assistant.Attachments[0], (qa.ConversationAttachment{Source: "docs/sample.pdf", Name: "sample.pdf", Kind: qa.AttachmentDocument}); got != want {
+		t.Fatalf("assistant.Attachments[0] = %#v, want %#v", got, want)
+	}
+	if got, want := assistant.Attachments[1], (qa.ConversationAttachment{Source: "photos/example.png", Name: "example.png", Kind: qa.AttachmentPhoto}); got != want {
+		t.Fatalf("assistant.Attachments[1] = %#v, want %#v", got, want)
 	}
 }

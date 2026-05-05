@@ -14,7 +14,7 @@ func TestGetStartMessageExecute(t *testing.T) {
 
 	uc := GetStartMessage{Policy: access.NewPolicy(fakeAccessDirectory{
 		findFn: func(context.Context, int64) (access.Record, bool, error) {
-			return access.Record{TelegramID: 42, HasAccess: true}, true, nil
+			return access.Record{TelegramID: 42}, true, nil
 		},
 	})}
 
@@ -50,7 +50,7 @@ func TestGetSampleAttachmentsExecute(t *testing.T) {
 	uc := GetSampleAttachments{
 		Policy: access.NewPolicy(fakeAccessDirectory{
 			findFn: func(context.Context, int64) (access.Record, bool, error) {
-				return access.Record{TelegramID: 42, HasAccess: true}, true, nil
+				return access.Record{TelegramID: 42}, true, nil
 			},
 		}),
 		AttachmentRefs: refs,

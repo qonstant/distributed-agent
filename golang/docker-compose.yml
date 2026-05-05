@@ -10,3 +10,13 @@ services:
     volumes:
       - ./files:/files
     network_mode: "host"
+  events-worker:
+    image: study-bot:latest
+    container_name: study-bot-events-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      APP_MODE: events-worker
+    volumes:
+      - ./files:/files
+    network_mode: "host"

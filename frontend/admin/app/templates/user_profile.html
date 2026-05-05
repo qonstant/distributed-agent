@@ -1,0 +1,367 @@
+{% extends "base.html" %}
+
+{% block title %}User Profile{% endblock %}
+{% block topbar_title %}User Profile{% endblock %}
+
+{% block content %}
+<section class="hero-panel">
+    <div class="hero-kicker">User Workspace</div>
+    <h1 class="hero-title">{{ profile.username or "Unknown user" }}</h1>
+    <p class="hero-copy">Everything for this account is grouped here: profile data, moderation actions with notes, conversations, messages, usage events, and audit history.</p>
+    <div class="hero-actions">
+        <a href="/admin-ui/dashboard" class="btn btn-app btn-app-secondary">Back to Dashboard</a>
+        <a href="/admin-ui/users/{{ profile.telegram_id }}/messages" class="btn btn-app btn-app-primary">Open Message Review</a>
+    </div>
+</section>
+
+<section class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-hash"></i>Telegram ID</div>
+        <div class="stat-value">{{ profile.telegram_id }}</div>
+        <div class="stat-footnote">Stable external identifier.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-chat-left-text"></i>Conversations</div>
+        <div class="stat-value">{{ conversations|length }}</div>
+        <div class="stat-footnote">Threads linked to this user.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-envelope"></i>Messages</div>
+        <div class="stat-value">{{ messages|length }}</div>
+        <div class="stat-footnote">Messages available for review.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-graph-up"></i>Usage Events</div>
+        <div class="stat-value">{{ usage_events|length }}</div>
+        <div class="stat-footnote">Events in the selected date range.</div>
+    </div>
+</section>
+
+<section class="detail-grid">
+    <div class="surface-panel span-4">
+        <div class="panel-heading">
+            <div>
+                <div class="section-label">Profile</div>
+                <h2 class="panel-title">Account Snapshot</h2>
+                <p class="panel-caption">Current state derived from the active schema.</p>
+            </div>
+        </div>
+
+        <form action="/admin-ui/users/{{ profile.telegram_id }}/identity" method="post" class="info-list">
+            <div>
+                <label class="filter-label">Username</label>
+                <input type="text" name="username" class="form-control" value="{{ profile.username or '' }}" placeholder="Username">
+            </div>
+            <div>
+                <label class="filter-label">First Name</label>
+                <input type="text" name="first_name" class="form-control" value="{{ profile.first_name or '' }}" placeholder="First name">
+            </div>
+            <div>
+                <label class="filter-label">Last Name</label>
+                <input type="text" name="last_name" class="form-control" value="{{ profile.last_name or '' }}" placeholder="Last name">
+            </div>
+            <button type="submit" class="btn btn-app btn-app-primary">Save Profile</button>
+        </form>
+
+        <div class="info-list mt-3">
+            <div class="info-item">
+                <span>Access</span>
+                <strong>
+                    {% if profile.has_access %}
+                    <span class="chip success"><i class="bi bi-check2-circle"></i>Granted</span>
+                    {% else %}
+                    <span class="chip warning"><i class="bi bi-hourglass-split"></i>Revoked</span>
+                    {% endif %}
+                </strong>
+            </div>
+            <div class="info-item">
+                <span>Blocked</span>
+                <strong>
+                    {% if profile.is_blocked %}
+                    <span class="chip danger"><i class="bi bi-slash-circle"></i>Blocked</span>
+                    {% else %}
+                    <span class="chip success"><i class="bi bi-activity"></i>Active</span>
+                    {% endif %}
+                </strong>
+            </div>
+            <div class="info-item">
+                <span>Admin Role</span>
+                <strong>
+                    {% if profile.is_admin %}
+                    <span class="chip info"><i class="bi bi-shield-check"></i>Admin</span>
+                    {% else %}
+                    <span class="chip neutral"><i class="bi bi-person"></i>User</span>
+                    {% endif %}
+                </strong>
+            </div>
+            <div class="info-item"><span>Access Expires</span><strong>{{ profile.access_expires_at or "Unlimited" }}</strong></div>
+        </div>
+    </div>
+
+    <div class="surface-panel span-8">
+        <div class="panel-heading">
+            <div>
+                <div class="section-label">Moderation</div>
+                <h2 class="panel-title">Action Center</h2>
+                <p class="panel-caption">This is the place to leave notes. Each action below writes its note to <code>admin_actions.notes</code>.</p>
+            </div>
+        </div>
+
+        <div class="action-grid">
+            <form action="/admin-ui/{% if not profile.has_access %}grant{% else %}revoke{% endif %}/{{ profile.telegram_id }}" method="post" class="action-card">
+                <div>
+                    <h3 class="action-card-title">{% if not profile.has_access %}Grant Access{% else %}Revoke Access{% endif %}</h3>
+                    <p class="action-card-copy">Update access state and save a reason for the decision.</p>
+                </div>
+                <div>
+                    <label class="filter-label">Note</label>
+                    <textarea name="notes" class="form-control" rows="3" placeholder="Why are you changing access?"></textarea>
+                </div>
+                <button type="submit" class="btn btn-app btn-app-primary">{% if not profile.has_access %}Grant Access{% else %}Revoke Access{% endif %}</button>
+            </form>
+
+            <form action="/admin-ui/{% if not profile.is_blocked %}block{% else %}unblock{% endif %}/{{ profile.telegram_id }}" method="post" class="action-card">
+                <div>
+                    <h3 class="action-card-title">{% if not profile.is_blocked %}Block User{% else %}Unblock User{% endif %}</h3>
+                    <p class="action-card-copy">Moderation action with a note for support or audit review.</p>
+                </div>
+                <div>
+                    <label class="filter-label">Note</label>
+                    <textarea name="notes" class="form-control" rows="3" placeholder="Why is this user being {% if not profile.is_blocked %}blocked{% else %}unblocked{% endif %}?"></textarea>
+                </div>
+                <button type="submit" class="btn btn-tonal {% if not profile.is_blocked %}danger{% else %}teal{% endif %}">{% if not profile.is_blocked %}Block User{% else %}Unblock User{% endif %}</button>
+            </form>
+
+            <form action="/admin-ui/verify-payment/{{ profile.telegram_id }}" method="post" class="action-card">
+                <div>
+                    <h3 class="action-card-title">Verify Payment</h3>
+                    <p class="action-card-copy">Confirm payment manually and keep the exact note in the audit trail.</p>
+                </div>
+                <div>
+                    <label class="filter-label">Note</label>
+                    <textarea name="notes" class="form-control" rows="3" placeholder="Payment reference, amount, or reviewer note"></textarea>
+                </div>
+                <button type="submit" class="btn btn-tonal teal">Verify Payment</button>
+            </form>
+
+            <form action="/admin-ui/extend-access/{{ profile.telegram_id }}" method="post" class="action-card">
+                <div>
+                    <h3 class="action-card-title">Extend Access</h3>
+                    <p class="action-card-copy">Extend access by a number of days and save the reason in the same action.</p>
+                </div>
+                <div class="filter-grid">
+                    <div class="filter-span-4">
+                        <label class="filter-label">Days</label>
+                        <input type="number" min="1" name="days" value="30" class="form-control">
+                    </div>
+                    <div class="filter-span-8">
+                        <label class="filter-label">Note</label>
+                        <textarea name="notes" class="form-control" rows="3" placeholder="Why is access being extended?"></textarea>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-app btn-app-primary">Extend Access</button>
+            </form>
+        </div>
+    </div>
+</section>
+
+<section class="detail-grid">
+    <div class="surface-panel span-6">
+        <div class="panel-heading">
+            <div>
+                <div class="section-label">Threads</div>
+                <h2 class="panel-title">Conversations</h2>
+                <p class="panel-caption">Conversation-level context for messages and usage.</p>
+            </div>
+        </div>
+
+        {% if conversations %}
+        <div class="conversation-list">
+            {% for conversation in conversations %}
+            <article class="conversation-card">
+                <div class="conversation-head">
+                    <div>
+                        <strong>Conversation #{{ conversation.id }}</strong>
+                        <div class="text-muted small mt-1">{{ conversation.conversation_key }}</div>
+                    </div>
+                    <span class="chip neutral"><i class="bi bi-clock-history"></i>{{ conversation.updated_at or conversation.created_at }}</span>
+                </div>
+                <div class="text-muted small mb-1">Summary</div>
+                <p class="mb-0">{{ conversation.summary or "No summary available." }}</p>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">No conversations recorded for this user yet.</div>
+        {% endif %}
+    </div>
+
+    <div class="surface-panel span-6">
+        <div class="panel-heading">
+            <div>
+                <div class="section-label">Messages</div>
+                <h2 class="panel-title">Latest Message Snapshot</h2>
+                <p class="panel-caption">Open the message review page to classify or edit message notes.</p>
+            </div>
+        </div>
+
+        {% if messages %}
+        <div class="message-list">
+            {% for message in messages[:6] %}
+            <article class="message-card">
+                <div class="message-head">
+                    <div>
+                        <strong>Message #{{ message.id }}</strong>
+                        <div class="text-muted small mt-1">Conversation {{ message.conversation_id }} · {{ message.created_at }}</div>
+                    </div>
+                    {% if message.classification %}
+                    <span class="chip info"><i class="bi bi-tags"></i>{{ message.classification.intent }}</span>
+                    {% else %}
+                    <span class="chip neutral"><i class="bi bi-dash-circle"></i>No classification</span>
+                    {% endif %}
+                </div>
+                <p class="message-text">{{ message.message_text }}</p>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">No messages available for this user yet.</div>
+        {% endif %}
+    </div>
+</section>
+
+<section class="detail-grid">
+    <div class="surface-panel span-5">
+        <div class="panel-heading">
+            <div>
+                <div class="section-label">Usage</div>
+                <h2 class="panel-title">Usage Events</h2>
+                <p class="panel-caption">Filter by date and review tokens, cost, and message context.</p>
+            </div>
+        </div>
+
+        <form method="get" class="filter-grid mb-4">
+            <div class="filter-span-6">
+                <label class="filter-label">Date From</label>
+                <input type="text" name="date_from" class="form-control" placeholder="dd.mm.yyyy" value="{{ filters.date_from or '' }}">
+            </div>
+            <div class="filter-span-6">
+                <label class="filter-label">Date To</label>
+                <input type="text" name="date_to" class="form-control" placeholder="dd.mm.yyyy" value="{{ filters.date_to or '' }}">
+            </div>
+            <div class="filter-span-12 d-flex gap-2 flex-wrap">
+                <button class="btn btn-app btn-app-primary">Apply Range</button>
+                <a href="/admin-ui/users/{{ profile.telegram_id }}" class="btn btn-app btn-app-secondary">Reset</a>
+            </div>
+        </form>
+
+        <div class="table-wrap">
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Total</th>
+                            <th>Cost</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% if usage_events %}
+                        {% for event in usage_events %}
+                        <tr>
+                            <td>
+                                <div class="table-name">
+                                    <strong>{{ event.event_type }}</strong>
+                                    <span>C{{ event.conversation_id or "-" }} · M{{ event.message_id or "-" }}</span>
+                                </div>
+                            </td>
+                            <td>{{ event.input_tokens + event.output_tokens }}</td>
+                            <td>{{ event.estimated_cost }}</td>
+                            <td>{{ event.created_at }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="4"><div class="empty-state">No usage events in the selected range.</div></td>
+                        </tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="surface-panel span-7">
+        <div class="panel-heading">
+            <div>
+                <div class="section-label">Audit</div>
+                <h2 class="panel-title">Admin Actions</h2>
+                <p class="panel-caption">Notes are shown directly here so decisions are easier to understand later.</p>
+            </div>
+        </div>
+
+        <div class="table-wrap mb-4">
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>Target Action</th>
+                            <th>Entity</th>
+                            <th>Notes</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% if admin_actions_as_target %}
+                        {% for action in admin_actions_as_target %}
+                        <tr>
+                            <td><span class="chip info"><i class="bi bi-journal-text"></i>{{ action.action_type }}</span></td>
+                            <td>{{ action.entity_type or "-" }} {{ action.entity_id or "" }}</td>
+                            <td>{{ action.notes or "-" }}</td>
+                            <td>{{ action.created_at }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="4"><div class="empty-state">No target-side admin actions recorded for this user.</div></td>
+                        </tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="table-wrap">
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th>Performed Action</th>
+                            <th>Entity</th>
+                            <th>Notes</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% if admin_actions_as_admin %}
+                        {% for action in admin_actions_as_admin %}
+                        <tr>
+                            <td><span class="chip neutral"><i class="bi bi-person-check"></i>{{ action.action_type }}</span></td>
+                            <td>{{ action.entity_type or "-" }} {{ action.entity_id or "" }}</td>
+                            <td>{{ action.notes or "-" }}</td>
+                            <td>{{ action.created_at }}</td>
+                        </tr>
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="4"><div class="empty-state">No admin-performed actions tied to this user.</div></td>
+                        </tr>
+                    {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}

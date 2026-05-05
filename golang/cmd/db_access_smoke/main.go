@@ -79,9 +79,9 @@ func main() {
 		log.Fatal("find inserted smoke user: expected record, got not found")
 	}
 	log.Printf(
-		"found smoke user telegram_id=%d has_access=%t is_blocked=%t expires_at=%v",
+		"found smoke user telegram_id=%d allows_now=%t is_blocked=%t expires_at=%v",
 		record.TelegramID,
-		record.HasAccess,
+		record.Allows(time.Now().UTC()),
 		record.IsBlocked,
 		record.AccessExpiresAt,
 	)
@@ -102,15 +102,14 @@ func insertSmokeUser(ctx context.Context, db *sql.DB, telegramID int64, username
 	const query = `
 		INSERT INTO users (
 			telegram_id,
-			telegram_username,
+			username,
 			first_name,
 			last_name,
 			is_blocked,
 			is_admin,
-			has_access,
 			access_expires_at
 		)
-		VALUES ($1, $2, $3, $4, false, false, true, null)
+		VALUES ($1, $2, $3, $4, false, false, null)
 	`
 
 	_, err := db.ExecContext(ctx, query, telegramID, username, "DB", "Smoke")

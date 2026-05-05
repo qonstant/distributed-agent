@@ -43,8 +43,11 @@ func TestClientAsk(t *testing.T) {
 			if _, ok := body["conversation_id"]; ok {
 				t.Fatal("conversation_id should be omitted for Ask()")
 			}
+			if _, ok := body["preferred_name"]; ok {
+				t.Fatal("preferred_name should be omitted for Ask()")
+			}
 
-			payload := `{"answer":"world","file":"docs/file.pdf"}`
+			payload := `{"answer":"world","file":"docs/file.pdf","classification":{"intent":"DOCUMENT_REQUEST","explain":"user asked for a file","language":"en","model":"gpt-4o-mini","version":"v1","profile_action":"","preferred_name":""},"usage_events":[{"event_type":"classification","input_tokens":0,"output_tokens":0,"total_tokens":0,"estimated_cost":0},{"event_type":"chat_completion","input_tokens":0,"output_tokens":0,"total_tokens":0,"estimated_cost":0}]}`
 			return &http.Response{
 				StatusCode: http.StatusOK,
 				Body:       io.NopCloser(strings.NewReader(payload)),
@@ -67,6 +70,21 @@ func TestClientAsk(t *testing.T) {
 		if got, want := response.AttachmentRefs[0].Kind, qa.AttachmentDocument; got != want {
 			t.Fatalf("response.AttachmentRefs[0].Kind = %q, want %q", got, want)
 		}
+		if response.Classification == nil {
+			t.Fatal("response.Classification = nil, want non-nil")
+		}
+		if got, want := response.Classification.Intent, "DOCUMENT_REQUEST"; got != want {
+			t.Fatalf("response.Classification.Intent = %q, want %q", got, want)
+		}
+		if got, want := response.Classification.ProfileAction, ""; got != want {
+			t.Fatalf("response.Classification.ProfileAction = %q, want %q", got, want)
+		}
+		if len(response.UsageEvents) != 2 {
+			t.Fatalf("len(response.UsageEvents) = %d, want 2", len(response.UsageEvents))
+		}
+		if got, want := response.UsageEvents[1].EventType, "chat_completion"; got != want {
+			t.Fatalf("response.UsageEvents[1].EventType = %q, want %q", got, want)
+		}
 	})
 
 	t.Run("sends conversation id when available", func(t *testing.T) {
@@ -84,6 +102,9 @@ func TestClientAsk(t *testing.T) {
 			if got, want := body["conversation_id"], "conv-1"; got != want {
 				t.Fatalf("conversation_id = %q, want %q", got, want)
 			}
+			if got, want := body["preferred_name"], "Stored Name"; got != want {
+				t.Fatalf("preferred_name = %q, want %q", got, want)
+			}
 
 			return &http.Response{
 				StatusCode: http.StatusOK,
@@ -92,7 +113,7 @@ func TestClientAsk(t *testing.T) {
 			}, nil
 		})}
 
-		response, err := client.AskWithConversation(context.Background(), qa.Question{Text: "hello"}, "conv-1")
+		response, err := client.AskWithConversation(context.Background(), qa.Question{Text: "hello"}, "conv-1", "Stored Name")
 		if err != nil {
 			t.Fatalf("AskWithConversation() error = %v", err)
 		}

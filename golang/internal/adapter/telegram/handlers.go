@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -67,41 +68,91 @@ func (h *Handlers) HandleDefault(ctx context.Context, b *bot.Bot, update *models
 		return
 	}
 
+	if text, unsupported := unsupportedInputText(update); unsupported {
+		h.sendText(ctx, b, update.Message.Chat.ID, text)
+		return
+	}
+
 	if strings.HasPrefix(update.Message.Text, "/") {
 		h.sendText(ctx, b, update.Message.Chat.ID, "Unknown command. Try /help.")
 		return
 	}
 
 	user := userFromUpdate(update)
+	replyLanguage := detectReplyLanguage(update)
+	progress := StartProgressMessage(ctx, b, update.Message.Chat.ID, update.Message.Text)
 	response, err := h.ask.Execute(ctx, user, update.Message.Text)
 	if err != nil {
-		if h.handleAccessError(ctx, b, update.Message.Chat.ID, err) {
+		if errors.Is(err, access.ErrUnauthorized) {
+			if progress != nil {
+				_ = progress.Replace(ctx, h.accessDeniedText)
+			} else {
+				h.sendText(ctx, b, update.Message.Chat.ID, h.accessDeniedText)
+			}
 			return
 		}
 
 		log.Printf("[defaultHandler] ask question failed for %s: %v", user.DisplayName, err)
 		if strings.TrimSpace(response.Text) != "" {
-			h.sendText(
-				ctx,
-				b,
-				update.Message.Chat.ID,
-				fmt.Sprintf("%s\n\n(Не удалось подготовить вложения: %v)", response.Text, err),
-			)
+			log.Printf("[defaultHandler] sending partial answer without attachments for %s", user.DisplayName)
+			text := askFailureUserText(response, replyLanguage)
+			if progress != nil {
+				_ = progress.Replace(ctx, text)
+			} else {
+				h.sendText(ctx, b, update.Message.Chat.ID, text)
+			}
 			return
 		}
 
-		h.sendText(ctx, b, update.Message.Chat.ID, fmt.Sprintf("Ошибка обращения к локальному API: %v", err))
+		text := askFailureUserText(response, replyLanguage)
+		if progress != nil {
+			_ = progress.Replace(ctx, text)
+		} else {
+			h.sendText(ctx, b, update.Message.Chat.ID, text)
+		}
 		return
 	}
 
-	if err := h.presenter.Present(ctx, b, update.Message.Chat.ID, response); err != nil {
+	if err := h.presenter.PresentWithProgress(ctx, b, update.Message.Chat.ID, response, progress); err != nil {
 		log.Printf("[defaultHandler] present failed for %s: %v", user.DisplayName, err)
-		h.sendText(
-			ctx,
-			b,
-			update.Message.Chat.ID,
-			fmt.Sprintf("%s\n\n(Не удалось отправить файл: %v)", response.Text, err),
-		)
+		text := fileDeliveryFailureUserText(response, replyLanguage)
+		if progress != nil {
+			_ = progress.Replace(ctx, text)
+		} else {
+			h.sendText(ctx, b, update.Message.Chat.ID, text)
+		}
+	}
+}
+
+func askFailureUserText(response qa.Response, language string) string {
+	if strings.TrimSpace(response.Text) != "" {
+		return response.Text
+	}
+	return temporaryServiceFailureMessage(language)
+}
+
+func fileDeliveryFailureUserText(response qa.Response, language string) string {
+	if strings.TrimSpace(response.Text) != "" {
+		return response.Text
+	}
+	switch language {
+	case "kk":
+		return "Файлды жіберу мүмкін болмады. Кейінірек қайталап көріңіз."
+	case "ru":
+		return "Не удалось отправить файл. Попробуйте позже."
+	default:
+		return "I couldn't send the file. Please try again later."
+	}
+}
+
+func temporaryServiceFailureMessage(language string) string {
+	switch language {
+	case "kk":
+		return "Қазір жауап дайындау мүмкін болмады. Кейінірек қайталап көріңіз."
+	case "ru":
+		return "Сейчас не удалось подготовить ответ. Попробуйте позже."
+	default:
+		return "I couldn't prepare an answer right now. Please try again later."
 	}
 }
 
@@ -150,13 +201,13 @@ func (h *Handlers) HandleRandomPic(ctx context.Context, b *bot.Bot, update *mode
 			return
 		}
 		log.Printf("[randomPicHandler] failed: %v", err)
-		h.sendText(ctx, b, update.Message.Chat.ID, fmt.Sprintf("Failed to send images as album: %v", err))
+		h.sendText(ctx, b, update.Message.Chat.ID, fileDeliveryFailureUserText(qa.Response{}, detectReplyLanguage(update)))
 		return
 	}
 
 	if err := h.presenter.Present(ctx, b, update.Message.Chat.ID, response); err != nil {
 		log.Printf("[randomPicHandler] present failed: %v", err)
-		h.sendText(ctx, b, update.Message.Chat.ID, fmt.Sprintf("Failed to send images as album: %v", err))
+		h.sendText(ctx, b, update.Message.Chat.ID, fileDeliveryFailureUserText(response, detectReplyLanguage(update)))
 	}
 }
 
@@ -185,7 +236,7 @@ func userFromUpdate(update *models.Update) access.User {
 
 	return access.User{
 		TelegramID:  int64(update.Message.From.ID),
-		Username:    update.Message.From.Username,
+		Username:    "",
 		DisplayName: displayName(update),
 	}
 }
@@ -216,4 +267,96 @@ func isPhotoAlbum(response qa.Response) bool {
 	}
 
 	return true
+}
+
+func unsupportedInputText(update *models.Update) (string, bool) {
+	if update == nil || update.Message == nil {
+		return "", false
+	}
+
+	if strings.TrimSpace(update.Message.Text) != "" {
+		return "", false
+	}
+
+	language := detectReplyLanguage(update)
+	if len(update.Message.Photo) > 0 {
+		return unsupportedImageMessage(language), true
+	}
+
+	if update.Message.Document != nil ||
+		update.Message.Video != nil ||
+		update.Message.VideoNote != nil ||
+		update.Message.Voice != nil ||
+		update.Message.Audio != nil ||
+		update.Message.Animation != nil ||
+		update.Message.Sticker != nil ||
+		update.Message.Contact != nil ||
+		update.Message.Location != nil ||
+		update.Message.Venue != nil ||
+		update.Message.Poll != nil {
+		return unsupportedGenericMessage(language), true
+	}
+
+	return unsupportedGenericMessage(language), true
+}
+
+func detectReplyLanguage(update *models.Update) string {
+	if update == nil || update.Message == nil {
+		return "en"
+	}
+
+	if update.Message.From != nil {
+		code := strings.ToLower(strings.TrimSpace(update.Message.From.LanguageCode))
+		switch {
+		case strings.HasPrefix(code, "kk"):
+			return "kk"
+		case strings.HasPrefix(code, "ru"):
+			return "ru"
+		case strings.HasPrefix(code, "en"):
+			return "en"
+		}
+	}
+
+	sample := strings.TrimSpace(update.Message.Text)
+	if sample == "" {
+		sample = strings.TrimSpace(update.Message.Caption)
+	}
+	if sample == "" {
+		return "en"
+	}
+
+	for _, r := range sample {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		if unicode.In(r, unicode.Cyrillic) {
+			return "ru"
+		}
+		if unicode.In(r, unicode.Latin) {
+			return "en"
+		}
+	}
+	return "en"
+}
+
+func unsupportedImageMessage(language string) string {
+	switch language {
+	case "ru":
+		return "Я пока не умею обрабатывать изображения. Пожалуйста, отправьте вопрос текстом."
+	case "kk":
+		return "Мен әзірге суреттерді өңдей алмаймын. Сұрағыңызды мәтінмен жіберіңіз."
+	default:
+		return "I can't process images yet. Please send your question as text."
+	}
+}
+
+func unsupportedGenericMessage(language string) string {
+	switch language {
+	case "ru":
+		return "Сейчас я принимаю только текстовые сообщения. Пожалуйста, отправьте вопрос текстом."
+	case "kk":
+		return "Қазір мен тек мәтіндік хабарламаларды қабылдаймын. Сұрағыңызды мәтінмен жіберіңіз."
+	default:
+		return "I currently accept text messages only. Please send your question as text."
+	}
 }

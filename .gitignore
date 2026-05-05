@@ -25,6 +25,7 @@
 *.pdf
 *.png
 *.md
+!README.md
 .vscode
 chunks.jsonl
 meta.json
@@ -119,3 +120,7 @@ secrets.json
 *.venv
 *.csv
 __pycache__
+*.vscode
+*.docx
+alembic.ini
+alembic/

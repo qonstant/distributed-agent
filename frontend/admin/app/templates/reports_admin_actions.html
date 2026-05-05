@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Actions Report{% endblock %}
+{% block topbar_title %}Audit Trail Review{% endblock %}
+
+{% block content %}
+<section class="hero-panel">
+    <div class="hero-kicker">Audit Report</div>
+    <h1 class="hero-title">See who changed what, and when.</h1>
+    <p class="hero-copy">This report keeps the same filters and data as before, now presented as a more deliberate audit view for admin decisions and follow-up.</p>
+    <div class="hero-actions">
+        <a href="/admin-ui/dashboard" class="btn btn-app btn-app-secondary">Back to Dashboard</a>
+        <a href="/admin-ui/reports/usage-events" class="btn btn-app btn-app-primary">Switch to Usage Report</a>
+    </div>
+</section>
+
+<section class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-journal-text"></i>Total Records</div>
+        <div class="stat-value">{{ actions|length }}</div>
+        <div class="stat-footnote">Rows returned with the current filter set.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-person-badge"></i>Admins Seen</div>
+        <div class="stat-value">{{ actions|map(attribute='admin_user_id')|unique|list|length if actions else 0 }}</div>
+        <div class="stat-footnote">Distinct admin user IDs in this result set.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-bullseye"></i>Targets Seen</div>
+        <div class="stat-value">{{ actions|selectattr('target_user_id')|map(attribute='target_user_id')|unique|list|length if actions else 0 }}</div>
+        <div class="stat-footnote">Distinct target users referenced in these rows.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-box"></i>Entity Types</div>
+        <div class="stat-value">{{ actions|selectattr('entity_type')|map(attribute='entity_type')|unique|list|length if actions else 0 }}</div>
+        <div class="stat-footnote">Unique entity families present in the audit data.</div>
+    </div>
+</section>
+
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Filter Audit Data</h2>
+            <p class="panel-caption">Narrow by admin, target user, entity, or date window.</p>
+        </div>
+    </div>
+
+    <form method="get" class="filter-grid">
+        <div class="filter-span-2">
+            <label class="filter-label">Admin User ID</label>
+            <input class="form-control" name="admin_user_id" value="{{ filters.admin_user_id or '' }}" placeholder="admin_user_id">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Target User ID</label>
+            <input class="form-control" name="target_user_id" value="{{ filters.target_user_id or '' }}" placeholder="target_user_id">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Entity Type</label>
+            <input class="form-control" name="entity_type" value="{{ filters.entity_type or '' }}" placeholder="entity_type">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Entity ID</label>
+            <input class="form-control" name="entity_id" value="{{ filters.entity_id or '' }}" placeholder="entity_id">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Date From</label>
+            <input class="form-control" name="date_from" type="text" placeholder="dd.mm.yyyy" value="{{ filters.date_from }}">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Date To</label>
+            <input class="form-control" name="date_to" type="text" placeholder="dd.mm.yyyy" value="{{ filters.date_to }}">
+        </div>
+        <div class="filter-span-12 d-flex gap-2 flex-wrap">
+            <button class="btn btn-app btn-app-primary">Apply Filters</button>
+            <a href="/admin-ui/reports/admin-actions" class="btn btn-app btn-app-secondary">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Audit Entries</h2>
+            <p class="panel-caption">A cleaner operational table over the same admin action records.</p>
+        </div>
+    </div>
+
+    <div class="table-wrap">
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Record</th>
+                        <th>Admin</th>
+                        <th>Target</th>
+                        <th>Action</th>
+                        <th>Entity</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% if actions %}
+                    {% for action in actions %}
+                    <tr>
+                        <td>
+                            <div class="table-name">
+                                <strong>#{{ action.id }}</strong>
+                                <span>{{ action.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+                            </div>
+                        </td>
+                        <td>{{ action.admin_user_id }}</td>
+                        <td>{{ action.target_user_id or "-" }}</td>
+                        <td><span class="chip info"><i class="bi bi-journal-text"></i>{{ action.action_type }}</span></td>
+                        <td>{{ action.entity_type or "-" }} {{ action.entity_id or "" }}</td>
+                        <td>{{ action.notes or "-" }}</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="6">
+                            <div class="empty-state">
+                                <strong class="d-block mb-2">No admin actions found.</strong>
+                                Try widening the filters or resetting the report.
+                            </div>
+                        </td>
+                    </tr>
+                {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}

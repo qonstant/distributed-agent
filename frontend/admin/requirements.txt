@@ -1,0 +1,11 @@
+fastapi>=0.95.0
+uvicorn[standard]
+SQLAlchemy>=2.0
+asyncpg
+python-dotenv
+python-multipart
+pyjwt
+pydantic<2
+httpx
+python-jose[cryptography]
+jinja2

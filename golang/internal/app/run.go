@@ -14,18 +14,23 @@ import (
 	"github.com/qonstant/distributed-agent/internal/adapter/chatmemory"
 	"github.com/qonstant/distributed-agent/internal/adapter/localapi"
 	"github.com/qonstant/distributed-agent/internal/adapter/postgres"
+	"github.com/qonstant/distributed-agent/internal/adapter/rabbitmq"
 	"github.com/qonstant/distributed-agent/internal/adapter/storage"
 	telegramadapter "github.com/qonstant/distributed-agent/internal/adapter/telegram"
 	"github.com/qonstant/distributed-agent/internal/application/port"
 	"github.com/qonstant/distributed-agent/internal/application/usecase"
 	"github.com/qonstant/distributed-agent/internal/config"
 	"github.com/qonstant/distributed-agent/internal/domain/access"
+	"github.com/qonstant/distributed-agent/internal/domain/persistence"
 	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
 
 func Run() error {
 	cfg, err := config.Load()
 	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateBot(); err != nil {
 		return err
 	}
 
@@ -40,6 +45,7 @@ func Run() error {
 
 	var directory access.Directory = accessDirectory
 	var memory port.ConversationMemory
+	var turnEvents port.TurnEventPublisher
 	if cfg.Redis.URL != "" {
 		redisStore, err := accesscache.NewRedisStore(cfg.Redis.URL)
 		if err != nil {
@@ -63,14 +69,26 @@ func Run() error {
 		} else {
 			defer memoryStore.Close()
 			memory = chatmemory.New(memoryStore, chatmemory.Config{
-				TTL:      cfg.Redis.ConversationMemoryTTL,
-				MaxItems: int64(cfg.Redis.ConversationMemoryMaxItems),
+				TTL:               cfg.Redis.ConversationMemoryTTL,
+				MaxItems:          int64(cfg.Redis.ConversationMemoryMaxItems),
+				AssistantMaxChars: cfg.Redis.ConversationMemoryAssistantMaxChars,
 			})
 			log.Printf(
-				"Conversation memory enabled (redis, ttl=%s max_items=%d)",
+				"Conversation memory enabled (redis, ttl=%s max_items=%d assistant_max_chars=%d)",
 				cfg.Redis.ConversationMemoryTTL,
 				cfg.Redis.ConversationMemoryMaxItems,
+				cfg.Redis.ConversationMemoryAssistantMaxChars,
 			)
+		}
+	}
+	if cfg.RabbitMQURL != "" {
+		publisher, err := rabbitmq.NewTurnPublisher(cfg.RabbitMQURL, persistence.TurnEventsQueueName)
+		if err != nil {
+			log.Printf("RabbitMQ turn publisher warning (continuing without turn events): %v", err)
+		} else {
+			defer publisher.Close()
+			turnEvents = publisher
+			log.Printf("Turn persistence events enabled (rabbitmq, queue=%s)", persistence.TurnEventsQueueName)
 		}
 	}
 
@@ -105,6 +123,7 @@ func Run() error {
 			Answers:     answerSource,
 			Attachments: resolver,
 			Memory:      memory,
+			TurnEvents:  turnEvents,
 		},
 		usecase.GetSampleAttachments{
 			Policy:         policy,

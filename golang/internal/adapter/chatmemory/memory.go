@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ type Store interface {
 type Config struct {
 	TTL                         time.Duration
 	MaxItems                    int64
+	AssistantMaxChars           int
 	ConversationKeyPrefix       string
 	ActiveConversationKeyPrefix string
 	Now                         func() time.Time
@@ -30,6 +32,7 @@ type Memory struct {
 	store                       Store
 	ttl                         time.Duration
 	maxItems                    int64
+	assistantMaxChars           int
 	conversationKeyPrefix       string
 	activeConversationKeyPrefix string
 	now                         func() time.Time
@@ -41,6 +44,9 @@ func New(store Store, cfg Config) *Memory {
 	}
 	if cfg.MaxItems <= 0 {
 		cfg.MaxItems = 8
+	}
+	if cfg.AssistantMaxChars <= 0 {
+		cfg.AssistantMaxChars = 240
 	}
 	if cfg.ConversationKeyPrefix == "" {
 		cfg.ConversationKeyPrefix = "chat:conv:"
@@ -56,6 +62,7 @@ func New(store Store, cfg Config) *Memory {
 		store:                       store,
 		ttl:                         cfg.TTL,
 		maxItems:                    cfg.MaxItems,
+		assistantMaxChars:           cfg.AssistantMaxChars,
 		conversationKeyPrefix:       cfg.ConversationKeyPrefix,
 		activeConversationKeyPrefix: cfg.ActiveConversationKeyPrefix,
 		now:                         cfg.Now,
@@ -87,7 +94,12 @@ func (m *Memory) Context(ctx context.Context, ownerID int64) (qa.ConversationCon
 	return qa.ConversationContext{ID: conversationID}, nil
 }
 
-func (m *Memory) RememberTurn(ctx context.Context, ownerID int64, conversationID, userText, assistantText string) error {
+func (m *Memory) RememberTurn(
+	ctx context.Context,
+	ownerID int64,
+	conversationID, userText, assistantText string,
+	assistantAttachments []qa.ConversationAttachment,
+) error {
 	if m == nil || m.store == nil {
 		return nil
 	}
@@ -95,11 +107,16 @@ func (m *Memory) RememberTurn(ctx context.Context, ownerID int64, conversationID
 		conversationID = m.newConversationID(ownerID)
 	}
 
-	userPayload, err := marshalMessage(qa.ConversationRoleUser, userText, m.now())
+	userPayload, err := marshalMessage(qa.ConversationRoleUser, userText, nil, m.now())
 	if err != nil {
 		return err
 	}
-	assistantPayload, err := marshalMessage(qa.ConversationRoleAssistant, assistantText, m.now())
+	assistantPayload, err := marshalMessage(
+		qa.ConversationRoleAssistant,
+		truncateText(assistantText, m.assistantMaxChars),
+		normalizeAttachments(assistantAttachments),
+		m.now(),
+	)
 	if err != nil {
 		return err
 	}
@@ -118,11 +135,75 @@ func (m *Memory) RememberTurn(ctx context.Context, ownerID int64, conversationID
 	return m.store.Set(ctx, m.activeConversationKey(ownerID), conversationID, m.ttl)
 }
 
-func marshalMessage(role, text string, now time.Time) (string, error) {
+func truncateText(text string, maxChars int) string {
+	if maxChars <= 0 {
+		return text
+	}
+
+	runes := []rune(text)
+	if len(runes) <= maxChars {
+		return text
+	}
+	if maxChars <= 3 {
+		return string(runes[:maxChars])
+	}
+	if maxChars <= 10 {
+		return string(runes[:maxChars-3]) + "..."
+	}
+
+	const separator = "\n...\n"
+	separatorRunes := []rune(separator)
+	available := maxChars - len(separatorRunes)
+	if available <= 1 {
+		return string(runes[:maxChars-3]) + "..."
+	}
+
+	head := (available + 1) / 2
+	tail := available / 2
+
+	return string(runes[:head]) + separator + string(runes[len(runes)-tail:])
+}
+
+func normalizeAttachments(attachments []qa.ConversationAttachment) []qa.ConversationAttachment {
+	if len(attachments) == 0 {
+		return nil
+	}
+
+	normalized := make([]qa.ConversationAttachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		source := strings.TrimSpace(attachment.Source)
+		name := strings.TrimSpace(attachment.Name)
+		kind := attachment.Kind
+		if name == "" && source != "" {
+			name = path.Base(source)
+		}
+		if name == "." || name == "/" {
+			name = ""
+		}
+		if name == "" && source == "" {
+			continue
+		}
+		if kind == "" {
+			kind = qa.AttachmentDocument
+		}
+		normalized = append(normalized, qa.ConversationAttachment{
+			Source: source,
+			Name:   name,
+			Kind:   kind,
+		})
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
+}
+
+func marshalMessage(role, text string, attachments []qa.ConversationAttachment, now time.Time) (string, error) {
 	payload, err := json.Marshal(qa.ConversationMessage{
-		Role:      role,
-		Text:      text,
-		Timestamp: now.Unix(),
+		Role:        role,
+		Text:        text,
+		Timestamp:   now.Unix(),
+		Attachments: attachments,
 	})
 	if err != nil {
 		return "", err

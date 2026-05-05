@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}Usage Events Report{% endblock %}
+{% block topbar_title %}Usage and Cost Review{% endblock %}
+
+{% block content %}
+<section class="hero-panel">
+    <div class="hero-kicker">Usage Report</div>
+    <h1 class="hero-title">Track cost signals across users, conversations, and messages.</h1>
+    <p class="hero-copy">The data and filters are unchanged. The page is now tuned for quicker scanning of usage patterns, token volume, and cost context.</p>
+    <div class="hero-actions">
+        <a href="/admin-ui/dashboard" class="btn btn-app btn-app-secondary">Back to Dashboard</a>
+        <a href="/admin-ui/reports/admin-actions" class="btn btn-app btn-app-primary">Open Audit Report</a>
+    </div>
+</section>
+
+<section class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-arrow-down-up"></i>Input Tokens</div>
+        <div class="stat-value">{{ summary.input_tokens }}</div>
+        <div class="stat-footnote">Summed from the current result set.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-send"></i>Output Tokens</div>
+        <div class="stat-value">{{ summary.output_tokens }}</div>
+        <div class="stat-footnote">Summed from the current result set.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-calculator"></i>Total Tokens</div>
+        <div class="stat-value">{{ summary.total_tokens }}</div>
+        <div class="stat-footnote">Derived as input plus output.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-cash-coin"></i>Estimated Cost</div>
+        <div class="stat-value">{{ summary.estimated_cost }}</div>
+        <div class="stat-footnote">Cost total for the filtered events below.</div>
+    </div>
+</section>
+
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Filter Usage Events</h2>
+            <p class="panel-caption">Cut the dataset by user, conversation, message, event type, or date.</p>
+        </div>
+    </div>
+
+    <form method="get" class="filter-grid">
+        <div class="filter-span-2">
+            <label class="filter-label">User ID</label>
+            <input class="form-control" name="user_id" placeholder="user_id" value="{{ filters.user_id or '' }}">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Conversation ID</label>
+            <input class="form-control" name="conversation_id" placeholder="conversation_id" value="{{ filters.conversation_id or '' }}">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Message ID</label>
+            <input class="form-control" name="message_id" placeholder="message_id" value="{{ filters.message_id or '' }}">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Event Type</label>
+            <input class="form-control" name="event_type" placeholder="event_type" value="{{ filters.event_type or '' }}">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Date From</label>
+            <input class="form-control" name="date_from" type="text" placeholder="dd.mm.yyyy" value="{{ filters.date_from or '' }}">
+        </div>
+        <div class="filter-span-2">
+            <label class="filter-label">Date To</label>
+            <input class="form-control" name="date_to" type="text" placeholder="dd.mm.yyyy" value="{{ filters.date_to or '' }}">
+        </div>
+        <div class="filter-span-12 d-flex gap-2 flex-wrap">
+            <button class="btn btn-app btn-app-primary">Apply Filters</button>
+            <a href="/admin-ui/reports/usage-events" class="btn btn-app btn-app-secondary">Reset</a>
+        </div>
+    </form>
+</section>
+
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Usage Event Table</h2>
+            <p class="panel-caption">Detailed rows for the same usage records, now easier to scan by context and totals.</p>
+        </div>
+    </div>
+
+    <div class="table-wrap">
+        <div class="table-responsive">
+            <table class="table align-middle">
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>User</th>
+                        <th>Context</th>
+                        <th>Type</th>
+                        <th>Input</th>
+                        <th>Output</th>
+                        <th>Total</th>
+                        <th>Cost</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% if events %}
+                    {% for event in events %}
+                    <tr>
+                        <td>{{ event.created_at }}</td>
+                        <td>{{ event.user_id }}</td>
+                        <td>
+                            <div class="table-name">
+                                <strong>C{{ event.conversation_id or "-" }}</strong>
+                                <span>M{{ event.message_id or "-" }}</span>
+                            </div>
+                        </td>
+                        <td><span class="chip neutral"><i class="bi bi-lightning-charge"></i>{{ event.event_type }}</span></td>
+                        <td>{{ event.input_tokens }}</td>
+                        <td>{{ event.output_tokens }}</td>
+                        <td>{{ event.input_tokens + event.output_tokens }}</td>
+                        <td>{{ event.estimated_cost }}</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="8">
+                            <div class="empty-state">
+                                <strong class="d-block mb-2">No usage events found.</strong>
+                                Try a broader time range or remove some filters.
+                            </div>
+                        </td>
+                    </tr>
+                {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+{% endblock %}

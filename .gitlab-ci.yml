@@ -21,6 +21,50 @@ variables:
   BOT_CONTAINER_NAME: "study-bot"
   GOLANG_IMAGE_NAME: "golang-agent:latest"
   GOLANG_CONTAINER_NAME: "golang-agent"
+  ADMIN_IMAGE_NAME: "admin-panel:latest"
+  ADMIN_CONTAINER_NAME: "admin-panel"
+  LANDING_IMAGE_NAME: "landing-page:latest"
+  LANDING_CONTAINER_NAME: "landing-page"
+
+test-landing-prod:
+  stage: test
+  tags:
+    - vps1
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/landing-page/package.json
+  script:
+    - |
+      docker run --rm \
+        -v "$PWD:/workspace" \
+        -w /workspace/frontend/landing-page \
+        --user "$(id -u):$(id -g)" \
+        -e HOME=/tmp \
+        -e PNPM_HOME=/tmp/pnpm \
+        node:22-alpine \
+        sh -lc 'corepack pnpm config set store-dir /tmp/.pnpm-store && corepack pnpm install --frozen-lockfile && corepack pnpm exec tsc --noEmit && corepack pnpm build'
+
+test-landing-test:
+  stage: test
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/landing-page/package.json
+  script:
+    - |
+      docker run --rm \
+        -v "$PWD:/workspace" \
+        -w /workspace/frontend/landing-page \
+        --user "$(id -u):$(id -g)" \
+        -e HOME=/tmp \
+        -e PNPM_HOME=/tmp/pnpm \
+        node:22-alpine \
+        sh -lc 'corepack pnpm config set store-dir /tmp/.pnpm-store && corepack pnpm install --frozen-lockfile && corepack pnpm exec tsc --noEmit && corepack pnpm build'
 
 test-golang-prod:
   stage: test
@@ -186,6 +230,105 @@ deploy-rag-test:
     - 'shred -u .env || rm -f .env || true'
 
 ################################################################################
+# LANDING PAGE (frontend/landing-page)
+################################################################################
+build-landing-image-prod:
+  stage: build
+  tags:
+    - vps1
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/landing-page/Dockerfile
+        - frontend/landing-page/docker-compose.yml
+  script:
+    - cd frontend/landing-page
+    - 'LANDING_DEPLOY_IMAGE="landing-page:${CI_COMMIT_SHORT_SHA}"'
+    - 'docker build --no-cache --build-arg NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL:-}" --label app=landing-page --label git_sha="${CI_COMMIT_SHA}" -t "${LANDING_DEPLOY_IMAGE}" .'
+
+build-landing-image-test:
+  stage: build
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/landing-page/Dockerfile
+        - frontend/landing-page/docker-compose.yml
+  script:
+    - cd frontend/landing-page
+    - 'LANDING_DEPLOY_IMAGE="landing-page:test-${CI_COMMIT_SHORT_SHA}"'
+    - 'docker build --no-cache --build-arg NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL_TEST:-}" --label app=landing-page --label git_sha="${CI_COMMIT_SHA}" -t "${LANDING_DEPLOY_IMAGE}" .'
+
+deploy-landing-prod:
+  stage: deploy
+  tags:
+    - vps1
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/landing-page/Dockerfile
+        - frontend/landing-page/docker-compose.yml
+  script:
+    - cd frontend/landing-page
+    - 'LANDING_DEPLOY_IMAGE="landing-page:${CI_COMMIT_SHORT_SHA}"'
+    - 'export LANDING_IMAGE_NAME="${LANDING_DEPLOY_IMAGE}"'
+    - 'export LANDING_CONTAINER_NAME="${LANDING_CONTAINER_NAME:-landing-page}"'
+    - 'export LANDING_BIND_HOST="${LANDING_BIND_HOST:-127.0.0.1}"'
+    - 'export LANDING_HOST_PORT="${LANDING_HOST_PORT:-3000}"'
+    - 'export NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL:-}"'
+    - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_IMAGE_NAME}" > .env'
+    - 'printf "LANDING_CONTAINER_NAME=%s\n" "${LANDING_CONTAINER_NAME}" >> .env'
+    - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST}" >> .env'
+    - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT}" >> .env'
+    - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${NEXT_PUBLIC_SCRIPT_URL}" >> .env'
+    - chmod 600 .env
+    - 'docker image inspect "${LANDING_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${LANDING_IMAGE_NAME}" && exit 1)'
+    - docker-compose down --remove-orphans || true
+    - docker-compose up -d --no-build web
+    - sleep 3
+    - 'docker logs "${LANDING_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${LANDING_CONTAINER_NAME}" node -e "fetch(''http://127.0.0.1:3000/api/health'').then((res)=>res.text()).then((body)=>console.log(body)).catch((err)=>{console.error(err); process.exit(1)})"'
+    - docker image prune -a -f --filter "label=app=landing-page" --filter "until=168h" || true
+    - 'shred -u .env || rm -f .env || true'
+
+deploy-landing-test:
+  stage: deploy
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/landing-page/Dockerfile
+        - frontend/landing-page/docker-compose.yml
+  script:
+    - cd frontend/landing-page
+    - 'LANDING_DEPLOY_IMAGE="landing-page:test-${CI_COMMIT_SHORT_SHA}"'
+    - 'export LANDING_IMAGE_NAME="${LANDING_DEPLOY_IMAGE}"'
+    - 'export LANDING_CONTAINER_NAME="${LANDING_CONTAINER_NAME:-landing-page}"'
+    - 'export LANDING_BIND_HOST="${LANDING_BIND_HOST_TEST:-127.0.0.1}"'
+    - 'export LANDING_HOST_PORT="${LANDING_HOST_PORT_TEST:-3000}"'
+    - 'export NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL_TEST:-}"'
+    - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_IMAGE_NAME}" > .env'
+    - 'printf "LANDING_CONTAINER_NAME=%s\n" "${LANDING_CONTAINER_NAME}" >> .env'
+    - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST}" >> .env'
+    - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT}" >> .env'
+    - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${NEXT_PUBLIC_SCRIPT_URL}" >> .env'
+    - chmod 600 .env
+    - 'docker image inspect "${LANDING_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${LANDING_IMAGE_NAME}" && exit 1)'
+    - docker-compose down --remove-orphans || true
+    - docker-compose up -d --no-build web
+    - sleep 3
+    - 'docker logs "${LANDING_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${LANDING_CONTAINER_NAME}" node -e "fetch(''http://127.0.0.1:3000/api/health'').then((res)=>res.text()).then((body)=>console.log(body)).catch((err)=>{console.error(err); process.exit(1)})"'
+    - docker image prune -a -f --filter "label=app=landing-page" --filter "until=168h" || true
+    - 'shred -u .env || rm -f .env || true'
+
+################################################################################
 # BOT (study-bot)
 ################################################################################
 build-bot-image-prod:
@@ -305,6 +448,7 @@ deploy-golang-prod:
     - 'printf "DB_URL=%s\n" "${DB_URL}" >> .env'
     - 'printf "LOCAL_API_URL=%s\n" "${LOCAL_API_URL}" >> .env'
     - 'printf "REDIS_URL=%s\n" "${REDIS_URL}" >> .env'
+    - 'printf "RABBITMQ_URL=%s\n" "${RABBITMQ_URL}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
@@ -331,6 +475,7 @@ deploy-golang-test:
     - 'printf "DB_URL=%s\n" "${DB_URL_TEST}" >> .env'
     - 'printf "LOCAL_API_URL=%s\n" "${LOCAL_API_URL_TEST}" >> .env'
     - 'printf "REDIS_URL=%s\n" "${REDIS_URL_TEST}" >> .env'
+    - 'printf "RABBITMQ_URL=%s\n" "${RABBITMQ_URL_TEST}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN_TEST}" >> .env'
     - chmod 600 .env
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
@@ -378,4 +523,123 @@ prepare-golang-db-files-test:
     - chmod 600 /opt/golang-db/.env
     - echo "Copied DB files to /opt/golang-db"
     - find /opt/golang-db -maxdepth 3 -type f | sort
+
+################################################################################
+# ADMIN PANEL (frontend/admin)
+################################################################################
+build-admin-image-prod:
+  stage: build
+  tags:
+    - vps2
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/admin/Dockerfile
+        - frontend/admin/docker-compose.yml
+  script:
+    - cd frontend/admin
+    - 'ADMIN_DEPLOY_IMAGE="admin-panel:${CI_COMMIT_SHORT_SHA}"'
+    - docker build --no-cache --label app=admin-panel --label git_sha="${CI_COMMIT_SHA}" -t "${ADMIN_DEPLOY_IMAGE}" .
+
+build-admin-image-test:
+  stage: build
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/admin/Dockerfile
+        - frontend/admin/docker-compose.yml
+  script:
+    - cd frontend/admin
+    - 'ADMIN_DEPLOY_IMAGE="admin-panel:test-${CI_COMMIT_SHORT_SHA}"'
+    - docker build --no-cache --label app=admin-panel --label git_sha="${CI_COMMIT_SHA}" -t "${ADMIN_DEPLOY_IMAGE}" .
+
+deploy-admin-prod:
+  stage: deploy
+  tags:
+    - vps2
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - frontend/admin/Dockerfile
+        - frontend/admin/docker-compose.yml
+  script:
+    - cd frontend/admin
+    - 'ADMIN_DEPLOY_IMAGE="admin-panel:${CI_COMMIT_SHORT_SHA}"'
+    - 'test -n "${ADMIN_DATABASE_URL}" || (echo "ADMIN_DATABASE_URL is not set" && exit 1)'
+    - 'test -n "${ADMIN_SECRET_KEY}" || (echo "ADMIN_SECRET_KEY is not set" && exit 1)'
+    - 'test -n "${ADMIN_USERNAME}" || (echo "ADMIN_USERNAME is not set" && exit 1)'
+    - 'test -n "${ADMIN_PASSWORD}" || (echo "ADMIN_PASSWORD is not set" && exit 1)'
+    - 'test -n "${ADMIN_TELEGRAM_ID}" || (echo "ADMIN_TELEGRAM_ID is not set" && exit 1)'
+    - 'printf "APP_ENV=production\n" > .env'
+    - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_DEPLOY_IMAGE}" >> .env'
+    - 'printf "ADMIN_CONTAINER_NAME=%s\n" "${ADMIN_CONTAINER_NAME}" >> .env'
+    - 'printf "ADMIN_BIND_HOST=%s\n" "${ADMIN_BIND_HOST:-127.0.0.1}" >> .env'
+    - 'printf "ADMIN_HOST_PORT=%s\n" "${ADMIN_HOST_PORT:-3910}" >> .env'
+    - 'printf "DATABASE_URL=%s\n" "${ADMIN_DATABASE_URL}" >> .env'
+    - 'printf "SECRET_KEY=%s\n" "${ADMIN_SECRET_KEY}" >> .env'
+    - 'printf "ACCESS_TOKEN_EXPIRE_MINUTES=%s\n" "${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES:-60}" >> .env'
+    - 'printf "ALGORITHM=%s\n" "${ADMIN_ALGORITHM:-HS256}" >> .env'
+    - 'printf "ADMIN_USERNAME=%s\n" "${ADMIN_USERNAME}" >> .env'
+    - 'printf "ADMIN_PASSWORD=%s\n" "${ADMIN_PASSWORD}" >> .env'
+    - 'printf "ADMIN_TELEGRAM_ID=%s\n" "${ADMIN_TELEGRAM_ID}" >> .env'
+    - 'printf "ADMIN_COOKIE_SECURE=%s\n" "${ADMIN_COOKIE_SECURE:-true}" >> .env'
+    - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS:-*}" >> .env'
+    - chmod 600 .env
+    - docker run --rm --env-file .env --network host "${ADMIN_DEPLOY_IMAGE}" python scripts/check_schema.py
+    - docker run --rm --env-file .env --network host "${ADMIN_DEPLOY_IMAGE}" python scripts/create_admin.py
+    - docker-compose down --remove-orphans || true
+    - docker-compose up -d --no-build web
+    - sleep 3
+    - 'docker logs "${ADMIN_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${ADMIN_CONTAINER_NAME}" python -c "import urllib.request; print(urllib.request.urlopen(''http://127.0.0.1:8000/health'', timeout=3).read().decode())" || true'
+    - docker image prune -a -f --filter "label=app=admin-panel" --filter "until=168h" || true
+    - 'shred -u .env || rm -f .env || true'
+
+deploy-admin-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - frontend/admin/Dockerfile
+        - frontend/admin/docker-compose.yml
+  script:
+    - cd frontend/admin
+    - 'ADMIN_DEPLOY_IMAGE="admin-panel:test-${CI_COMMIT_SHORT_SHA}"'
+    - 'test -n "${ADMIN_DATABASE_URL_TEST}" || (echo "ADMIN_DATABASE_URL_TEST is not set" && exit 1)'
+    - 'test -n "${ADMIN_SECRET_KEY_TEST}" || (echo "ADMIN_SECRET_KEY_TEST is not set" && exit 1)'
+    - 'test -n "${ADMIN_USERNAME_TEST}" || (echo "ADMIN_USERNAME_TEST is not set" && exit 1)'
+    - 'test -n "${ADMIN_PASSWORD_TEST}" || (echo "ADMIN_PASSWORD_TEST is not set" && exit 1)'
+    - 'test -n "${ADMIN_TELEGRAM_ID_TEST}" || (echo "ADMIN_TELEGRAM_ID_TEST is not set" && exit 1)'
+    - 'printf "APP_ENV=production\n" > .env'
+    - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_DEPLOY_IMAGE}" >> .env'
+    - 'printf "ADMIN_CONTAINER_NAME=%s\n" "${ADMIN_CONTAINER_NAME}" >> .env'
+    - 'printf "ADMIN_BIND_HOST=%s\n" "${ADMIN_BIND_HOST_TEST:-127.0.0.1}" >> .env'
+    - 'printf "ADMIN_HOST_PORT=%s\n" "${ADMIN_HOST_PORT_TEST:-3910}" >> .env'
+    - 'printf "DATABASE_URL=%s\n" "${ADMIN_DATABASE_URL_TEST}" >> .env'
+    - 'printf "SECRET_KEY=%s\n" "${ADMIN_SECRET_KEY_TEST}" >> .env'
+    - 'printf "ACCESS_TOKEN_EXPIRE_MINUTES=%s\n" "${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES_TEST:-60}" >> .env'
+    - 'printf "ALGORITHM=%s\n" "${ADMIN_ALGORITHM_TEST:-HS256}" >> .env'
+    - 'printf "ADMIN_USERNAME=%s\n" "${ADMIN_USERNAME_TEST}" >> .env'
+    - 'printf "ADMIN_PASSWORD=%s\n" "${ADMIN_PASSWORD_TEST}" >> .env'
+    - 'printf "ADMIN_TELEGRAM_ID=%s\n" "${ADMIN_TELEGRAM_ID_TEST}" >> .env'
+    - 'printf "ADMIN_COOKIE_SECURE=%s\n" "${ADMIN_COOKIE_SECURE_TEST:-true}" >> .env'
+    - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS_TEST:-*}" >> .env'
+    - chmod 600 .env
+    - docker run --rm --env-file .env --network host "${ADMIN_DEPLOY_IMAGE}" python scripts/check_schema.py
+    - docker run --rm --env-file .env --network host "${ADMIN_DEPLOY_IMAGE}" python scripts/create_admin.py
+    - docker-compose down --remove-orphans || true
+    - docker-compose up -d --no-build web
+    - sleep 3
+    - 'docker logs "${ADMIN_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${ADMIN_CONTAINER_NAME}" python -c "import urllib.request; print(urllib.request.urlopen(''http://127.0.0.1:8000/health'', timeout=3).read().decode())" || true'
+    - docker image prune -a -f --filter "label=app=admin-panel" --filter "until=168h" || true
+    - 'shred -u .env || rm -f .env || true'
     

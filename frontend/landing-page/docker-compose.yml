@@ -1,0 +1,17 @@
+services:
+  web:
+    image: ${LANDING_IMAGE_NAME:-landing-page:latest}
+    container_name: ${LANDING_CONTAINER_NAME:-landing-page}
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_SCRIPT_URL: ${NEXT_PUBLIC_SCRIPT_URL:-}
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${LANDING_BIND_HOST:-127.0.0.1}:${LANDING_HOST_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0

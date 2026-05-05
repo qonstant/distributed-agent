@@ -14,6 +14,7 @@ type Config struct {
 	TelegramToken        string
 	DBURL                string
 	LocalAPIURL          string
+	RabbitMQURL          string
 	DocRoot              string
 	SampleAlbumTitle     string
 	SampleAttachmentKeys []string
@@ -22,11 +23,12 @@ type Config struct {
 }
 
 type RedisConfig struct {
-	URL                        string
-	AccessCacheTTL             time.Duration
-	NegativeCacheTTL           time.Duration
-	ConversationMemoryTTL      time.Duration
-	ConversationMemoryMaxItems int
+	URL                                 string
+	AccessCacheTTL                      time.Duration
+	NegativeCacheTTL                    time.Duration
+	ConversationMemoryTTL               time.Duration
+	ConversationMemoryMaxItems          int
+	ConversationMemoryAssistantMaxChars int
 }
 
 type S3Config struct {
@@ -45,15 +47,17 @@ func Load() (Config, error) {
 		TelegramToken:        strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		DBURL:                strings.TrimSpace(os.Getenv("DB_URL")),
 		LocalAPIURL:          strings.TrimSpace(os.Getenv("LOCAL_API_URL")),
+		RabbitMQURL:          strings.TrimSpace(os.Getenv("RABBITMQ_URL")),
 		DocRoot:              strings.TrimSpace(os.Getenv("DOC_ROOT")),
 		SampleAlbumTitle:     defaultString(os.Getenv("SAMPLE_ALBUM_TITLE"), "📄 Residence permit documents"),
 		SampleAttachmentKeys: parseCSV(os.Getenv("SAMPLE_ATTACHMENT_KEYS")),
 		Redis: RedisConfig{
-			URL:                        strings.TrimSpace(os.Getenv("REDIS_URL")),
-			AccessCacheTTL:             parseDurationEnv("ACCESS_CACHE_TTL", 5*time.Minute),
-			NegativeCacheTTL:           parseDurationEnv("ACCESS_CACHE_NEGATIVE_TTL", time.Minute),
-			ConversationMemoryTTL:      parseDurationEnv("CONVERSATION_MEMORY_TTL", 2*time.Hour),
-			ConversationMemoryMaxItems: parseIntEnv("CONVERSATION_MEMORY_MAX_ITEMS", 8),
+			URL:                                 strings.TrimSpace(os.Getenv("REDIS_URL")),
+			AccessCacheTTL:                      parseDurationEnv("ACCESS_CACHE_TTL", 5*time.Minute),
+			NegativeCacheTTL:                    parseDurationEnv("ACCESS_CACHE_NEGATIVE_TTL", time.Minute),
+			ConversationMemoryTTL:               parseDurationEnv("CONVERSATION_MEMORY_TTL", 2*time.Hour),
+			ConversationMemoryMaxItems:          parseIntEnv("CONVERSATION_MEMORY_MAX_ITEMS", 8),
+			ConversationMemoryAssistantMaxChars: parseIntEnv("CONVERSATION_MEMORY_ASSISTANT_MAX_CHARS", 240),
 		},
 		S3: S3Config{
 			Endpoint:        strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
@@ -71,17 +75,30 @@ func Load() (Config, error) {
 		}
 	}
 
+	return cfg, nil
+}
+
+func (cfg Config) ValidateBot() error {
 	if cfg.TelegramToken == "" {
-		return Config{}, fmt.Errorf("TELEGRAM_BOT_TOKEN is missing")
+		return fmt.Errorf("TELEGRAM_BOT_TOKEN is missing")
 	}
 	if cfg.DBURL == "" {
-		return Config{}, fmt.Errorf("DB_URL is missing")
+		return fmt.Errorf("DB_URL is missing")
 	}
 	if cfg.LocalAPIURL == "" {
-		return Config{}, fmt.Errorf("LOCAL_API_URL is missing")
+		return fmt.Errorf("LOCAL_API_URL is missing")
 	}
+	return nil
+}
 
-	return cfg, nil
+func (cfg Config) ValidateWorker() error {
+	if cfg.DBURL == "" {
+		return fmt.Errorf("DB_URL is missing")
+	}
+	if cfg.RabbitMQURL == "" {
+		return fmt.Errorf("RABBITMQ_URL is missing")
+	}
+	return nil
 }
 
 func defaultString(value, fallback string) string {

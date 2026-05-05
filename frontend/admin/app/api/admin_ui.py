@@ -11,6 +11,7 @@ from starlette.status import HTTP_302_FOUND
 from ..auth import authenticate_admin, create_access_token, decode_access_token
 from ..crud import (
     classify_message_by_admin,
+    create_or_update_user,
     extend_user_access,
     get_all_admin_actions,
     get_all_users,
@@ -22,6 +23,7 @@ from ..crud import (
     search_users_by_username,
     set_user_access,
     set_user_blocked,
+    update_user_identity,
     verify_user_payment,
 )
 from ..db import get_db
@@ -58,7 +60,15 @@ def parse_optional_date(value: str | None) -> date | None:
     try:
         return date.fromisoformat(cleaned)
     except ValueError:
+        pass
+    try:
+        return datetime.strptime(cleaned, "%d.%m.%Y").date()
+    except ValueError:
         return None
+
+
+def format_filter_date(value: date | None) -> str:
+    return value.strftime("%d.%m.%Y") if value else ""
 
 
 def parse_optional_int(value: str | None) -> int | None:
@@ -239,9 +249,63 @@ async def user_profile(
             "admin_actions_as_admin": profile.admin_actions_as_admin,
             "admin_user": admin_user,
             "classifier_intents": CLASSIFIER_INTENTS,
-            "filters": {"date_from": parsed_date_from, "date_to": parsed_date_to},
+            "filters": {
+                "date_from": format_filter_date(parsed_date_from),
+                "date_to": format_filter_date(parsed_date_to),
+            },
         },
     )
+
+
+@router.post("/users")
+async def create_user_ui(
+    request: Request,
+    telegram_id: int = Form(...),
+    username: str = Form(""),
+    first_name: str = Form(""),
+    last_name: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    admin_user=Depends(get_current_admin_user),
+):
+    if not admin_user:
+        return RedirectResponse("/admin-ui/login", status_code=HTTP_302_FOUND)
+
+    user = await create_or_update_user(
+        db=db,
+        telegram_id=telegram_id,
+        username=normalize_optional_text(username),
+        first_name=normalize_optional_text(first_name),
+        last_name=normalize_optional_text(last_name),
+        admin_user_id=admin_user.id,
+    )
+    return RedirectResponse(f"/admin-ui/users/{user.telegram_id}", status_code=HTTP_302_FOUND)
+
+
+@router.post("/users/{telegram_id}/identity")
+async def update_user_identity_ui(
+    request: Request,
+    telegram_id: int,
+    username: str = Form(""),
+    first_name: str = Form(""),
+    last_name: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    admin_user=Depends(get_current_admin_user),
+):
+    if not admin_user:
+        return RedirectResponse("/admin-ui/login", status_code=HTTP_302_FOUND)
+
+    user = await update_user_identity(
+        db=db,
+        telegram_id=telegram_id,
+        username=normalize_optional_text(username),
+        first_name=normalize_optional_text(first_name),
+        last_name=normalize_optional_text(last_name),
+        admin_user_id=admin_user.id,
+    )
+    if not user:
+        return HTMLResponse("User not found", status_code=404)
+
+    return RedirectResponse(f"/admin-ui/users/{telegram_id}", status_code=HTTP_302_FOUND)
 
 
 @router.post("/grant/{telegram_id}")
@@ -437,8 +501,8 @@ async def admin_actions_report(
                 "target_user_id": parsed_target_user_id,
                 "entity_type": parsed_entity_type,
                 "entity_id": parsed_entity_id,
-                "date_from": parsed_date_from,
-                "date_to": parsed_date_to,
+                "date_from": format_filter_date(parsed_date_from),
+                "date_to": format_filter_date(parsed_date_to),
             },
             "admin_user": admin_user,
         },
@@ -498,8 +562,8 @@ async def usage_events_report(
                 "conversation_id": parsed_conversation_id,
                 "message_id": parsed_message_id,
                 "event_type": parsed_event_type,
-                "date_from": parsed_date_from,
-                "date_to": parsed_date_to,
+                "date_from": format_filter_date(parsed_date_from),
+                "date_to": format_filter_date(parsed_date_to),
             },
             "admin_user": admin_user,
         },

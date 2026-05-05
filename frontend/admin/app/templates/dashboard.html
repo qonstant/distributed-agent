@@ -18,6 +18,9 @@
     <div class="hero-actions">
         <a href="/admin-ui/reports/usage-events" class="btn btn-app btn-app-primary">Usage Report</a>
         <a href="/admin-ui/reports/admin-actions" class="btn btn-app btn-app-secondary">Audit Report</a>
+        <button class="btn btn-tonal ink" type="button" data-bs-toggle="collapse" data-bs-target="#add-user-panel" aria-expanded="false" aria-controls="add-user-panel">
+            <i class="bi bi-plus-lg"></i> Add User
+        </button>
     </div>
 </section>
 
@@ -80,12 +83,46 @@
     </form>
 </section>
 
+<section class="surface-panel collapse" id="add-user-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Add User</h2>
+            <p class="panel-caption">Create a user in the directory by Telegram ID, then open the profile for moderation.</p>
+        </div>
+    </div>
+
+    <form method="post" action="/admin-ui/users" class="filter-grid">
+        <div class="filter-span-3">
+            <label class="filter-label">Telegram ID</label>
+            <input type="text" name="telegram_id" inputmode="numeric" pattern="-?[0-9]+" class="form-control" placeholder="123456789" required>
+        </div>
+        <div class="filter-span-3">
+            <label class="filter-label">Username</label>
+            <input type="text" name="username" class="form-control" placeholder="username">
+        </div>
+        <div class="filter-span-3">
+            <label class="filter-label">First Name</label>
+            <input type="text" name="first_name" class="form-control" placeholder="First name">
+        </div>
+        <div class="filter-span-3">
+            <label class="filter-label">Last Name</label>
+            <input type="text" name="last_name" class="form-control" placeholder="Last name">
+        </div>
+        <div class="filter-span-12 d-flex gap-2 flex-wrap">
+            <button type="submit" class="btn btn-app btn-app-primary">Create User</button>
+        </div>
+    </form>
+</section>
+
 <section class="surface-panel">
     <div class="panel-heading">
         <div>
             <h2 class="panel-title">User Directory</h2>
             <p class="panel-caption">Showing {{ users|length }} users on this page out of {{ total_users }} filtered results.</p>
         </div>
+        <button class="btn btn-tonal ink" type="button" data-bs-toggle="collapse" data-bs-target="#add-user-panel" aria-expanded="false" aria-controls="add-user-panel">
+            <i class="bi bi-plus-lg"></i> Add User
+        </button>
     </div>
 
     <div class="table-wrap">
@@ -133,7 +170,7 @@
                         </td>
                         <td class="text-end">
                             <div class="action-stack">
-                                <a href="/admin-ui/users/{{ user.telegram_id }}" class="btn btn-ghost">Open Profile</a>
+                                <a href="/admin-ui/users/{{ user.telegram_id }}" class="btn btn-tonal ink">Open Profile</a>
                                 {% if not user.has_access %}
                                 <form action="/admin-ui/grant/{{ user.telegram_id }}" method="post" class="d-inline">
                                     <input type="hidden" name="notes" value="">

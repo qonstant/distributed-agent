@@ -20,6 +20,7 @@
             --border-strong: #cbd5e1;
             --ink: #0f172a;
             --muted: #64748b;
+            --placeholder: #64748b;
             --accent: #2563eb;
             --accent-strong: #1d4ed8;
             --accent-soft: #dbeafe;
@@ -43,6 +44,7 @@
             --border-strong: #334155;
             --ink: #e5eefb;
             --muted: #94a3b8;
+            --placeholder: #e5eefb;
             --accent: #60a5fa;
             --accent-strong: #3b82f6;
             --accent-soft: rgba(96, 165, 250, 0.14);
@@ -344,6 +346,12 @@
             padding: 0.75rem 0.9rem;
         }
 
+        .form-control::placeholder,
+        textarea.form-control::placeholder {
+            color: var(--placeholder);
+            opacity: 1;
+        }
+
         .form-control:focus,
         .form-select:focus {
             color: var(--ink);
@@ -368,6 +376,8 @@
         .table {
             margin-bottom: 0;
             --bs-table-bg: transparent;
+            --bs-table-color: var(--ink);
+            --bs-table-hover-color: var(--ink);
             --bs-table-border-color: var(--border);
             --bs-table-hover-bg: var(--surface-muted);
             color: var(--ink);
@@ -386,6 +396,7 @@
         .table tbody td {
             padding: 0.95rem 1rem;
             vertical-align: top;
+            color: var(--ink);
         }
 
         .table-name {
@@ -393,7 +404,7 @@
             gap: 0.18rem;
         }
 
-        .table-name strong { font-size: 0.95rem; }
+        .table-name strong { color: var(--ink); font-size: 0.95rem; }
         .table-name span { color: var(--muted); font-size: 0.84rem; }
 
         .chip {
@@ -440,11 +451,27 @@
             border-color: var(--border);
         }
 
+        .btn-app-secondary:hover,
+        .btn-ghost:hover,
+        .theme-toggle:hover {
+            background: var(--surface-muted);
+            color: var(--ink);
+            border-color: var(--border-strong);
+        }
+
         .btn-tonal { background: var(--surface-muted); color: var(--ink); border-color: var(--border); }
         .btn-tonal.teal { color: var(--accent-strong); background: var(--accent-soft); border-color: transparent; }
         .btn-tonal.gold { color: var(--warning); background: var(--warning-soft); border-color: transparent; }
         .btn-tonal.ink { color: var(--ink); background: var(--surface-muted); }
         .btn-tonal.danger { color: var(--danger); background: var(--danger-soft); border-color: transparent; }
+        .btn-tonal:hover {
+            color: var(--ink);
+            background: var(--surface);
+            border-color: var(--border-strong);
+        }
+        .btn-tonal.teal:hover { color: var(--accent-strong); background: var(--accent-soft); }
+        .btn-tonal.gold:hover { color: var(--warning); background: var(--warning-soft); }
+        .btn-tonal.danger:hover { color: var(--danger); background: var(--danger-soft); }
 
         .info-list,
         .conversation-list,

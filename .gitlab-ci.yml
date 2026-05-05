@@ -36,11 +36,12 @@ test-landing-prod:
       exists:
         - frontend/landing-page/package.json
   script:
-    - cd frontend/landing-page
-    - corepack enable
-    - pnpm install --frozen-lockfile
-    - pnpm exec tsc --noEmit
-    - pnpm build
+    - |
+      docker run --rm \
+        -v "$PWD:/workspace" \
+        -w /workspace/frontend/landing-page \
+        node:22-alpine \
+        sh -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm exec tsc --noEmit && pnpm build'
 
 test-landing-test:
   stage: test
@@ -52,11 +53,12 @@ test-landing-test:
       exists:
         - frontend/landing-page/package.json
   script:
-    - cd frontend/landing-page
-    - corepack enable
-    - pnpm install --frozen-lockfile
-    - pnpm exec tsc --noEmit
-    - pnpm build
+    - |
+      docker run --rm \
+        -v "$PWD:/workspace" \
+        -w /workspace/frontend/landing-page \
+        node:22-alpine \
+        sh -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm exec tsc --noEmit && pnpm build'
 
 test-golang-prod:
   stage: test

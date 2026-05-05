@@ -147,6 +147,39 @@ async def create_or_update_user(
     return user
 
 
+async def update_user_identity(
+    db: AsyncSession,
+    telegram_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    admin_user_id: int | None = None,
+    notes: str | None = None,
+):
+    user = await get_user_by_telegram_id(db, telegram_id)
+    if not user:
+        return None
+
+    user.username = username
+    user.first_name = first_name
+    user.last_name = last_name
+    await db.commit()
+    await db.refresh(user)
+
+    if admin_user_id is not None:
+        await create_admin_action(
+            db=db,
+            admin_user_id=admin_user_id,
+            target_user_id=user.id,
+            action_type="other",
+            entity_type="user",
+            entity_id=user.id,
+            notes=notes or "update_user_profile",
+        )
+
+    return user
+
+
 async def set_user_access(
     db: AsyncSession,
     telegram_id: int,

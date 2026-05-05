@@ -328,6 +328,34 @@ deploy-landing-test:
     - docker image prune -a -f --filter "label=app=landing-page" --filter "until=168h" || true
     - 'shred -u .env || rm -f .env || true'
 
+deploy-nginx-prod:
+  stage: deploy
+  tags:
+    - vps1
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      exists:
+        - infra/nginx/prod/sites-available/admin.nomadmit.com.conf
+        - infra/nginx/prod/sites-available/nomadmit.com.conf
+        - infra/nginx/prod/sites-available/s3.nomadmit.com.conf
+  script:
+    - bash infra/nginx/deploy.sh prod admin.nomadmit.com nomadmit.com s3.nomadmit.com
+
+deploy-nginx-test:
+  stage: deploy
+  tags:
+    - vps1-test
+  before_script: *before-vps1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - infra/nginx/test/sites-available/admin.nomadmit.dev.conf
+        - infra/nginx/test/sites-available/nomadmit.dev.conf
+        - infra/nginx/test/sites-available/s3.nomadmit.dev.conf
+  script:
+    - bash infra/nginx/deploy.sh test admin.nomadmit.dev nomadmit.dev s3.nomadmit.dev
+
 ################################################################################
 # BOT (study-bot)
 ################################################################################

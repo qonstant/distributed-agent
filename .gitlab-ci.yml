@@ -275,12 +275,18 @@ deploy-landing-prod:
   script:
     - cd frontend/landing-page
     - 'LANDING_DEPLOY_IMAGE="landing-page:${CI_COMMIT_SHORT_SHA}"'
-    - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_DEPLOY_IMAGE}" > .env'
+    - 'export LANDING_IMAGE_NAME="${LANDING_DEPLOY_IMAGE}"'
+    - 'export LANDING_CONTAINER_NAME="${LANDING_CONTAINER_NAME:-landing-page}"'
+    - 'export LANDING_BIND_HOST="${LANDING_BIND_HOST:-127.0.0.1}"'
+    - 'export LANDING_HOST_PORT="${LANDING_HOST_PORT:-3000}"'
+    - 'export NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL:-}"'
+    - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_IMAGE_NAME}" > .env'
     - 'printf "LANDING_CONTAINER_NAME=%s\n" "${LANDING_CONTAINER_NAME}" >> .env'
-    - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST:-127.0.0.1}" >> .env'
-    - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT:-3000}" >> .env'
-    - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${LANDING_NEXT_PUBLIC_SCRIPT_URL:-}" >> .env'
+    - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST}" >> .env'
+    - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT}" >> .env'
+    - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${NEXT_PUBLIC_SCRIPT_URL}" >> .env'
     - chmod 600 .env
+    - 'docker image inspect "${LANDING_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${LANDING_IMAGE_NAME}" && exit 1)'
     - docker-compose down --remove-orphans || true
     - docker-compose up -d --no-build web
     - sleep 3
@@ -302,12 +308,18 @@ deploy-landing-test:
   script:
     - cd frontend/landing-page
     - 'LANDING_DEPLOY_IMAGE="landing-page:test-${CI_COMMIT_SHORT_SHA}"'
-    - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_DEPLOY_IMAGE}" > .env'
+    - 'export LANDING_IMAGE_NAME="${LANDING_DEPLOY_IMAGE}"'
+    - 'export LANDING_CONTAINER_NAME="${LANDING_CONTAINER_NAME:-landing-page}"'
+    - 'export LANDING_BIND_HOST="${LANDING_BIND_HOST_TEST:-127.0.0.1}"'
+    - 'export LANDING_HOST_PORT="${LANDING_HOST_PORT_TEST:-3000}"'
+    - 'export NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL_TEST:-}"'
+    - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_IMAGE_NAME}" > .env'
     - 'printf "LANDING_CONTAINER_NAME=%s\n" "${LANDING_CONTAINER_NAME}" >> .env'
-    - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST_TEST:-127.0.0.1}" >> .env'
-    - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT_TEST:-3000}" >> .env'
-    - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${LANDING_NEXT_PUBLIC_SCRIPT_URL_TEST:-}" >> .env'
+    - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST}" >> .env'
+    - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT}" >> .env'
+    - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${NEXT_PUBLIC_SCRIPT_URL}" >> .env'
     - chmod 600 .env
+    - 'docker image inspect "${LANDING_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${LANDING_IMAGE_NAME}" && exit 1)'
     - docker-compose down --remove-orphans || true
     - docker-compose up -d --no-build web
     - sleep 3

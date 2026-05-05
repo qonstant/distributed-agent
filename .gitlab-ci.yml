@@ -44,7 +44,7 @@ test-landing-prod:
         -e HOME=/tmp \
         -e PNPM_HOME=/tmp/pnpm \
         node:22-alpine \
-        sh -lc 'export PATH="$PNPM_HOME:$PATH" && corepack enable && pnpm config set store-dir /tmp/.pnpm-store && pnpm install --frozen-lockfile && pnpm exec tsc --noEmit && pnpm build'
+        sh -lc 'corepack pnpm config set store-dir /tmp/.pnpm-store && corepack pnpm install --frozen-lockfile && corepack pnpm exec tsc --noEmit && corepack pnpm build'
 
 test-landing-test:
   stage: test
@@ -64,7 +64,7 @@ test-landing-test:
         -e HOME=/tmp \
         -e PNPM_HOME=/tmp/pnpm \
         node:22-alpine \
-        sh -lc 'export PATH="$PNPM_HOME:$PATH" && corepack enable && pnpm config set store-dir /tmp/.pnpm-store && pnpm install --frozen-lockfile && pnpm exec tsc --noEmit && pnpm build'
+        sh -lc 'corepack pnpm config set store-dir /tmp/.pnpm-store && corepack pnpm install --frozen-lockfile && corepack pnpm exec tsc --noEmit && corepack pnpm build'
 
 test-golang-prod:
   stage: test

@@ -1,0 +1,21 @@
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), deny (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+10.66.66.1 15672/tcp on wg0 ALLOW IN    10.66.66.0/24
+51820/udp                  ALLOW IN    Anywhere
+5672/tcp                   DENY IN     Anywhere
+15672/tcp                  DENY IN     Anywhere
+22/tcp (OpenSSH)           ALLOW IN    Anywhere
+15672/tcp                  ALLOW IN    10.66.66.0/24
+10.66.66.1 15672/tcp on wg0 ALLOW IN    Anywhere
+10.66.66.1 15672/tcp       ALLOW IN    10.66.66.2
+80,443/tcp (Nginx Full)    ALLOW IN    Anywhere
+51820/udp (v6)             ALLOW IN    Anywhere (v6)
+5672/tcp (v6)              DENY IN     Anywhere (v6)
+15672/tcp (v6)             DENY IN     Anywhere (v6)
+22/tcp (OpenSSH (v6))      ALLOW IN    Anywhere (v6)
+80,443/tcp (Nginx Full (v6)) ALLOW IN    Anywhere (v6)

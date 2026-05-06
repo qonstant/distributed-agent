@@ -1,0 +1,11 @@
+Certificate Name: admin.nomadmit.dev
+  Domains: admin.nomadmit.dev
+  Expiry Date: 2026-07-22 13:23:49+00:00
+
+Certificate Name: nomadmit.dev
+  Domains: nomadmit.dev
+  Expiry Date: 2026-07-30 21:35:36+00:00
+
+Certificate Name: s3.nomadmit.dev
+  Domains: s3.nomadmit.dev
+  Expiry Date: 2026-06-23 11:50:14+00:00

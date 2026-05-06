@@ -3,6 +3,7 @@ SHELL := /bin/bash
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
 	landing-build landing-up landing-down \
+	rabbitmq-up rabbitmq-down rabbitmq-logs \
 	go-build go-up go-down go-clean \
 	db-up db-down db-smoke db-smoke-test \
 	migrateup migrateup1 migratedown migratedown1 \
@@ -31,6 +32,7 @@ GO_IMAGE := distributed-agent-go
 GO_DOCKERFILE := golang/Dockerfile
 GO_BUILD_CTX := golang
 GO_COMPOSE_FILE := golang/docker-compose.yml
+GO_RABBITMQ_COMPOSE_FILE := golang/docker-compose.rabbitmq.yml
 GO_DIR := golang
 GO_GOCACHE := $(GO_DIR)/.gocache
 GO_COVERAGE_FILE := $(GO_DIR)/coverage.out
@@ -56,6 +58,11 @@ help:
 	@echo "  make landing-build"
 	@echo "  make landing-up"
 	@echo "  make landing-down"
+	@echo ""
+	@echo "RabbitMQ:"
+	@echo "  make rabbitmq-up"
+	@echo "  make rabbitmq-down"
+	@echo "  make rabbitmq-logs"
 	@echo ""
 	@echo "Go backend:"
 	@echo "  make go-build"
@@ -135,6 +142,20 @@ landing-up:
 
 landing-down:
 	docker compose -f "$(LANDING_COMPOSE_FILE)" down
+
+# ----------------------------
+# RabbitMQ
+# ----------------------------
+
+rabbitmq-up:
+	@set -a; [ -f "$(GO_DIR)/.env.rabbitmq" ] && source "$(GO_DIR)/.env.rabbitmq" || true; set +a; \
+	docker compose -f "$(GO_RABBITMQ_COMPOSE_FILE)" up -d
+
+rabbitmq-down:
+	docker compose -f "$(GO_RABBITMQ_COMPOSE_FILE)" down
+
+rabbitmq-logs:
+	docker compose -f "$(GO_RABBITMQ_COMPOSE_FILE)" logs -f
 
 # ----------------------------
 # Go backend

@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: distributed-agent-rabbitmq
+    restart: unless-stopped
+    hostname: distributed-agent-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:-distributed-agent}
+    ports:
+      - "${RABBITMQ_AMQP_BIND_HOST:-127.0.0.1}:${RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_BIND_HOST:-127.0.0.1}:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  rabbitmq_data:

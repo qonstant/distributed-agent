@@ -603,11 +603,15 @@ deploy-admin-prod:
     - 'test -n "${ADMIN_USERNAME}" || (echo "ADMIN_USERNAME is not set" && exit 1)'
     - 'test -n "${ADMIN_PASSWORD}" || (echo "ADMIN_PASSWORD is not set" && exit 1)'
     - 'test -n "${ADMIN_TELEGRAM_ID}" || (echo "ADMIN_TELEGRAM_ID is not set" && exit 1)'
+    - 'export ADMIN_IMAGE_NAME="${ADMIN_DEPLOY_IMAGE}"'
+    - 'export ADMIN_CONTAINER_NAME="${ADMIN_CONTAINER_NAME:-admin-panel}"'
+    - 'export ADMIN_BIND_HOST="${ADMIN_BIND_HOST:-127.0.0.1}"'
+    - 'export ADMIN_HOST_PORT="${ADMIN_HOST_PORT:-3910}"'
     - 'printf "APP_ENV=production\n" > .env'
-    - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_DEPLOY_IMAGE}" >> .env'
+    - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_IMAGE_NAME}" >> .env'
     - 'printf "ADMIN_CONTAINER_NAME=%s\n" "${ADMIN_CONTAINER_NAME}" >> .env'
-    - 'printf "ADMIN_BIND_HOST=%s\n" "${ADMIN_BIND_HOST:-127.0.0.1}" >> .env'
-    - 'printf "ADMIN_HOST_PORT=%s\n" "${ADMIN_HOST_PORT:-3910}" >> .env'
+    - 'printf "ADMIN_BIND_HOST=%s\n" "${ADMIN_BIND_HOST}" >> .env'
+    - 'printf "ADMIN_HOST_PORT=%s\n" "${ADMIN_HOST_PORT}" >> .env'
     - 'printf "DATABASE_URL=%s\n" "${ADMIN_DATABASE_URL}" >> .env'
     - 'printf "SECRET_KEY=%s\n" "${ADMIN_SECRET_KEY}" >> .env'
     - 'printf "ACCESS_TOKEN_EXPIRE_MINUTES=%s\n" "${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES:-60}" >> .env'
@@ -620,6 +624,7 @@ deploy-admin-prod:
     - chmod 600 .env
     - docker run --rm --env-file .env --network host "${ADMIN_DEPLOY_IMAGE}" python scripts/check_schema.py
     - docker run --rm --env-file .env --network host "${ADMIN_DEPLOY_IMAGE}" python scripts/create_admin.py
+    - 'docker image inspect "${ADMIN_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${ADMIN_IMAGE_NAME}" && exit 1)'
     - docker-compose down --remove-orphans || true
     - docker-compose up -d --no-build web
     - sleep 3
@@ -646,11 +651,15 @@ deploy-admin-test:
     - 'test -n "${ADMIN_USERNAME_TEST}" || (echo "ADMIN_USERNAME_TEST is not set" && exit 1)'
     - 'test -n "${ADMIN_PASSWORD_TEST}" || (echo "ADMIN_PASSWORD_TEST is not set" && exit 1)'
     - 'test -n "${ADMIN_TELEGRAM_ID_TEST}" || (echo "ADMIN_TELEGRAM_ID_TEST is not set" && exit 1)'
+    - 'export ADMIN_IMAGE_NAME="${ADMIN_DEPLOY_IMAGE}"'
+    - 'export ADMIN_CONTAINER_NAME="${ADMIN_CONTAINER_NAME:-admin-panel}"'
+    - 'export ADMIN_BIND_HOST="${ADMIN_BIND_HOST_TEST:-127.0.0.1}"'
+    - 'export ADMIN_HOST_PORT="${ADMIN_HOST_PORT_TEST:-3910}"'
     - 'printf "APP_ENV=production\n" > .env'
-    - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_DEPLOY_IMAGE}" >> .env'
+    - 'printf "ADMIN_IMAGE_NAME=%s\n" "${ADMIN_IMAGE_NAME}" >> .env'
     - 'printf "ADMIN_CONTAINER_NAME=%s\n" "${ADMIN_CONTAINER_NAME}" >> .env'
-    - 'printf "ADMIN_BIND_HOST=%s\n" "${ADMIN_BIND_HOST_TEST:-127.0.0.1}" >> .env'
-    - 'printf "ADMIN_HOST_PORT=%s\n" "${ADMIN_HOST_PORT_TEST:-3910}" >> .env'
+    - 'printf "ADMIN_BIND_HOST=%s\n" "${ADMIN_BIND_HOST}" >> .env'
+    - 'printf "ADMIN_HOST_PORT=%s\n" "${ADMIN_HOST_PORT}" >> .env'
     - 'printf "DATABASE_URL=%s\n" "${ADMIN_DATABASE_URL_TEST}" >> .env'
     - 'printf "SECRET_KEY=%s\n" "${ADMIN_SECRET_KEY_TEST}" >> .env'
     - 'printf "ACCESS_TOKEN_EXPIRE_MINUTES=%s\n" "${ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES_TEST:-60}" >> .env'
@@ -663,6 +672,7 @@ deploy-admin-test:
     - chmod 600 .env
     - docker run --rm --env-file .env --network host "${ADMIN_DEPLOY_IMAGE}" python scripts/check_schema.py
     - docker run --rm --env-file .env --network host "${ADMIN_DEPLOY_IMAGE}" python scripts/create_admin.py
+    - 'docker image inspect "${ADMIN_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${ADMIN_IMAGE_NAME}" && exit 1)'
     - docker-compose down --remove-orphans || true
     - docker-compose up -d --no-build web
     - sleep 3

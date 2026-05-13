@@ -25,6 +25,10 @@ EN_PAGE_1_REFERENCE = "Especially check page 1 in the attached file; it has the 
 RU_PAGE_1_REFERENCE = "Особенно проверьте страницу 1 в приложенном файле: там самые релевантные детали по этому ответу."
 RU_PAGE_3_REFERENCE = "Особенно проверьте страницу 3 в приложенном файле: там самые релевантные детали по этому ответу."
 EN_FILE_OFFER = "Should I send you the file with this information?"
+EN_TOPIC_CLARIFICATION = "Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
+EN_RETRIEVAL_FOLLOW_UP = "To find the right answer in the documents, which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
+EN_SCOPE_ANSWER = "I can help only with education-abroad questions: admission, student visas, student residence permits, scholarship, CVs, motivation letters, and recommendation letters."
+RU_SCOPE_ANSWER = "Я могу помогать только с вопросами про обучение за рубежом: поступление, студенческую визу, студенческий ВНЖ, стипендию, CV, мотивационное и рекомендательное письма."
 
 
 class FakeGateway:
@@ -430,7 +434,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "To find the right answer in the documents, which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
+            EN_RETRIEVAL_FOLLOW_UP,
         )
         self.assertIsNone(result.file)
 
@@ -487,7 +491,7 @@ class QueryServiceTests(unittest.TestCase):
             Classification(intent="GUIDANCE", explain="ambiguous docs question", language="en"),
             clarity=RetrievalClarity(
                 is_clear=False,
-                clarifying_question="Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
+                clarifying_question=EN_TOPIC_CLARIFICATION,
                 reason="The requested document topic is missing.",
             ),
         )
@@ -499,7 +503,7 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(
             result,
             QueryResult(
-                answer="Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
+                answer=EN_TOPIC_CLARIFICATION,
                 file=None,
                 classification=Classification(intent="GUIDANCE", explain="ambiguous docs question", language="en"),
                 usage_events=[
@@ -516,7 +520,7 @@ class QueryServiceTests(unittest.TestCase):
         history = [
             ConversationMessage(
                 role="assistant",
-                text="Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
+                text=EN_TOPIC_CLARIFICATION,
                 ts=1,
             )
         ]
@@ -671,7 +675,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "I can help only with education-abroad questions: admission, student visas, scholarship, CVs, motivation letters, and recommendation letters.",
+            EN_SCOPE_ANSWER,
         )
         self.assertEqual(gateway.clarity_calls, [("never mind", "en", "OTHER", history)])
         self.assertEqual(gateway.answer_factual_calls, [])
@@ -695,7 +699,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "I can help only with education-abroad questions: admission, student visas, scholarship, CVs, motivation letters, and recommendation letters.",
+            EN_SCOPE_ANSWER,
         )
         self.assertIsNone(result.file)
         self.assertEqual(gateway.clarity_calls, [("How do I get a tourist visa for Italy?", "en", "GUIDANCE", [])])
@@ -712,7 +716,7 @@ class QueryServiceTests(unittest.TestCase):
 
         self.assertEqual(
             result.answer,
-            "Я могу помогать только с вопросами про обучение за рубежом: поступление, студенческую визу, стипендию, CV, мотивационное и рекомендательное письма.",
+            RU_SCOPE_ANSWER,
         )
         self.assertIsNone(result.file)
         self.assertEqual(gateway.clarity_calls, [])

@@ -108,6 +108,9 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertEqual(classification.intent, "OTHER")
         prompt = fake_client.responses.calls[0]["input"]
         self.assertIn("only for education/study-abroad support", prompt)
+        self.assertIn("student residence permits/permesso di soggiorno", prompt)
+        self.assertIn("study-related travel rights or constraints", prompt)
+        self.assertIn("assume they mean the student residence permit by default", prompt)
         self.assertIn("tourist visas", prompt)
         self.assertIn("For out-of-scope requests, choose OTHER", prompt)
 
@@ -179,8 +182,10 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("Treat short/lazy queries as clear", prompt)
         self.assertIn("Do NOT ask sub-aspect clarifications inside an already identified topic", prompt)
         self.assertIn("what photo format is needed for the visa", prompt)
-        self.assertIn("Tourist visas, travel visas, work visas", prompt)
+        self.assertIn("Tourist visas, travel visas unrelated to study, work visas", prompt)
         self.assertIn("For a generic visa query without enough context, ask whether the user means the student visa", prompt)
+        self.assertIn("For a generic residence permit query, assume student residence permit", prompt)
+        self.assertIn("can I travel while studying", prompt)
         self.assertIn("Short follow-up handling", prompt)
         self.assertIn("Language-switch follow-up handling", prompt)
         self.assertIn('"target_language": string', prompt)
@@ -201,7 +206,7 @@ class OpenAIGatewayTests(unittest.TestCase):
 
     def test_clarify_or_rewrite_query_returns_question_when_unclear(self) -> None:
         gateway, _ = self._gateway_with_output(
-            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?","reason":"topic missing"}'
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?","reason":"topic missing"}'
         )
 
         clarity, _ = gateway.clarify_or_rewrite_query("what documents do I need?", "en", "GUIDANCE")
@@ -210,7 +215,7 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertTrue(clarity.is_retrieval_related)
         self.assertEqual(
             clarity.clarifying_question,
-            "Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?",
+            "Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?",
         )
 
     def test_clarify_or_rewrite_query_can_mark_other_as_not_retrieval_related(self) -> None:

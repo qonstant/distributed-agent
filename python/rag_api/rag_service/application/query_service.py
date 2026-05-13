@@ -268,10 +268,10 @@ def _should_run_retrieval_clarity(intent: str, history: List[ConversationMessage
 def _fallback_clarifying_question(language: str) -> str:
     normalized_language = (language or "").strip().lower()
     if normalized_language == "kk":
-        return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
+        return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, студенттік тұруға рұқсат, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
     if normalized_language == "ru":
-        return "По какой теме вы спрашиваете: студенческая виза, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
-    return "Which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?"
+        return "По какой теме вы спрашиваете: студенческая виза, студенческий ВНЖ, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
+    return "Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
 
 
 def _out_of_scope_answer(language: str) -> str:
@@ -279,15 +279,15 @@ def _out_of_scope_answer(language: str) -> str:
     if normalized_language == "kk":
         return (
             "Мен тек шетелде оқу бойынша сұрақтарға көмектесе аламын: оқуға түсу, "
-            "студенттік виза, шәкіртақы, CV, мотивациялық және ұсыныс хаттар."
+            "студенттік виза, студенттік тұруға рұқсат, шәкіртақы, CV, мотивациялық және ұсыныс хаттар."
         )
     if normalized_language == "ru":
         return (
             "Я могу помогать только с вопросами про обучение за рубежом: поступление, "
-            "студенческую визу, стипендию, CV, мотивационное и рекомендательное письма."
+            "студенческую визу, студенческий ВНЖ, стипендию, CV, мотивационное и рекомендательное письма."
         )
     return (
-        "I can help only with education-abroad questions: admission, student visas, "
+        "I can help only with education-abroad questions: admission, student visas, student residence permits, "
         "scholarship, CVs, motivation letters, and recommendation letters."
     )
 
@@ -295,10 +295,10 @@ def _out_of_scope_answer(language: str) -> str:
 def _fallback_retrieval_follow_up_question(language: str) -> str:
     normalized_language = (language or "").strip().lower()
     if normalized_language == "kk":
-        return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: студенттік виза, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
+        return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: студенттік виза, студенттік тұруға рұқсат, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
     if normalized_language == "ru":
-        return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
-    return "To find the right answer in the documents, which topic do you mean: student visa, CV, scholarship, motivation letter, or recommendation letter?"
+        return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, студенческий ВНЖ, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
+    return "To find the right answer in the documents, which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
 
 
 class QueryService:

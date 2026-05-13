@@ -14,6 +14,9 @@ type Config struct {
 	TelegramToken        string
 	DBURL                string
 	LocalAPIURL          string
+	LocalAPITimeout      time.Duration
+	LocalAPIMaxAttempts  int
+	LocalAPIRetryBackoff time.Duration
 	RabbitMQURL          string
 	DocRoot              string
 	SampleAlbumTitle     string
@@ -47,6 +50,9 @@ func Load() (Config, error) {
 		TelegramToken:        strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		DBURL:                strings.TrimSpace(os.Getenv("DB_URL")),
 		LocalAPIURL:          strings.TrimSpace(os.Getenv("LOCAL_API_URL")),
+		LocalAPITimeout:      parseDurationEnv("LOCAL_API_TIMEOUT", 60*time.Second),
+		LocalAPIMaxAttempts:  parseIntEnv("LOCAL_API_MAX_ATTEMPTS", 2),
+		LocalAPIRetryBackoff: parseDurationEnv("LOCAL_API_RETRY_BACKOFF", 750*time.Millisecond),
 		RabbitMQURL:          strings.TrimSpace(os.Getenv("RABBITMQ_URL")),
 		DocRoot:              strings.TrimSpace(os.Getenv("DOC_ROOT")),
 		SampleAlbumTitle:     defaultString(os.Getenv("SAMPLE_ALBUM_TITLE"), "📄 Residence permit documents"),

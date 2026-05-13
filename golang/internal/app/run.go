@@ -100,7 +100,11 @@ func Run() error {
 	}
 
 	resolver := storage.NewResolver(cfg.DocRoot, s3Store)
-	answerSource := localapi.NewClient(cfg.LocalAPIURL)
+	answerSource := localapi.NewClientWithConfig(cfg.LocalAPIURL, localapi.ClientConfig{
+		Timeout:      cfg.LocalAPITimeout,
+		MaxAttempts:  cfg.LocalAPIMaxAttempts,
+		RetryBackoff: cfg.LocalAPIRetryBackoff,
+	})
 	presenter := telegramadapter.NewPresenter(telegramadapter.NewSender(cfg.TelegramToken))
 
 	sampleRefs := make([]qa.AttachmentRef, 0, len(cfg.SampleAttachmentKeys))

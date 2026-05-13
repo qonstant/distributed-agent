@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qonstant/distributed-agent/internal/domain/qa"
 )
@@ -145,8 +146,10 @@ func TestClientAsk(t *testing.T) {
 	t.Run("returns non-200 error", func(t *testing.T) {
 		t.Parallel()
 
+		attempts := 0
 		client := NewClient("http://local-api.test/query")
 		client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			attempts++
 			return &http.Response{
 				StatusCode: http.StatusBadRequest,
 				Body:       io.NopCloser(strings.NewReader("bad request\n")),
@@ -156,6 +159,45 @@ func TestClientAsk(t *testing.T) {
 		_, err := client.Ask(context.Background(), qa.Question{Text: "hello"})
 		if err == nil {
 			t.Fatal("Ask() error = nil, want non-nil")
+		}
+		if got, want := attempts, 1; got != want {
+			t.Fatalf("attempts = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("retries transient server errors", func(t *testing.T) {
+		t.Parallel()
+
+		attempts := 0
+		client := NewClientWithConfig("http://local-api.test/query", ClientConfig{
+			MaxAttempts:  2,
+			RetryBackoff: time.Nanosecond,
+		})
+		client.httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			attempts++
+			if attempts == 1 {
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Body:       io.NopCloser(strings.NewReader("not ready\n")),
+					Header:     make(http.Header),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"answer":"world","file":""}`)),
+				Header:     make(http.Header),
+			}, nil
+		})}
+
+		response, err := client.Ask(context.Background(), qa.Question{Text: "hello"})
+		if err != nil {
+			t.Fatalf("Ask() error = %v", err)
+		}
+		if got, want := response.Text, "world"; got != want {
+			t.Fatalf("response.Text = %q, want %q", got, want)
+		}
+		if got, want := attempts, 2; got != want {
+			t.Fatalf("attempts = %d, want %d", got, want)
 		}
 	})
 
@@ -175,6 +217,26 @@ func TestClientAsk(t *testing.T) {
 			t.Fatal("Ask() error = nil, want non-nil")
 		}
 	})
+}
+
+func TestNewClientWithConfig(t *testing.T) {
+	t.Parallel()
+
+	client := NewClientWithConfig("http://local-api.test/query", ClientConfig{
+		Timeout:      42 * time.Second,
+		MaxAttempts:  3,
+		RetryBackoff: 2 * time.Second,
+	})
+
+	if got, want := client.httpClient.Timeout, 42*time.Second; got != want {
+		t.Fatalf("httpClient.Timeout = %v, want %v", got, want)
+	}
+	if got, want := client.maxAttempts, 3; got != want {
+		t.Fatalf("maxAttempts = %d, want %d", got, want)
+	}
+	if got, want := client.retryBackoff, 2*time.Second; got != want {
+		t.Fatalf("retryBackoff = %v, want %v", got, want)
+	}
 }
 
 func TestClientAskWithCancelledContext(t *testing.T) {

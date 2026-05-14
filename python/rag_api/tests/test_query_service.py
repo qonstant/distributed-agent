@@ -12,6 +12,7 @@ from rag_service.domain.models import (
     Classification,
     ConversationAttachment,
     ConversationMessage,
+    GuardrailResult,
     ModelUsage,
     QueryResult,
     RetrievalClarity,
@@ -25,8 +26,8 @@ EN_PAGE_1_REFERENCE = "Especially check page 1 in the attached file; it has the 
 RU_PAGE_1_REFERENCE = "Особенно проверьте страницу 1 в приложенном файле: там самые релевантные детали по этому ответу."
 RU_PAGE_3_REFERENCE = "Особенно проверьте страницу 3 в приложенном файле: там самые релевантные детали по этому ответу."
 EN_FILE_OFFER = "Should I send you the file with this information?"
-EN_TOPIC_CLARIFICATION = "Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
-EN_RETRIEVAL_FOLLOW_UP = "To find the right answer in the documents, which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
+EN_TOPIC_CLARIFICATION = "Which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?"
+EN_RETRIEVAL_FOLLOW_UP = "To find the right answer in the documents, which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?"
 EN_SCOPE_ANSWER = "I can help only with education-abroad questions: admission, student visas, student residence permits, scholarship, CVs, motivation letters, and recommendation letters."
 RU_SCOPE_ANSWER = "Я могу помогать только с вопросами про обучение за рубежом: поступление, студенческую визу, студенческий ВНЖ, стипендию, CV, мотивационное и рекомендательное письма."
 
@@ -36,15 +37,21 @@ class FakeGateway:
         self,
         classification: Classification,
         attachment_action: str = "",
+        guardrail: GuardrailResult | list[GuardrailResult] | None = None,
         clarity: RetrievalClarity | None = None,
         sufficiency: RetrievalSufficiency | None = None,
         json_response=None,
     ) -> None:
         self.classification = classification
         self.attachment_action = attachment_action
+        if isinstance(guardrail, list):
+            self.guardrails = guardrail
+        else:
+            self.guardrails = [guardrail or GuardrailResult(allowed=True, reason="allowed", language=classification.language)]
         self.clarity = clarity
         self.sufficiency = sufficiency
         self.json_response = json_response
+        self.guard_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.classify_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.attachment_follow_up_calls: list[tuple[str, list[ConversationMessage], str]] = []
         self.clarity_calls: list[tuple[str, str, str, list[ConversationMessage]]] = []
@@ -53,6 +60,7 @@ class FakeGateway:
         self.rewrite_calls: list[tuple[str, list[ConversationMessage]]] = []
         self.embedded_queries: list[str] = []
         self.generated_prompts: list[str] = []
+        self.guardrail_usage = ModelUsage(model="gpt-4o-mini", input_tokens=9, output_tokens=4, total_tokens=13)
         self.classification_usage = ModelUsage(model="gpt-4o-mini", input_tokens=12, output_tokens=6, total_tokens=18)
         self.attachment_action_usage = ModelUsage(model="gpt-4o-mini", input_tokens=8, output_tokens=4, total_tokens=12)
         self.greeting_usage = ModelUsage(model="gpt-4o-mini", input_tokens=10, output_tokens=3, total_tokens=13)
@@ -62,6 +70,11 @@ class FakeGateway:
         self.rewrite_usage = ModelUsage(model="gpt-4o-mini", input_tokens=20, output_tokens=4, total_tokens=24)
         self.embedding_usage = ModelUsage(model="text-embedding-3-small", input_tokens=9, output_tokens=0, total_tokens=9)
         self.json_usage = ModelUsage(model="gpt-4o-mini", input_tokens=30, output_tokens=8, total_tokens=38)
+
+    def guard_query(self, query: str, history=None):
+        self.guard_calls.append((query, history or []))
+        index = min(len(self.guard_calls) - 1, len(self.guardrails) - 1)
+        return self.guardrails[index], self.guardrail_usage
 
     def classify_query(self, query: str, history=None):
         self.classify_calls.append((query, history or []))
@@ -168,6 +181,7 @@ class QueryServiceTests(unittest.TestCase):
                 file=None,
                 classification=Classification(intent="FACTUAL_QUESTION", explain="needs memory", language="en"),
                 usage_events=[
+                    usage_event_from_model_usage("guardrail", gateway.guardrail_usage),
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                     usage_event_from_model_usage("classification", gateway.clarity_usage),
                     usage_event_from_model_usage("chat_completion", gateway.factual_usage),
@@ -175,10 +189,46 @@ class QueryServiceTests(unittest.TestCase):
             ),
         )
         self.assertEqual(memory.requested_ids, ["conv-1"])
+        self.assertEqual(gateway.guard_calls, [("What is the test code?", [])])
         self.assertEqual(gateway.classify_calls, [("What is the test code?", history)])
         self.assertEqual(gateway.clarity_calls, [("What is the test code?", "en", "FACTUAL_QUESTION", history)])
         self.assertEqual(gateway.attachment_follow_up_calls, [])
         self.assertEqual(gateway.answer_factual_calls, [("What is the test code?", "en", "Test User", history)])
+
+    def test_guardrail_retries_with_history_only_when_needed(self) -> None:
+        history = [
+            ConversationMessage(role="user", text="Как получить внж", ts=1),
+            ConversationMessage(
+                role="assistant",
+                text="Вы имеете в виду разрешение на проживание для студентов или что-то другое?",
+                ts=2,
+            ),
+        ]
+        gateway = FakeGateway(
+            Classification(intent="GREETING", explain="short confirmation after context guard", language="ru"),
+            guardrail=[
+                GuardrailResult(
+                    allowed=False,
+                    reason="The latest message is only a confirmation and needs context.",
+                    language="ru",
+                    needs_context=True,
+                ),
+                GuardrailResult(
+                    allowed=True,
+                    reason="The user confirms the previous in-scope student residence permit clarification.",
+                    language="ru",
+                ),
+            ],
+        )
+        memory = FakeConversationMemory(history)
+        service = QueryService(gateway, FakeStore(), conversation_memory=memory)
+
+        result = service.handle_query("Да да да", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "hello")
+        self.assertEqual(memory.requested_ids, ["conv-1"])
+        self.assertEqual(gateway.guard_calls, [("Да да да", []), ("Да да да", history)])
+        self.assertEqual(gateway.classify_calls, [("Да да да", history)])
 
     def test_factual_education_question_uses_rag_and_offers_file_without_sending(self) -> None:
         standalone_query = "What photo is required for an Italian student visa?"
@@ -278,6 +328,7 @@ class QueryServiceTests(unittest.TestCase):
                 file="docs/test-guide.pdf",
                 classification=Classification(intent="DOCUMENT_REQUEST", explain="follow-up request", language="en"),
                 usage_events=[
+                    usage_event_from_model_usage("guardrail", gateway.guardrail_usage),
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                     usage_event_from_model_usage("classification", gateway.attachment_action_usage),
                     usage_event_from_model_usage("classification", gateway.clarity_usage),
@@ -507,6 +558,7 @@ class QueryServiceTests(unittest.TestCase):
                 file=None,
                 classification=Classification(intent="GUIDANCE", explain="ambiguous docs question", language="en"),
                 usage_events=[
+                    usage_event_from_model_usage("guardrail", gateway.guardrail_usage),
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                     usage_event_from_model_usage("classification", gateway.clarity_usage),
                 ],
@@ -582,6 +634,46 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(result.answer, f"Use this sample.\n\n{RU_PAGE_1_REFERENCE}")
         self.assertEqual(result.file, "italy/Visa_ru.pdf")
         self.assertEqual(gateway.clarity_calls, [("Все все вообще", "ru", "CHIT_CHAT", history)])
+        self.assertEqual(gateway.embedded_queries, [standalone_query])
+        self.assertEqual(store.search_calls[0]["query_text"], standalone_query)
+
+    def test_short_how_follow_up_after_dsu_answer_reuses_dsu_topic(self) -> None:
+        history = [
+            ConversationMessage(role="user", text="How to get dsu", ts=1),
+            ConversationMessage(
+                role="assistant",
+                text="DSU is the Italian student scholarship/financial aid.",
+                ts=2,
+            ),
+        ]
+        standalone_query = "How to apply for the Italian DSU student scholarship?"
+        gateway = FakeGateway(
+            Classification(intent="CHIT_CHAT", explain="short follow-up", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query=standalone_query,
+                reason="The user asks how to continue the previous DSU scholarship topic.",
+            ),
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={
+                    "source_file": "italy/DSU_Scholarship_en.pdf",
+                    "page": 1,
+                    "text": "DSU scholarship application instructions",
+                },
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("How", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, f"Use this sample.\n\n{EN_PAGE_1_REFERENCE}")
+        self.assertEqual(result.file, "italy/DSU_Scholarship_en.pdf")
+        self.assertEqual(gateway.clarity_calls, [("How", "en", "CHIT_CHAT", history)])
         self.assertEqual(gateway.embedded_queries, [standalone_query])
         self.assertEqual(store.search_calls[0]["query_text"], standalone_query)
 
@@ -723,6 +815,60 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.answer_factual_calls, [])
         self.assertEqual(store.search_calls, [])
 
+    def test_guardrail_blocks_out_of_scope_before_classification(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="would not be used", language="en"),
+            guardrail=GuardrailResult(
+                allowed=False,
+                reason="Tourist visa is outside the study-abroad scope.",
+                language="en",
+                violation="out_of_scope",
+            ),
+        )
+        store = FakeStore()
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("How do I get a tourist visa for Italy?", conversation_id="conv-1")
+
+        self.assertEqual(
+            result,
+            QueryResult(
+                answer=EN_SCOPE_ANSWER,
+                file=None,
+                classification=None,
+                usage_events=[
+                    usage_event_from_model_usage("guardrail", gateway.guardrail_usage),
+                ],
+            ),
+        )
+        self.assertEqual(gateway.guard_calls, [("How do I get a tourist visa for Italy?", [])])
+        self.assertEqual(gateway.classify_calls, [])
+        self.assertEqual(gateway.clarity_calls, [])
+        self.assertEqual(gateway.embedded_queries, [])
+        self.assertEqual(store.search_calls, [])
+
+    def test_guardrail_blocks_unsafe_request_before_classification(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="GUIDANCE", explain="would not be used", language="en"),
+            guardrail=GuardrailResult(
+                allowed=False,
+                reason="The user asks for help falsifying documents.",
+                language="en",
+                violation="unsafe",
+            ),
+        )
+        store = FakeStore()
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("How can I fake a bank statement for visa?", conversation_id="conv-1")
+
+        self.assertIn("I can't help with illegal or unsafe requests.", result.answer)
+        self.assertIsNone(result.file)
+        self.assertIsNone(result.classification)
+        self.assertEqual(gateway.classify_calls, [])
+        self.assertEqual(gateway.clarity_calls, [])
+        self.assertEqual(store.search_calls, [])
+
     def test_document_request_resends_same_file_when_user_explicitly_asks(self) -> None:
         history = [
             ConversationMessage(
@@ -755,6 +901,7 @@ class QueryServiceTests(unittest.TestCase):
                 file="docs/test-guide.pdf",
                 classification=Classification(intent="DOCUMENT_REQUEST", explain="resend request", language="en"),
                 usage_events=[
+                    usage_event_from_model_usage("guardrail", gateway.guardrail_usage),
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                     usage_event_from_model_usage("classification", gateway.attachment_action_usage),
                 ],
@@ -789,6 +936,7 @@ class QueryServiceTests(unittest.TestCase):
                 file="italy/CV_ru.pdf",
                 classification=Classification(intent="CHIT_CHAT", explain="short follow-up", language="ru"),
                 usage_events=[
+                    usage_event_from_model_usage("guardrail", gateway.guardrail_usage),
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                     usage_event_from_model_usage("classification", gateway.attachment_action_usage),
                 ],
@@ -846,6 +994,7 @@ class QueryServiceTests(unittest.TestCase):
                     preferred_name="Heisenberg",
                 ),
                 usage_events=[
+                    usage_event_from_model_usage("guardrail", gateway.guardrail_usage),
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                 ],
             ),

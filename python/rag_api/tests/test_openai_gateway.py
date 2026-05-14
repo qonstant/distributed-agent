@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from typing import Any
 from types import ModuleType, SimpleNamespace
 
 fake_openai_module = ModuleType("openai")
@@ -16,27 +17,28 @@ fake_openai_module.OpenAI = FakeOpenAI
 sys.modules.setdefault("openai", fake_openai_module)
 
 from rag_service.infrastructure.openai_gateway import OpenAIGateway
-from rag_service.domain.models import RetrievedHit
+from rag_service.domain.models import ConversationMessage, RetrievedHit
 
 
 class FakeResponses:
-    def __init__(self, output_text: str, usage=None) -> None:
-        self.output_text = output_text
+    def __init__(self, output_text: Any, usage=None) -> None:
+        self.output_texts = output_text if isinstance(output_text, list) else [output_text]
         self.usage = usage
         self.calls = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        return SimpleNamespace(output_text=self.output_text, usage=self.usage)
+        index = min(len(self.calls) - 1, len(self.output_texts) - 1)
+        return SimpleNamespace(output_text=self.output_texts[index], usage=self.usage)
 
 
 class FakeClient:
-    def __init__(self, output_text: str, usage=None) -> None:
+    def __init__(self, output_text: Any, usage=None) -> None:
         self.responses = FakeResponses(output_text, usage=usage)
 
 
 class OpenAIGatewayTests(unittest.TestCase):
-    def _gateway_with_output(self, output_text: str, usage=None) -> tuple[OpenAIGateway, FakeClient]:
+    def _gateway_with_output(self, output_text: Any, usage=None) -> tuple[OpenAIGateway, FakeClient]:
         settings = SimpleNamespace(
             openai_api_key="test-key",
             embed_model="text-embedding-3-small",
@@ -98,21 +100,129 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn('Prefer "ru" for standard Russian wording such as "Как меня зовут?"', prompt)
         self.assertIn('Choose "kk" only when there are clear Kazakh signals', prompt)
 
-    def test_classify_query_prompt_limits_scope_to_education_abroad(self) -> None:
+    def test_guard_query_allows_in_scope_study_abroad_queries(self) -> None:
         gateway, fake_client = self._gateway_with_output(
-            '{"intent":"OTHER","explain":"tourist visa is outside education-abroad scope","language":"en","profile_action":"","preferred_name":""}'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"DSU defaults to the Italian student scholarship topic.","language":"English"}',
+            usage=SimpleNamespace(input_tokens=12, output_tokens=6, total_tokens=18),
         )
 
-        classification, _ = gateway.classify_query("How do I get an Italian tourist visa?")
+        guardrail, usage = gateway.guard_query("How to get dsu")
 
-        self.assertEqual(classification.intent, "OTHER")
+        self.assertTrue(guardrail.allowed)
+        self.assertEqual(guardrail.violation, "")
+        self.assertEqual(guardrail.language, "en")
+        self.assertIsNotNone(usage)
         prompt = fake_client.responses.calls[0]["input"]
-        self.assertIn("only for education/study-abroad support", prompt)
-        self.assertIn("student residence permits/permesso di soggiorno", prompt)
-        self.assertIn("study-related travel rights or constraints", prompt)
-        self.assertIn("assume they mean the student residence permit by default", prompt)
-        self.assertIn("tourist visas", prompt)
-        self.assertIn("For out-of-scope requests, choose OTHER", prompt)
+        self.assertIn("You are a guardrail", prompt)
+        self.assertIn("called in two passes", prompt)
+        self.assertIn("Recent conversation context: not provided in this pass.", prompt)
+        self.assertIn("set needs_context=true", prompt)
+        self.assertIn("DSU scholarship/student financial aid in Italy", prompt)
+        self.assertIn("If the user mentions DSU without another explicit meaning", prompt)
+        self.assertIn("Short confirmations or refusals are allowed", prompt)
+        self.assertIn("assistant just asked an in-scope clarification question", prompt)
+        self.assertIn("MUST make a final safety/scope decision", prompt)
+        self.assertIn("immediate previous meaningful topic", prompt)
+        self.assertIn("Do not treat short replies as unsafe merely because", prompt)
+        self.assertIn('"visa docs"', prompt)
+        self.assertIn("Как получить ВНЖ", prompt)
+        self.assertIn("What is the capital of France?", prompt)
+        self.assertIn("Италияда оқып жүріп саяхаттай аламын ба?", prompt)
+        self.assertIn("How do I move to Italy permanently?", prompt)
+        self.assertIn("previous in-scope visa-photo file offer", prompt)
+        self.assertIn("previous explicit document-fraud request", prompt)
+        self.assertNotIn("Recent conversation context (oldest to newest):", prompt)
+        self.assertIn("Block as out_of_scope", prompt)
+        self.assertIn("Block as unsafe", prompt)
+        self.assertIn("fake a bank statement", prompt)
+
+    def test_guard_query_can_request_context_for_short_confirmation(self) -> None:
+        gateway, fake_client = self._gateway_with_output(
+            '{"allowed":false,"needs_context":true,"violation":"","reason":"The latest message is only a confirmation and needs recent conversation context.","language":"ru"}'
+        )
+
+        guardrail, _ = gateway.guard_query("Да да да")
+
+        self.assertFalse(guardrail.allowed)
+        self.assertTrue(guardrail.needs_context)
+        self.assertEqual(guardrail.violation, "")
+        self.assertEqual(guardrail.language, "ru")
+        prompt = fake_client.responses.calls[0]["input"]
+        self.assertIn("Recent conversation context: not provided in this pass.", prompt)
+        self.assertIn("Latest user input: \"Да да да\"", prompt)
+
+    def test_guard_query_uses_history_for_short_confirmation(self) -> None:
+        history = [
+            ConversationMessage(role="user", text="Как получить внж", ts=1),
+            ConversationMessage(
+                role="assistant",
+                text="Вы имеете в виду разрешение на проживание для студентов или что-то другое?",
+                ts=2,
+            ),
+        ]
+        gateway, fake_client = self._gateway_with_output(
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"The user confirms the previous in-scope student residence permit clarification.","language":"ru"}'
+        )
+
+        guardrail, _ = gateway.guard_query("Да да да", history=history)
+
+        self.assertTrue(guardrail.allowed)
+        self.assertFalse(guardrail.needs_context)
+        self.assertEqual(guardrail.violation, "")
+        self.assertEqual(guardrail.language, "ru")
+        prompt = fake_client.responses.calls[0]["input"]
+        self.assertIn("Recent conversation context (oldest to newest):", prompt)
+        self.assertIn("user: Как получить внж", prompt)
+        self.assertIn("assistant: Вы имеете в виду разрешение на проживание для студентов", prompt)
+        self.assertIn("Latest user input: \"Да да да\"", prompt)
+
+    def test_guard_query_repairs_needs_context_when_history_was_provided(self) -> None:
+        history = [
+            ConversationMessage(role="user", text="How to get dsu", ts=1),
+            ConversationMessage(role="assistant", text="DSU is the Italian student scholarship.", ts=2),
+        ]
+        gateway, fake_client = self._gateway_with_output(
+            [
+                '{"allowed":false,"needs_context":true,"violation":"","reason":"The latest message is too short and needs recent conversation context.","language":"en"}',
+                '{"allowed":true,"needs_context":false,"violation":"","reason":"The user asks how to continue with the in-scope DSU topic.","language":"en"}',
+            ]
+        )
+
+        guardrail, _ = gateway.guard_query("How", history=history)
+
+        self.assertTrue(guardrail.allowed)
+        self.assertFalse(guardrail.needs_context)
+        self.assertEqual(guardrail.violation, "")
+        self.assertEqual(len(fake_client.responses.calls), 2)
+        repair_prompt = fake_client.responses.calls[1]["input"]
+        self.assertIn("context was already provided", repair_prompt)
+        self.assertIn("Set needs_context=false", repair_prompt)
+        self.assertIn("Previous guardrail JSON", repair_prompt)
+
+    def test_guard_query_blocks_out_of_scope_or_unsafe_queries(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"allowed":false,"needs_context":false,"violation":"unsafe","reason":"The user asks for help falsifying documents.","language":"en"}'
+        )
+
+        guardrail, _ = gateway.guard_query("How can I fake a bank statement for visa?")
+
+        self.assertFalse(guardrail.allowed)
+        self.assertEqual(guardrail.violation, "unsafe")
+        self.assertEqual(guardrail.language, "en")
+
+    def test_classify_query_prompt_runs_after_guardrail_scope_check(self) -> None:
+        gateway, fake_client = self._gateway_with_output(
+            '{"intent":"GUIDANCE","explain":"user asks for university admission guidance","language":"en","profile_action":"","preferred_name":""}'
+        )
+
+        classification, _ = gateway.classify_query("How to apply to uni")
+
+        self.assertEqual(classification.intent, "GUIDANCE")
+        prompt = fake_client.responses.calls[0]["input"]
+        self.assertIn("The guardrail has already checked safety and assistant scope", prompt)
+        self.assertIn('"intent": one of ["GREETING","CHIT_CHAT","FACTUAL_QUESTION","GUIDANCE","DOCUMENT_REQUEST"]', prompt)
+        self.assertIn("short replies like \"yes\", \"how\", \"how to apply\"", prompt)
+        self.assertNotIn("For out-of-scope requests, choose OTHER", prompt)
 
     def test_classify_attachment_follow_up_extracts_resend_action(self) -> None:
         gateway, _ = self._gateway_with_output(
@@ -179,7 +289,11 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIsNotNone(usage)
         prompt = fake_client.responses.calls[0]["input"]
         self.assertIn("Country defaults to Italy", prompt)
+        self.assertIn("Italian university admission/application guidance", prompt)
+        self.assertIn("DSU defaults to the Italian student scholarship/financial-aid topic", prompt)
         self.assertIn("Treat short/lazy queries as clear", prompt)
+        self.assertIn('"how to apply to uni"', prompt)
+        self.assertIn('"how to get dsu"', prompt)
         self.assertIn("Do NOT ask sub-aspect clarifications inside an already identified topic", prompt)
         self.assertIn("what photo format is needed for the visa", prompt)
         self.assertIn("Tourist visas, travel visas unrelated to study, work visas", prompt)
@@ -187,6 +301,7 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("For a generic residence permit query, assume student residence permit", prompt)
         self.assertIn("can I travel while studying", prompt)
         self.assertIn("Short follow-up handling", prompt)
+        self.assertIn('If the latest user asks a short continuation like "how"', prompt)
         self.assertIn("Language-switch follow-up handling", prompt)
         self.assertIn('"target_language": string', prompt)
         self.assertIn("все вообще", prompt)
@@ -206,7 +321,7 @@ class OpenAIGatewayTests(unittest.TestCase):
 
     def test_clarify_or_rewrite_query_returns_question_when_unclear(self) -> None:
         gateway, _ = self._gateway_with_output(
-            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?","reason":"topic missing"}'
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?","reason":"topic missing"}'
         )
 
         clarity, _ = gateway.clarify_or_rewrite_query("what documents do I need?", "en", "GUIDANCE")
@@ -215,7 +330,7 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertTrue(clarity.is_retrieval_related)
         self.assertEqual(
             clarity.clarifying_question,
-            "Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?",
+            "Which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?",
         )
 
     def test_clarify_or_rewrite_query_can_mark_other_as_not_retrieval_related(self) -> None:
@@ -260,6 +375,9 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("retrieval sufficiency judge", prompt)
         self.assertIn("Retrieved excerpts", prompt)
         self.assertIn("italy/Visa_en.pdf", prompt)
+        self.assertIn("university admission/application guidance", prompt)
+        self.assertIn("DSU is a supported Italian student scholarship/financial-aid topic by default", prompt)
+        self.assertIn("Treat short topic queries", prompt)
         self.assertIn("Do NOT ask the user to choose between documents and process", prompt)
         self.assertIn("Do NOT ask the user to choose sub-aspects inside an already identified document topic", prompt)
         self.assertIn("visa photo format", prompt)

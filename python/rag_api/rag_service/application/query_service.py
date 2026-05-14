@@ -7,6 +7,7 @@ from rag_service.application.usage_estimation import (
     estimate_embedding_event,
     estimate_factual_completion_event,
     estimate_greeting_completion_event,
+    estimate_guardrail_event,
     estimate_prompt_completion_event,
     usage_event_from_model_usage,
 )
@@ -14,6 +15,7 @@ from rag_service.domain.models import (
     Classification,
     ConversationAttachment,
     ConversationMessage,
+    GuardrailResult,
     QueryResult,
     RetrievalClarity,
     RetrievalSufficiency,
@@ -268,10 +270,10 @@ def _should_run_retrieval_clarity(intent: str, history: List[ConversationMessage
 def _fallback_clarifying_question(language: str) -> str:
     normalized_language = (language or "").strip().lower()
     if normalized_language == "kk":
-        return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, студенттік тұруға рұқсат, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
+        return "Қай тақырып бойынша сұрап тұрсыз: университетке түсу, студенттік виза, студенттік тұруға рұқсат, DSU шәкіртақысы, CV, мотивациялық хат немесе ұсыныс хат?"
     if normalized_language == "ru":
-        return "По какой теме вы спрашиваете: студенческая виза, студенческий ВНЖ, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
-    return "Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
+        return "По какой теме вы спрашиваете: поступление в университет, студенческая виза, студенческий ВНЖ, стипендия DSU, CV, мотивационное письмо или рекомендательное письмо?"
+    return "Which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?"
 
 
 def _out_of_scope_answer(language: str) -> str:
@@ -292,13 +294,37 @@ def _out_of_scope_answer(language: str) -> str:
     )
 
 
+def _unsafe_request_answer(language: str) -> str:
+    normalized_language = (language or "").strip().lower()
+    if normalized_language == "kk":
+        return (
+            "Мен заңсыз немесе қауіпті әрекеттерге көмектесе алмаймын. "
+            "Бірақ оқу, құжаттарды заңды түрде дайындау, студенттік виза, тұруға рұқсат, DSU шәкіртақысы, CV және хаттар бойынша көмектесе аламын."
+        )
+    if normalized_language == "ru":
+        return (
+            "Я не могу помогать с незаконными или небезопасными действиями. "
+            "Но могу помочь с поступлением, легальной подготовкой документов, студенческой визой, ВНЖ, стипендией DSU, CV и письмами."
+        )
+    return (
+        "I can't help with illegal or unsafe requests. "
+        "I can help with admission, legal document preparation, student visas, residence permits, DSU scholarships, CVs, and letters."
+    )
+
+
+def _guardrail_blocked_answer(language: str, violation: str) -> str:
+    if (violation or "").strip().lower() == "unsafe":
+        return _unsafe_request_answer(language)
+    return _out_of_scope_answer(language)
+
+
 def _fallback_retrieval_follow_up_question(language: str) -> str:
     normalized_language = (language or "").strip().lower()
     if normalized_language == "kk":
-        return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: студенттік виза, студенттік тұруға рұқсат, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
+        return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: университетке түсу, студенттік виза, студенттік тұруға рұқсат, DSU шәкіртақысы, CV, мотивациялық хат немесе ұсыныс хат?"
     if normalized_language == "ru":
-        return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, студенческий ВНЖ, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
-    return "To find the right answer in the documents, which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
+        return "Чтобы найти точный ответ в документах, уточните тему: поступление в университет, студенческая виза, студенческий ВНЖ, стипендия DSU, CV, мотивационное письмо или рекомендательное письмо?"
+    return "To find the right answer in the documents, which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?"
 
 
 class QueryService:
@@ -320,18 +346,69 @@ class QueryService:
             raise ValueError("query is empty")
         normalized_preferred_name = (preferred_name or "").strip()
 
-        history = self._load_history(conversation_id)
-        classification, classification_usage = self._gateway.classify_query(normalized_query, history=history)
+        history: List[ConversationMessage] = []
+        history_loaded = False
+
+        def ensure_history_loaded() -> List[ConversationMessage]:
+            nonlocal history, history_loaded
+            if not history_loaded:
+                history = self._load_history(conversation_id)
+                history_loaded = True
+            return history
+
+        guardrail, guardrail_usage = self._gateway.guard_query(normalized_query, history=None)
         usage_events = [
+            self._guardrail_usage_event(
+                normalized_query,
+                [],
+                guardrail,
+                guardrail_usage,
+            )
+        ]
+
+        if guardrail.needs_context:
+            contextual_history = ensure_history_loaded()
+            if contextual_history:
+                guardrail, guardrail_usage = self._gateway.guard_query(
+                    normalized_query,
+                    history=contextual_history,
+                )
+                usage_events.append(
+                    self._guardrail_usage_event(
+                        normalized_query,
+                        contextual_history,
+                        guardrail,
+                        guardrail_usage,
+                    )
+                )
+
+        guardrail_language = guardrail.language or ""
+        print(
+            f"[query] guardrail -> allowed={guardrail.allowed} "
+            f"needs_context={guardrail.needs_context} violation={guardrail.violation} "
+            f"lang={guardrail_language} reason={guardrail.reason}"
+        )
+
+        if not guardrail.allowed:
+            return QueryResult(
+                answer=_guardrail_blocked_answer(guardrail_language, guardrail.violation),
+                file=None,
+                classification=None,
+                usage_events=usage_events,
+            )
+
+        history = ensure_history_loaded()
+        classification, classification_usage = self._gateway.classify_query(normalized_query, history=history)
+        usage_events.append(
             self._classification_usage_event(
                 normalized_query,
                 history,
                 classification,
                 classification_usage,
             )
-        ]
+        )
         intent = classification.intent
-        language = classification.language or ""
+        language = classification.language or guardrail_language
         print(
             f"[query] classifier -> intent={intent} lang={language} "
             f"explain={classification.explain}"
@@ -733,6 +810,17 @@ class QueryService:
         if usage is not None:
             return usage_event_from_model_usage("classification", usage)
         return estimate_classification_event(query, history, classification)
+
+    @staticmethod
+    def _guardrail_usage_event(
+        query: str,
+        history: List[ConversationMessage],
+        guardrail: GuardrailResult,
+        usage,
+    ) -> UsageEventRecord:
+        if usage is not None:
+            return usage_event_from_model_usage("guardrail", usage)
+        return estimate_guardrail_event(query, history, guardrail)
 
     @staticmethod
     def _chat_completion_usage_event(

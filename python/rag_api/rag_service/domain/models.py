@@ -105,6 +105,16 @@ def normalize_attachment_action(action: str) -> str:
 
 
 @dataclass(frozen=True)
+class GuardrailResult:
+    allowed: bool
+    reason: str = ""
+    language: str = ""
+    violation: str = ""
+    model: str = ""
+    needs_context: bool = False
+
+
+@dataclass(frozen=True)
 class Classification:
     intent: str
     explain: str = ""

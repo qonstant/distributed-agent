@@ -10,7 +10,15 @@ from botocore.client import Config as BotoConfig
 
 
 REQUIRED_FILES = ("meta.json", "index.faiss")
-OPTIONAL_FILES = ("chunks.jsonl", "embeddings.npy", "ids.npy", "manifest.json", "eval_report.json")
+OPTIONAL_FILES = (
+    "chunks.jsonl",
+    "embeddings.npy",
+    "ids.npy",
+    "manifest.json",
+    "eval_report.json",
+    "classification_eval_report.json",
+    "guardrail_eval_report.json",
+)
 
 
 def env_bool(name: str, default: bool = False) -> bool:

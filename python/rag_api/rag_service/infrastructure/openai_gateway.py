@@ -9,6 +9,7 @@ from openai import OpenAI
 from rag_service.domain.models import (
     Classification,
     ConversationMessage,
+    GuardrailResult,
     ModelUsage,
     RetrievalClarity,
     RetrievalSufficiency,
@@ -26,6 +27,134 @@ class OpenAIGateway:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._client = OpenAI(api_key=settings.openai_api_key)
+
+    def guard_query(
+        self,
+        query: str,
+        history: Optional[List[ConversationMessage]] = None,
+    ) -> tuple[GuardrailResult, Optional[ModelUsage]]:
+        history_block = self._history_block(history)
+        context_block = history_block or "Recent conversation context: not provided in this pass.\n\n"
+        prompt = (
+            "You are a guardrail for an education/study-abroad assistant. "
+            "Decide whether the latest user input is safe and related enough to pass to intent classification.\n\n"
+            "This guardrail may be called in two passes. In the first pass, recent conversation context may be omitted to keep the prompt small. "
+            "If the latest input is enough to decide safety and scope by itself, make the decision without context. "
+            "In the first pass only, if the latest input is too short, elliptical, or only an answer to the assistant's previous question, set needs_context=true so the caller can retry with Redis conversation history. "
+            "In the second pass, recent conversation context is already provided, so you MUST make a final safety/scope decision and MUST set needs_context=false.\n\n"
+            "Return a JSON object with EXACTLY five keys:\n"
+            ' - "allowed": boolean\n'
+            ' - "needs_context": boolean\n'
+            ' - "violation": one of ["","out_of_scope","unsafe","unsupported_language"]\n'
+            ' - "reason": one short sentence explaining the decision\n'
+            ' - "language": exactly one of ["kk","ru","en","other"]\n\n'
+            "Decision rules:\n"
+            " - If needs_context is true, set allowed=false and violation=\"\".\n"
+            " - If recent conversation context is provided, use the whole Redis-loaded conversation before judging the latest input and set needs_context=false, always.\n"
+            " - When recent conversation context is provided and the latest input is one short word or phrase, judge it by the immediate previous meaningful topic. Do not treat short replies as unsafe merely because the conversation contains visa, permit, or document words.\n"
+            " - Do not request context for standalone messages like \"How to get DSU\", \"How to apply to uni\", \"visa docs\", \"How can I apply for residence permit in Italy?\", \"Как получить ВНЖ\", or clearly unsafe/out-of-scope requests.\n"
+            " - Do not request context for complete unrelated questions. Standalone unrelated questions are out_of_scope, not needs_context. Example: \"What is the capital of France?\" is out_of_scope.\n\n"
+            "Allowed scope:\n"
+            " - Education/study-abroad support, including university admission abroad, university application guidance, admission documents, student visas for study/enrollment, student residence permits/permesso di soggiorno for study, study-related travel rights or constraints, scholarships, DSU scholarship/student financial aid in Italy, CV, motivation letter, and recommendation letter.\n"
+            " - Greetings, thanks, small talk, user profile/name updates, and questions about recent conversation are allowed because they help the assistant conversation.\n"
+            " - Short follow-ups are allowed when recent conversation makes them refer to an in-scope topic. Examples: \"yes\", \"how\", \"how to apply\", \"steps\", \"documents\", \"да\", \"как\", \"қалай\".\n"
+            " - Short confirmations or refusals are allowed when recent conversation makes them meaningful. Examples: \"yes\", \"no\", \"yeah\", \"nope\", \"да\", \"нет\", \"иә\", \"жоқ\", \"Да да да\".\n"
+            " - If the assistant just asked an in-scope clarification question and the latest user input confirms or rejects it, allow the message. Do not block it just because the latest input alone has no education keyword.\n"
+            " - If the latest user input is only a short acknowledgement, confirmation, refusal, or correction, prefer allowed=true unless the recent conversation is clearly unsafe or out of scope.\n"
+            " - If the user says \"uni\", \"university\", \"admission\", or \"apply\" in a study-abroad context, allow it even if the country is missing.\n"
+            " - If the user says \"visa\" without saying tourist, work, business, family, travel, or another non-study context, assume student visa by default. Short phrases like \"visa docs\" or \"student visa documents Italy\" are standalone and allowed.\n"
+            " - If the user mentions DSU without another explicit meaning, allow it as the Italian DSU student scholarship/financial aid.\n"
+            " - If the user asks about an Italian residence permit, permesso di soggiorno, student residence permit, ВНЖ, внж, VNJ, or residence permit without saying work, tourist, family, permanent residence, asylum, or another non-study context, allow it as the student residence permit.\n\n"
+            "Block as out_of_scope:\n"
+            " - Tourist visas, travel visas unrelated to study, work visas, business visas, family visas, general immigration, permanent relocation, permanent residence, moving to Italy permanently, tourism, flights, hotels, travel itineraries, and unrelated general knowledge.\n"
+            " - If recent conversation is clearly out of scope and the latest input is only a short continuation or confirmation, block as out_of_scope.\n\n"
+            "Block as unsafe:\n"
+            " - Requests to forge, fake, falsify, buy, sell, or misuse documents, certificates, bank statements, recommendation letters, identity documents, visas, permits, transcripts, or exam results.\n"
+            " - Requests to lie in applications, evade immigration law, bypass official systems, hack accounts, steal data, or commit fraud.\n"
+            " - If recent conversation explicitly contains a user request to fake, forge, falsify, bypass, buy, sell, lie, hack, or evade official systems, and the latest input is only a short continuation like \"how\", \"steps\", \"yes\", \"да\", or \"как\", block as unsafe.\n"
+            " - Do NOT mark a short follow-up as unsafe when the previous topic is a normal legal visa/photo/document/DSU/residence-permit discussion.\n"
+            " - If the user asks how to avoid these problems legally or how to correct a mistake honestly, allow it.\n\n"
+            "Language rules:\n"
+            " - Do NOT choose Kazakh just because the text is written in Cyrillic.\n"
+            " - Prefer \"ru\" for standard Russian wording unless there are clear Kazakh signals such as ә, ғ, қ, ң, ө, ұ, ү, һ, і or words like \"қалай\".\n\n"
+            " - Choose \"kk\" for Kazakh wording such as \"Италияда оқып жүріп саяхаттай аламын ба?\", \"DSU стипендиясына қалай өтінемін?\", or phrases with оқып, жүріп, аламын, өтінемін, стипендиясына.\n\n"
+            "Respond ONLY with valid JSON. Examples:\n"
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"University admission guidance is in scope.","language":"en"} for input like "How to apply to uni"\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"DSU defaults to the Italian student scholarship topic.","language":"en"} for input like "How to get dsu"\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"Visa documents default to the student visa topic.","language":"en"} for input like "visa docs"\n'
+            '{"allowed":false,"needs_context":true,"violation":"","reason":"The latest message is only a confirmation and needs recent conversation context.","language":"ru"} for input like "Да да да" when no context is provided\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"The user confirms a previous in-scope visa-photo file offer.","language":"en"} for input like "yes" after the assistant asks whether to send visa photo information\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"The user declines a previous in-scope visa-photo file offer.","language":"en"} for input like "no" after the assistant asks whether to send visa photo information\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"The user asks how to continue with the previous in-scope DSU topic.","language":"en"} for input like "How" after a DSU explanation\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"The user confirms the previous in-scope student residence permit clarification.","language":"ru"} for input like "Да да да" after the assistant asks whether they mean a student residence permit\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"The user rejects a previous in-scope student residence permit clarification, but the conversation is still safe.","language":"ru"} for input like "Нет" after the assistant asks whether they mean a student residence permit\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"The user asks how to continue with the previous in-scope DSU scholarship topic.","language":"ru"} for input like "как" after a DSU scholarship explanation\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"Residence permit defaults to student residence permit in Italy.","language":"en"} for input like "How can I apply for residence permit in Italy?"\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"Study-related travel while enrolled in Italy is in scope.","language":"kk"} for input like "Италияда оқып жүріп саяхаттай аламын ба?"\n'
+            '{"allowed":true,"needs_context":false,"violation":"","reason":"ВНЖ defaults to the student residence permit topic.","language":"ru"} for input like "Как получить внж"\n'
+            '{"allowed":false,"needs_context":false,"violation":"out_of_scope","reason":"General geography is outside the education-abroad scope.","language":"en"} for input like "What is the capital of France?"\n'
+            '{"allowed":false,"needs_context":false,"violation":"out_of_scope","reason":"Permanent migration is outside the study-abroad scope.","language":"en"} for input like "How do I move to Italy permanently?"\n'
+            '{"allowed":false,"needs_context":false,"violation":"out_of_scope","reason":"Tourist visa is outside the study-abroad scope.","language":"en"} for input like "How do I get an Italian tourist visa?"\n'
+            '{"allowed":false,"needs_context":false,"violation":"unsafe","reason":"The user asks for help falsifying application documents.","language":"en"} for input like "How can I fake a bank statement for visa?"\n\n'
+            '{"allowed":false,"needs_context":false,"violation":"unsafe","reason":"The latest message continues a previous explicit document-fraud request.","language":"en"} for input like "how" after a previous user request to fake a bank statement\n\n'
+            f"{context_block}"
+            f"Latest user input: {json.dumps(query, ensure_ascii=False)}\n"
+        )
+        try:
+            response = self._client.responses.create(
+                model=self._settings.class_model,
+                input=prompt,
+                max_output_tokens=120,
+                temperature=0.0,
+            )
+            raw_text = self._resp_to_text(response) or ""
+            parsed = self._extract_json(raw_text) or {}
+            usage = self._extract_usage(response, self._settings.class_model)
+
+            if history_block and self._json_bool(parsed.get("needs_context"), default=False):
+                repair_prompt = (
+                    f"{prompt}\n"
+                    "The previous guardrail JSON returned needs_context=true, but recent conversation "
+                    "context was already provided. That is invalid in the second pass. "
+                    "Re-evaluate the latest user input using the provided conversation and return the final JSON now. "
+                    "Set needs_context=false. If the conversation makes the latest input continue an in-scope topic, set allowed=true. "
+                    "If it is unsafe, set violation=\"unsafe\". If it is unrelated, set violation=\"out_of_scope\".\n\n"
+                    f"Previous guardrail JSON: {json.dumps(parsed, ensure_ascii=False)}\n"
+                    "Corrected JSON only:\n"
+                )
+                try:
+                    repair_response = self._client.responses.create(
+                        model=self._settings.class_model,
+                        input=repair_prompt,
+                        max_output_tokens=120,
+                        temperature=0.0,
+                    )
+                    repaired = self._extract_json(self._resp_to_text(repair_response) or "") or {}
+                    if repaired:
+                        parsed = repaired
+                    usage = self._merge_usage(
+                        usage,
+                        self._extract_usage(repair_response, self._settings.class_model),
+                    )
+                except Exception as repair_exc:
+                    print("[guardrail] contextual repair error:", repair_exc)
+
+            return (
+                self._guardrail_result_from_payload(parsed),
+                usage,
+            )
+        except Exception as exc:
+            print("[guardrail] guardrail error:", exc)
+            return (
+                GuardrailResult(
+                    allowed=False,
+                    reason=f"guardrail error: {exc}",
+                    language="other",
+                    violation="unsafe",
+                    model=self._settings.class_model,
+                ),
+                None,
+            )
 
     def embed_text(self, text: str) -> tuple[np.ndarray, Optional[ModelUsage]]:
         response = self._client.embeddings.create(model=self._settings.embed_model, input=[text])
@@ -49,24 +178,22 @@ class OpenAIGateway:
         prompt = (
             "You are a compact intent classifier and language detector. Given the user's latest input and optional recent conversation context below, "
             "return a JSON object with EXACTLY five keys:\n"
-            " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"GUIDANCE\",\"DOCUMENT_REQUEST\",\"OTHER\"]\n"
+            " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"GUIDANCE\",\"DOCUMENT_REQUEST\"]\n"
             " - \"explain\": one short sentence explaining why\n"
             " - \"language\": exactly one of [\"kk\",\"ru\",\"en\",\"other\"]\n\n"
             " - \"profile_action\": either \"set_preferred_name\" or \"\"\n"
             " - \"preferred_name\": extracted preferred name if the user is telling you what to call them, else \"\"\n\n"
-            "Assistant scope:\n"
-            " - This assistant is only for education/study-abroad support.\n"
-            " - In scope: university admission abroad, admission documents, student visas for study/enrollment, student residence permits/permesso di soggiorno for study, study-related travel rights or constraints, scholarship, CV, motivation letter, and recommendation letter.\n"
-            " - If the user asks about an Italian residence permit or permesso di soggiorno without saying work, tourist, family, permanent residence, asylum, or another non-study context, assume they mean the student residence permit by default.\n"
-            " - Out of scope: tourist visas, travel visas unrelated to study, work visas, business visas, family visas, general immigration, travel itineraries, hotels, tourism, and unrelated general knowledge.\n"
-            " - For out-of-scope requests, choose OTHER. Do NOT choose GUIDANCE or DOCUMENT_REQUEST.\n\n"
+            "The guardrail has already checked safety and assistant scope before this classifier runs. "
+            "Do not reject the request for being out of scope here; choose the best conversational or retrieval intent.\n\n"
+            "Conversation/context rules:\n"
+            " - Use recent conversation to classify short follow-ups. If the previous in-scope topic was DSU, scholarship, visa, residence permit, CV, motivation letter, recommendation letter, or university admission, short replies like \"yes\", \"how\", \"how to apply\", \"steps\", \"documents\", \"да\", \"как\", or \"қалай\" are continuations of that topic.\n"
+            " - Prefer making the helpful education-abroad assumption over asking for clarification when the topic is identifiable from the latest input or history.\n\n"
             "Definitions/examples:\n"
             " - GREETING: short hello/goodbye messages (no docs needed)\n"
             " - CHIT_CHAT: small talk / thanks / compliment (no docs)\n"
             " - FACTUAL_QUESTION: direct factual question. If it is about education-abroad documents or procedures, including student residence permits or study-related travel permissions, it will be answered using retrieval. If it is only about recent conversation or saved user info (e.g., \"What is my name?\"), no document retrieval is needed. Do NOT use for general world knowledge or out-of-scope travel/visa questions.\n"
             " - GUIDANCE: user asks for in-scope education-abroad step-by-step guidance, procedures or how-to that should be answered using documents if available, but may be synthesized from top-K excerpts (do NOT invent facts). Also use GUIDANCE when the user asks to repeat/continue a previous in-scope answer in another supported language.\n"
-            " - DOCUMENT_REQUEST: user explicitly requests an in-scope education-abroad document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n"
-            " - OTHER: none of the above\n\n"
+            " - DOCUMENT_REQUEST: user explicitly requests an in-scope education-abroad document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n\n"
             "Language rules:\n"
             " - Do NOT choose Kazakh just because the text is written in Cyrillic.\n"
             " - Prefer \"ru\" for standard Russian wording such as \"Как меня зовут?\", \"Как зовут меня?\", \"Вот меня зовут ...\", \"Зови меня ...\", \"Привет\", \"Спасибо\".\n"
@@ -76,14 +203,14 @@ class OpenAIGateway:
             "\"call me Alex\", \"my name is Rocco\", \"зови меня Роман\", \"меня зовут Азамат\", or rename phrases like \"зовут меня теперь Heisenberg\". "
             "When you do that, put only the clean extracted name into preferred_name.\n\n"
             "Respond ONLY with valid JSON (no extra text). Example:\n"
+            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks for university admission guidance\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How to apply to uni\"\n"
+            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to get the Italian DSU scholarship\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How to get dsu\"\n"
             "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for an Italian student visa\",\"language\":\"ru\",\"profile_action\":\"\",\"preferred_name\":\"\"}\n"
             "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for an Italian student residence permit\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How can I apply for residence permit in Italy?\"\n"
             "{\"intent\":\"FACTUAL_QUESTION\",\"explain\":\"user asks about travel permission while studying abroad\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"Can I travel while studying in Italy?\"\n"
             "{\"intent\":\"GREETING\",\"explain\":\"short greeting in Kazakh\",\"language\":\"kk\",\"profile_action\":\"\",\"preferred_name\":\"\"}\n"
             "{\"intent\":\"CHIT_CHAT\",\"explain\":\"user sets a preferred name\",\"language\":\"ru\",\"profile_action\":\"set_preferred_name\",\"preferred_name\":\"Роман\"}\n"
-            "{\"intent\":\"FACTUAL_QUESTION\",\"explain\":\"user asks what their name is in Russian\",\"language\":\"ru\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"Как меня зовут?\"\n"
-            "{\"intent\":\"OTHER\",\"explain\":\"tourist visa is outside education-abroad scope\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How do I get an Italian tourist visa?\"\n"
-            "{\"intent\":\"OTHER\",\"explain\":\"language outside supported set\",\"language\":\"other\",\"profile_action\":\"\",\"preferred_name\":\"\"}\n\n"
+            "{\"intent\":\"FACTUAL_QUESTION\",\"explain\":\"user asks what their name is in Russian\",\"language\":\"ru\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"Как меня зовут?\"\n\n"
             f"{history_block}"
             f"Latest user input: {json.dumps(query)}\n"
         )
@@ -256,13 +383,14 @@ class OpenAIGateway:
             "whether it is specific enough to run retrieval now, or whether the assistant should ask exactly one clarifying question first.\n\n"
             "Current corpus scope:\n"
             " - Country defaults to Italy. Do NOT ask for country just because it is missing.\n"
-            " - Supported topics include: Italian student visa, Italian student residence permit/permesso di soggiorno, study-related travel rights or constraints, CV, scholarship, motivation letter, and recommendation letter.\n"
+            " - Supported topics include: Italian university admission/application guidance, Italian student visa, Italian student residence permit/permesso di soggiorno, study-related travel rights or constraints, CV, DSU scholarship/student financial aid, motivation letter, and recommendation letter.\n"
             " - Retrieval-related means education/study-abroad only.\n"
+            " - DSU defaults to the Italian student scholarship/financial-aid topic unless the user explicitly gives another meaning.\n"
             " - A visa question is in scope only when it is about a student/study/enrollment visa.\n"
             " - A residence permit or permesso di soggiorno question is in scope by default as a student residence permit unless the user explicitly says work, tourist, family, permanent residence, asylum, or another non-study context.\n"
             " - Tourist visas, travel visas unrelated to study, work visas, business visas, family visas, general immigration, tourism, flights, hotels, and travel itineraries are out of scope. For these, set is_retrieval_related to false.\n\n"
             "Treat short/lazy queries as clear when the topic is identifiable. Examples of clear queries: "
-            "\"visa docs\", \"residence permit in Italy\", \"permesso di soggiorno\", \"can I travel while studying\", \"cv help\", \"scholarship money\", \"motivation letter structure\", \"recommendation letter who\".\n"
+            "\"how to apply to uni\", \"how to get dsu\", \"dsu money\", \"visa docs\", \"residence permit in Italy\", \"permesso di soggiorno\", \"can I travel while studying\", \"cv help\", \"scholarship money\", \"motivation letter structure\", \"recommendation letter who\".\n"
             "Ask a clarification only when the missing detail would change which supported education-abroad document/topic should be searched. "
             "Examples of unclear queries: \"what documents do I need?\", \"how to apply?\", \"send file\", \"что нужно?\", \"қалай тапсырам?\".\n"
             "Do NOT ask sub-aspect clarifications inside an already identified topic. If the user asks about a detail such as visa photo format, photo size, background, funds, appointment, CV structure, scholarship documents, or recommendation-letter requirements, treat it as clear and search that detail. "
@@ -273,6 +401,7 @@ class OpenAIGateway:
             "If the combined meaning is clear, produce a complete standalone search query.\n\n"
             "Short follow-up handling:\n"
             " - If the assistant just asked a clarification question and the latest user reply is a confirmation like \"yes\", \"да\", \"иә\", treat it as confirming the assistant's proposed topic and produce a standalone query.\n"
+            " - If the latest user asks a short continuation like \"how\", \"how?\", \"how to apply\", \"steps\", \"documents\", \"what docs\", \"как\", \"как подать\", or \"қалай\" after an in-scope answer or clarification, reuse the previous topic from history and produce a complete standalone query for that topic.\n"
             " - If the assistant offered choices like documents vs process, size vs background, or any other sub-aspects, and the user replies \"all\", \"both\", \"everything\", \"все\", \"все я сказал\", \"все вообще\", or similar, do NOT ask again; produce a broad standalone query covering all available details for the already identified topic.\n"
             " - If the user asks a short continuation like \"then?\" or \"потом?\" after an in-scope answer, keep the same topic from history and ask for the next step in the standalone query.\n\n"
             "Language-switch follow-up handling:\n"
@@ -291,6 +420,8 @@ class OpenAIGateway:
             ' - "reason": one short sentence\n\n'
             "Do not answer the user. Do not mention internal retrieval, embeddings, metadata, or files unless the user asked for a file.\n\n"
             "Examples:\n"
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply to an Italian university as an international student?","clarifying_question":"","target_language":"","reason":"University admission guidance is in scope and country defaults to Italy."}\n'
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply for the Italian DSU student scholarship?","clarifying_question":"","target_language":"","reason":"DSU defaults to the Italian student scholarship topic."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","target_language":"","reason":"The visa document topic is clear."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply for an Italian student residence permit?","clarifying_question":"","target_language":"","reason":"Residence permit defaults to the student residence permit context."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"All available photo format requirements for an Italian student visa, including size, background, and ICAO standards if present in the documents.","clarifying_question":"","target_language":"","reason":"The visa photo detail is specific enough to search."}\n'
@@ -367,11 +498,13 @@ class OpenAIGateway:
             "Your job is NOT to answer the user. Decide whether the retrieved excerpts are enough to answer the latest standalone query, "
             "or whether the assistant should ask exactly one more clarifying question first.\n\n"
             "Scope:\n"
-            " - The corpus currently covers Italy education-abroad topics: student visa, student residence permit/permesso di soggiorno, study-related travel rights or constraints, CV, scholarship, motivation letter, and recommendation letter.\n"
+            " - The corpus currently covers Italy education-abroad topics: university admission/application guidance, student visa, student residence permit/permesso di soggiorno, study-related travel rights or constraints, CV, DSU scholarship/student financial aid, motivation letter, and recommendation letter.\n"
             " - Sufficient means the excerpts directly discuss the requested topic and contain enough information to produce a grounded answer or send the requested document.\n"
             " - Insufficient means the excerpts are empty, mostly about the wrong document/topic, the query still lacks a detail that changes which document should be searched, or the requested information is not visible in the excerpts.\n"
             " - If the query asks a generic unsupported country/topic but the excerpts are only Italy docs, ask a clarification instead of guessing.\n"
+            " - DSU is a supported Italian student scholarship/financial-aid topic by default; do not ask whether DSU means financial aid unless the excerpts are clearly about a different DSU.\n"
             " - Treat broad queries like \"everything\", \"all\", \"general overview\", \"все\", or \"все вообще\" as sufficient when the excerpts are on the right topic; the answer generator can summarize what is available.\n"
+            " - Treat short topic queries like \"how to get DSU\", \"DSU money\", \"visa docs\", or \"cv help\" as sufficient when the excerpts are on the matching topic.\n"
             " - Do NOT ask the user to choose between documents and process when the query asks for a broad overview and the excerpts cover the same topic.\n"
             " - Do NOT ask the user to choose sub-aspects inside an already identified document topic. For example, if the query asks about visa photo format and the excerpts mention photo requirements, mark sufficient; do not ask whether they mean size, background, or another photo detail.\n"
             " - If the excerpts only cover part of a broad detail question, still mark sufficient when they directly address the topic. The answer generator must say only what is available in the excerpts and avoid inventing missing details.\n"
@@ -628,6 +761,43 @@ class OpenAIGateway:
             "other": "",
         }
         return mapping.get(normalized, (language_hint or "").strip())
+
+    def _guardrail_result_from_payload(self, parsed: Dict[str, Any]) -> GuardrailResult:
+        violation = str(parsed.get("violation") or "").strip().lower()
+        if violation not in {"", "out_of_scope", "unsafe", "unsupported_language"}:
+            violation = "out_of_scope"
+
+        needs_context = self._json_bool(parsed.get("needs_context"), default=False)
+        allowed = self._json_bool(parsed.get("allowed"), default=False)
+        if needs_context:
+            allowed = False
+            violation = ""
+        elif allowed:
+            violation = ""
+        elif not violation:
+            violation = "out_of_scope"
+
+        return GuardrailResult(
+            allowed=allowed,
+            reason=str(parsed.get("reason") or "").strip(),
+            language=normalize_language(str(parsed.get("language") or "")),
+            violation=violation,
+            model=self._settings.class_model,
+            needs_context=needs_context,
+        )
+
+    @staticmethod
+    def _merge_usage(first: Optional[ModelUsage], second: Optional[ModelUsage]) -> Optional[ModelUsage]:
+        if first is None:
+            return second
+        if second is None:
+            return first
+        return ModelUsage(
+            model=first.model,
+            input_tokens=first.input_tokens + second.input_tokens,
+            output_tokens=first.output_tokens + second.output_tokens,
+            total_tokens=first.total_tokens + second.total_tokens,
+        )
 
     @staticmethod
     def _extract_usage(response: Any, model: str) -> Optional[ModelUsage]:

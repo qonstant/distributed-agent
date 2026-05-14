@@ -7,6 +7,7 @@ from typing import List, Optional
 from rag_service.domain.models import (
     Classification,
     ConversationMessage,
+    GuardrailResult,
     ModelUsage,
     UsageEventRecord,
 )
@@ -55,6 +56,31 @@ def estimate_classification_event(
         )
     )
     return _gpt_4o_mini_event("classification", input_tokens, output_tokens)
+
+
+def estimate_guardrail_event(
+    query: str,
+    history: Optional[List[ConversationMessage]],
+    guardrail: GuardrailResult,
+) -> UsageEventRecord:
+    input_tokens = (
+        CLASSIFICATION_PROMPT_OVERHEAD_TOKENS
+        + estimate_tokens(query)
+        + _estimate_history_tokens(history)
+    )
+    output_tokens = estimate_tokens(
+        json.dumps(
+            {
+                "allowed": guardrail.allowed,
+                "violation": guardrail.violation,
+                "needs_context": guardrail.needs_context,
+                "reason": guardrail.reason,
+                "language": guardrail.language,
+            },
+            ensure_ascii=False,
+        )
+    )
+    return _gpt_4o_mini_event("guardrail", input_tokens, output_tokens)
 
 
 def estimate_greeting_completion_event(

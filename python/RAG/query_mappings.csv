@@ -1,0 +1,96 @@
+question,filename,expected_intent,expected_language
+How should I prepare a CV for university admission in Italy?,italy/CV_en.pdf,PROCEDURE,en
+What should I include in my academic CV for an Italian university?,italy/CV_en.pdf,FACTUAL_QUESTION,en
+cv for italy university what to put,italy/CV_en.pdf,FACTUAL_QUESTION,en
+italy cv help,italy/CV_en.pdf,PROCEDURE,en
+cv examples italy,italy/CV_en.pdf,FACTUAL_QUESTION,en
+Как подготовить CV для поступления в Италию?,italy/CV_ru.pdf,PROCEDURE,ru
+Что включить в академическое резюме для итальянского университета?,italy/CV_ru.pdf,FACTUAL_QUESTION,ru
+cv для италии что писать,italy/CV_ru.pdf,FACTUAL_QUESTION,ru
+cv италия помоги,italy/CV_ru.pdf,PROCEDURE,ru
+пример cv для италии,italy/CV_ru.pdf,FACTUAL_QUESTION,ru
+Италияға түсу үшін CV қалай дайындаймын?,italy/CV_kk.pdf,PROCEDURE,kk
+Италия университетіне арналған академиялық CV-ге не қосу керек?,italy/CV_kk.pdf,FACTUAL_QUESTION,kk
+италияға cv не жазу керек,italy/CV_kk.pdf,FACTUAL_QUESTION,kk
+италия cv көмек,italy/CV_kk.pdf,PROCEDURE,kk
+cv үлгісі италия,italy/CV_kk.pdf,FACTUAL_QUESTION,kk
+What is the DSU scholarship in Italy?,italy/DSU_Scholarship_en.pdf,FACTUAL_QUESTION,en
+Who can apply for the DSU scholarship in Italy?,italy/DSU_Scholarship_en.pdf,FACTUAL_QUESTION,en
+dsu italy who can get it,italy/DSU_Scholarship_en.pdf,FACTUAL_QUESTION,en
+dsu money italy,italy/DSU_Scholarship_en.pdf,FACTUAL_QUESTION,en
+italy scholarship dsu,italy/DSU_Scholarship_en.pdf,FACTUAL_QUESTION,en
+Что такое стипендия DSU в Италии?,italy/DSU_Scholarship_ru.pdf,FACTUAL_QUESTION,ru
+Кто может подать на стипендию DSU в Италии?,italy/DSU_Scholarship_ru.pdf,FACTUAL_QUESTION,ru
+dsu в италии кто может получить,italy/DSU_Scholarship_ru.pdf,FACTUAL_QUESTION,ru
+dsu деньги италия,italy/DSU_Scholarship_ru.pdf,FACTUAL_QUESTION,ru
+стипендия dsu как получить,italy/DSU_Scholarship_ru.pdf,PROCEDURE,ru
+Италиядағы DSU стипендиясы деген не?,italy/DSU_Scholarship_kk.pdf,FACTUAL_QUESTION,kk
+Италиядағы DSU стипендиясына кім өтініш бере алады?,italy/DSU_Scholarship_kk.pdf,FACTUAL_QUESTION,kk
+италияда dsu кімге беріледі,italy/DSU_Scholarship_kk.pdf,FACTUAL_QUESTION,kk
+dsu ақша италия,italy/DSU_Scholarship_kk.pdf,FACTUAL_QUESTION,kk
+dsu стипендия қалай алуға болады,italy/DSU_Scholarship_kk.pdf,PROCEDURE,kk
+How do I write a strong motivation letter for Italy?,italy/LOM_en.pdf,PROCEDURE,en
+What structure should a motivation letter have for an Italian university?,italy/LOM_en.pdf,FACTUAL_QUESTION,en
+motivation letter for italy how to start,italy/LOM_en.pdf,PROCEDURE,en
+motivation letter help italy,italy/LOM_en.pdf,PROCEDURE,en
+lom italy example,italy/LOM_en.pdf,FACTUAL_QUESTION,en
+Как написать мотивационное письмо для университета в Италии?,italy/LOM_ru.pdf,PROCEDURE,ru
+Какая структура у мотивационного письма для Италии?,italy/LOM_ru.pdf,FACTUAL_QUESTION,ru
+мотивационное письмо в италию как начать,italy/LOM_ru.pdf,PROCEDURE,ru
+мотивационное италия помоги,italy/LOM_ru.pdf,PROCEDURE,ru
+пример мотивационного в италию,italy/LOM_ru.pdf,FACTUAL_QUESTION,ru
+Италия университетіне мотивациялық хатты қалай жазамын?,italy/LOM_kk.pdf,PROCEDURE,kk
+Италияға арналған мотивациялық хаттың құрылымы қандай?,italy/LOM_kk.pdf,FACTUAL_QUESTION,kk
+италияға мотивациялық хат қалай бастау,italy/LOM_kk.pdf,PROCEDURE,kk
+мотивациялық хат италия көмек,italy/LOM_kk.pdf,PROCEDURE,kk
+мотивациялық хат үлгісі италия,italy/LOM_kk.pdf,FACTUAL_QUESTION,kk
+How many recommendation letters do I need for Italy?,italy/LOR_en.pdf,FACTUAL_QUESTION,en
+Who can write my recommendation letter for an Italian university?,italy/LOR_en.pdf,FACTUAL_QUESTION,en
+recommendation letter italy who can write,italy/LOR_en.pdf,FACTUAL_QUESTION,en
+lor italy help,italy/LOR_en.pdf,PROCEDURE,en
+recommendation letter example italy,italy/LOR_en.pdf,FACTUAL_QUESTION,en
+Сколько рекомендательных писем нужно для поступления в Италию?,italy/LOR_ru.pdf,FACTUAL_QUESTION,ru
+Кто может написать рекомендательное письмо для университета в Италии?,italy/LOR_ru.pdf,FACTUAL_QUESTION,ru
+рекомендательное письмо в италию кто может написать,italy/LOR_ru.pdf,FACTUAL_QUESTION,ru
+lor италия помоги,italy/LOR_ru.pdf,PROCEDURE,ru
+пример рекомендательного в италию,italy/LOR_ru.pdf,FACTUAL_QUESTION,ru
+Италияға түсу үшін қанша ұсыныс хаты керек?,italy/LOR_kk.pdf,FACTUAL_QUESTION,kk
+Италия университетіне ұсыныс хатын кім жаза алады?,italy/LOR_kk.pdf,FACTUAL_QUESTION,kk
+италияға ұсыныс хатын кім жаза алады,italy/LOR_kk.pdf,FACTUAL_QUESTION,kk
+ұсыныс хат италия көмек,italy/LOR_kk.pdf,PROCEDURE,kk
+ұсыныс хат үлгісі италия,italy/LOR_kk.pdf,FACTUAL_QUESTION,kk
+How do I apply for an Italian student visa?,italy/Visa_en.pdf,PROCEDURE,en
+What documents are needed for an Italian student visa?,italy/Visa_en.pdf,FACTUAL_QUESTION,en
+italy student visa what docs needed,italy/Visa_en.pdf,FACTUAL_QUESTION,en
+visa italy help,italy/Visa_en.pdf,PROCEDURE,en
+student visa italy docs,italy/Visa_en.pdf,FACTUAL_QUESTION,en
+Как подать на студенческую визу в Италию?,italy/Visa_ru.pdf,PROCEDURE,ru
+Какие документы нужны для итальянской студенческой визы?,italy/Visa_ru.pdf,FACTUAL_QUESTION,ru
+италия студ виза какие документы нужны,italy/Visa_ru.pdf,FACTUAL_QUESTION,ru
+виза италия помоги,italy/Visa_ru.pdf,PROCEDURE,ru
+студ виза италия доки,italy/Visa_ru.pdf,FACTUAL_QUESTION,ru
+Италияға студенттік визаға қалай өтініш беремін?,italy/Visa_kk.pdf,PROCEDURE,kk
+Италияның студенттік визасына қандай құжаттар керек?,italy/Visa_kk.pdf,FACTUAL_QUESTION,kk
+италия студенттік визаға қандай құжат керек,italy/Visa_kk.pdf,FACTUAL_QUESTION,kk
+виза италия көмек,italy/Visa_kk.pdf,PROCEDURE,kk
+студенттік виза италия құжаттар,italy/Visa_kk.pdf,FACTUAL_QUESTION,kk
+Hi,,GREETING,en
+Thanks,,GREETING,en
+How are you?,,CHITCHAT,en
+Are you a real person?,,CHITCHAT,en
+What is the deadline for DSU in Italy?,italy/DSU_Scholarship_en.pdf,FACTUAL_QUESTION,en
+How much is tuition in Italy?,,FACTUAL_QUESTION,en
+What language certificate do I need for admission?,,FACTUAL_QUESTION,en
+How do I apply for housing in Italy?,,PROCEDURE,en
+What should I do after nomination for exchange?,,PROCEDURE,en
+Compare Italy and Germany for master's studies,,COMPARISON,en
+Which is better Polimi or University of Bologna?,,COMPARISON,en
+Compare DSU and Erasmus scholarships,,COMPARISON,en
+Write me a Python scraper,,OUT_OF_DOMAIN,en
+Explain Kafka partitions,,OUT_OF_DOMAIN,en
+Как дела?,,CHITCHAT,ru
+Сравни Италию и Германию для магистратуры,,COMPARISON,ru
+Как подать на жилье в Италии?,,PROCEDURE,ru
+Напиши Dockerfile,,OUT_OF_DOMAIN,ru
+Сәлем,,GREETING,kk
+Италия мен Германияны магистратура үшін салыстыр,,COMPARISON,kk

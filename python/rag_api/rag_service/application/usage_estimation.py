@@ -49,7 +49,11 @@ def estimate_classification_event(
         json.dumps(
             {
                 "intent": classification.intent,
+                "confidence": classification.confidence,
+                "needs_rag": classification.needs_rag,
+                "route": classification.route,
                 "explain": classification.explain,
+                "rewritten_query": classification.rewritten_query,
                 "language": classification.language,
             },
             ensure_ascii=False,

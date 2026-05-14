@@ -21,9 +21,11 @@ from rag_service.domain.models import (
     RetrievalSufficiency,
     RetrievedHit,
     UsageEventRecord,
+    normalize_intent,
     normalize_language,
 )
 from rag_service.infrastructure.prompts import (
+    prepare_comparison_prompt,
     prepare_document_request_prompt,
     prepare_factual_rag_prompt,
     prepare_guidance_prompt,
@@ -33,7 +35,23 @@ if TYPE_CHECKING:
     from rag_service.infrastructure.openai_gateway import OpenAIGateway
 
 
-RETRIEVAL_INTENTS = {"GUIDANCE", "DOCUMENT_REQUEST", "FACTUAL_QUESTION"}
+RETRIEVAL_INTENTS = {
+    "FACTUAL_QUESTION",
+    "PROCEDURE",
+    "COMPARISON",
+    # Legacy labels accepted while older tests/data are migrated.
+    "GUIDANCE",
+    "DOCUMENT_REQUEST",
+}
+
+INTENT_CONFIDENCE_THRESHOLDS = {
+    "GREETING": 0.85,
+    "CHITCHAT": 0.75,
+    "FACTUAL_QUESTION": 0.70,
+    "PROCEDURE": 0.70,
+    "COMPARISON": 0.75,
+    "OUT_OF_DOMAIN": 0.80,
+}
 
 
 def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Optional[RetrievedHit]]:
@@ -260,20 +278,27 @@ def _effective_language(language: str, target_language: str = "") -> str:
 
 
 def _should_run_retrieval_clarity(intent: str, history: List[ConversationMessage]) -> bool:
-    if intent in RETRIEVAL_INTENTS:
+    normalized_intent = normalize_intent(intent)
+    if normalized_intent in RETRIEVAL_INTENTS or intent in RETRIEVAL_INTENTS:
         return True
-    if intent == "OTHER" and history:
+    if normalized_intent == "OUT_OF_DOMAIN" and history:
         return True
     return False
+
+
+def _below_confidence_threshold(intent: str, confidence: float) -> bool:
+    if confidence <= 0:
+        return False
+    return confidence < INTENT_CONFIDENCE_THRESHOLDS.get(normalize_intent(intent), 0.0)
 
 
 def _fallback_clarifying_question(language: str) -> str:
     normalized_language = (language or "").strip().lower()
     if normalized_language == "kk":
-        return "Қай тақырып бойынша сұрап тұрсыз: университетке түсу, студенттік виза, студенттік тұруға рұқсат, DSU шәкіртақысы, CV, мотивациялық хат немесе ұсыныс хат?"
+        return "Қай тақырып бойынша сұрап тұрсыз: университетке түсу, студенттік виза, тұруға рұқсат, DSU шәкіртақысы, құжаттар, дедлайн, оқу ақысы, жатақхана, exchange, CV немесе хаттар?"
     if normalized_language == "ru":
-        return "По какой теме вы спрашиваете: поступление в университет, студенческая виза, студенческий ВНЖ, стипендия DSU, CV, мотивационное письмо или рекомендательное письмо?"
-    return "Which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?"
+        return "По какой теме вы спрашиваете: поступление, студенческая виза, студенческий ВНЖ, DSU, документы, дедлайны, стоимость обучения, жилье, exchange, CV или письма?"
+    return "Which topic do you mean: admission, student visa, residence permit, DSU scholarship, documents, deadlines, tuition, housing, exchange, CV, or letters?"
 
 
 def _out_of_scope_answer(language: str) -> str:
@@ -281,16 +306,16 @@ def _out_of_scope_answer(language: str) -> str:
     if normalized_language == "kk":
         return (
             "Мен тек шетелде оқу бойынша сұрақтарға көмектесе аламын: оқуға түсу, "
-            "студенттік виза, студенттік тұруға рұқсат, шәкіртақы, CV, мотивациялық және ұсыныс хаттар."
+            "құжаттар, шәкіртақы, дедлайн, оқу ақысы, exchange, студенттік виза, тұруға рұқсат, жатақхана, CV және хаттар."
         )
     if normalized_language == "ru":
         return (
             "Я могу помогать только с вопросами про обучение за рубежом: поступление, "
-            "студенческую визу, студенческий ВНЖ, стипендию, CV, мотивационное и рекомендательное письма."
+            "документы, стипендии, дедлайны, стоимость обучения, exchange, студенческую визу, ВНЖ, жилье, CV и письма."
         )
     return (
-        "I can help only with education-abroad questions: admission, student visas, student residence permits, "
-        "scholarship, CVs, motivation letters, and recommendation letters."
+        "I can help only with education-abroad questions: admission, documents, scholarships, deadlines, tuition, "
+        "exchange programs, student visas, residence permits, housing, CVs, and letters."
     )
 
 
@@ -321,10 +346,10 @@ def _guardrail_blocked_answer(language: str, violation: str) -> str:
 def _fallback_retrieval_follow_up_question(language: str) -> str:
     normalized_language = (language or "").strip().lower()
     if normalized_language == "kk":
-        return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: университетке түсу, студенттік виза, студенттік тұруға рұқсат, DSU шәкіртақысы, CV, мотивациялық хат немесе ұсыныс хат?"
+        return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: түсу, студенттік виза, тұруға рұқсат, DSU, құжаттар, дедлайн, оқу ақысы, жатақхана, exchange, CV немесе хаттар?"
     if normalized_language == "ru":
-        return "Чтобы найти точный ответ в документах, уточните тему: поступление в университет, студенческая виза, студенческий ВНЖ, стипендия DSU, CV, мотивационное письмо или рекомендательное письмо?"
-    return "To find the right answer in the documents, which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?"
+        return "Чтобы найти точный ответ в документах, уточните тему: поступление, студенческая виза, ВНЖ, DSU, документы, дедлайны, стоимость обучения, жилье, exchange, CV или письма?"
+    return "To find the right answer in the documents, which topic do you mean: admission, student visa, residence permit, DSU, documents, deadlines, tuition, housing, exchange, CV, or letters?"
 
 
 class QueryService:
@@ -407,16 +432,27 @@ class QueryService:
                 classification_usage,
             )
         )
-        intent = classification.intent
+        raw_intent = (classification.intent or "").strip().upper()
+        intent = normalize_intent(raw_intent)
+        clarity_intent = raw_intent if raw_intent in {"CHIT_CHAT", "GUIDANCE", "DOCUMENT_REQUEST", "OTHER"} else intent
         language = classification.language or guardrail_language
         print(
             f"[query] classifier -> intent={intent} lang={language} "
+            f"route={classification.route} confidence={classification.confidence:.2f} "
             f"explain={classification.explain}"
         )
 
         if classification.profile_action == "set_preferred_name" and (classification.preferred_name or "").strip():
             return QueryResult(
                 answer="",
+                file=None,
+                classification=classification,
+                usage_events=usage_events,
+            )
+
+        if classification.route == "CLARIFY" or _below_confidence_threshold(intent, classification.confidence):
+            return QueryResult(
+                answer=_fallback_clarifying_question(language),
                 file=None,
                 classification=classification,
                 usage_events=usage_events,
@@ -452,11 +488,11 @@ class QueryService:
                 )
 
         forced_clarity: Optional[RetrievalClarity] = None
-        if intent == "CHIT_CHAT" and history:
+        if intent == "CHITCHAT" and history:
             clarity, clarity_usage = self._retrieval_clarity(
                 normalized_query,
                 language,
-                intent,
+                clarity_intent,
                 history,
             )
             if clarity_usage is not None:
@@ -473,9 +509,9 @@ class QueryService:
                         usage_events=usage_events,
                     )
                 forced_clarity = clarity
-                intent = "GUIDANCE"
+                intent = "PROCEDURE"
 
-        if intent in ("GREETING", "CHIT_CHAT"):
+        if intent in ("GREETING", "CHITCHAT"):
             greeting, completion_usage = self._gateway.generate_greeting_reply(
                 normalized_query,
                 language,
@@ -501,7 +537,7 @@ class QueryService:
             clarity, clarity_usage = self._retrieval_clarity(
                 normalized_query,
                 language,
-                intent,
+                clarity_intent,
                 history,
             )
             if clarity_usage is not None:
@@ -546,7 +582,7 @@ class QueryService:
                 clarity, clarity_usage = self._retrieval_clarity(
                     normalized_query,
                     language,
-                    intent,
+                    clarity_intent,
                     history,
                 )
                 if clarity_usage is not None:
@@ -570,8 +606,17 @@ class QueryService:
                     usage_events=usage_events,
                 )
 
-            retrieval_query = (clarity.standalone_query or "").strip() or normalized_query
-            retrieval_intent = intent if intent in RETRIEVAL_INTENTS else "GUIDANCE"
+            retrieval_query = (
+                (classification.rewritten_query or "").strip()
+                or (clarity.standalone_query or "").strip()
+                or normalized_query
+            )
+            if raw_intent == "DOCUMENT_REQUEST":
+                retrieval_intent = "DOCUMENT_REQUEST"
+            elif raw_intent == "GUIDANCE":
+                retrieval_intent = "GUIDANCE"
+            else:
+                retrieval_intent = intent if intent in RETRIEVAL_INTENTS else "PROCEDURE"
             response_language = _effective_language(language, clarity.target_language)
             response_language_label = _language_label(response_language)
             rewrite_usage = None
@@ -626,6 +671,13 @@ class QueryService:
 
             if retrieval_intent == "DOCUMENT_REQUEST":
                 prompt = prepare_document_request_prompt(
+                    retrieval_query,
+                    top_chunks,
+                    history=history,
+                    preferred_name=normalized_preferred_name,
+                )
+            elif retrieval_intent == "COMPARISON":
+                prompt = prepare_comparison_prompt(
                     retrieval_query,
                     top_chunks,
                     history=history,

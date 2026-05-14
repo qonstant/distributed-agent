@@ -28,11 +28,11 @@ from rag_service.infrastructure.openai_gateway import OpenAIGateway
 
 INTENTS = [
     "GREETING",
-    "CHIT_CHAT",
+    "CHITCHAT",
     "FACTUAL_QUESTION",
-    "GUIDANCE",
-    "DOCUMENT_REQUEST",
-    "OTHER",
+    "PROCEDURE",
+    "COMPARISON",
+    "OUT_OF_DOMAIN",
 ]
 
 QUESTION_COLUMNS = ("question", "questions", "query", "user_input", "input")
@@ -81,6 +81,13 @@ def first_existing_column(fieldnames: Dict[str, str], candidates: Iterable[str])
 
 def normalize_intent(value: str) -> str:
     normalized = (value or "").strip().upper()
+    aliases = {
+        "CHIT_CHAT": "CHITCHAT",
+        "GUIDANCE": "PROCEDURE",
+        "DOCUMENT_REQUEST": "FACTUAL_QUESTION",
+        "OTHER": "OUT_OF_DOMAIN",
+    }
+    normalized = aliases.get(normalized, normalized)
     if normalized not in INTENTS:
         raise ValueError(f"unsupported intent {value!r}; expected one of {INTENTS}")
     return normalized
@@ -196,6 +203,10 @@ def classify_with_retry(
                 "language": classification.language,
                 "profile_action": classification.profile_action,
                 "preferred_name": classification.preferred_name,
+                "confidence": classification.confidence,
+                "needs_rag": classification.needs_rag,
+                "route": classification.route,
+                "rewritten_query": classification.rewritten_query,
             }
         except Exception as exc:
             last_error = exc
@@ -246,6 +257,10 @@ def evaluate_cases(
                 if not case.get("expected_profile_action")
                 else predicted_profile_action == case["expected_profile_action"]
             ),
+            "confidence": prediction.get("confidence"),
+            "needs_rag": prediction.get("needs_rag"),
+            "route": prediction.get("route"),
+            "rewritten_query": str(prediction.get("rewritten_query") or ""),
         }
         rows.append(row)
         status = "ok" if row["intent_correct"] else "MISS"
@@ -393,6 +408,10 @@ def save_predictions_csv(path: Optional[Path], rows: List[Dict[str, Any]]) -> No
         "predicted_profile_action",
         "profile_action_correct",
         "cache_hit",
+        "confidence",
+        "needs_rag",
+        "route",
+        "rewritten_query",
         "explain",
     ]
     with path.open("w", encoding="utf-8", newline="") as fh:

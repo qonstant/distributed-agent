@@ -78,14 +78,15 @@ class OpenAIGatewayTests(unittest.TestCase):
 
     def test_classify_query_extracts_preferred_name_action(self) -> None:
         gateway, _ = self._gateway_with_output(
-            '{"intent":"CHIT_CHAT","explain":"user sets a preferred name","language":"ru","profile_action":"set_preferred_name","preferred_name":"Heisenberg"}'
+            '{"intent":"CHITCHAT","confidence":0.93,"needs_rag":false,"route":"SMALL_MODEL_RESPONSE","reason":"user sets a preferred name","rewritten_query":"","language":"ru","profile_action":"set_preferred_name","preferred_name":"Heisenberg"}'
         )
 
         classification, _ = gateway.classify_query("зовут меня теперь Heisenberg")
 
-        self.assertEqual(classification.intent, "CHIT_CHAT")
+        self.assertEqual(classification.intent, "CHITCHAT")
         self.assertEqual(classification.profile_action, "set_preferred_name")
         self.assertEqual(classification.preferred_name, "Heisenberg")
+        self.assertEqual(classification.route, "SMALL_MODEL_RESPONSE")
 
     def test_classify_query_prompt_guides_russian_vs_kazakh_cyrillic(self) -> None:
         gateway, fake_client = self._gateway_with_output(
@@ -212,16 +213,22 @@ class OpenAIGatewayTests(unittest.TestCase):
 
     def test_classify_query_prompt_runs_after_guardrail_scope_check(self) -> None:
         gateway, fake_client = self._gateway_with_output(
-            '{"intent":"GUIDANCE","explain":"user asks for university admission guidance","language":"en","profile_action":"","preferred_name":""}'
+            '{"intent":"PROCEDURE","confidence":0.88,"needs_rag":true,"route":"RAG_SEARCH","reason":"user asks for university admission procedure","rewritten_query":"Italian university admission application steps","language":"en","profile_action":"","preferred_name":""}'
         )
 
         classification, _ = gateway.classify_query("How to apply to uni")
 
-        self.assertEqual(classification.intent, "GUIDANCE")
+        self.assertEqual(classification.intent, "PROCEDURE")
+        self.assertTrue(classification.needs_rag)
+        self.assertEqual(classification.route, "RAG_SEARCH")
+        self.assertEqual(classification.rewritten_query, "Italian university admission application steps")
         prompt = fake_client.responses.calls[0]["input"]
-        self.assertIn("The guardrail has already checked safety and assistant scope", prompt)
-        self.assertIn('"intent": one of ["GREETING","CHIT_CHAT","FACTUAL_QUESTION","GUIDANCE","DOCUMENT_REQUEST"]', prompt)
+        self.assertIn("compact routing classifier", prompt)
+        self.assertIn('"intent": one of ["GREETING","CHITCHAT","FACTUAL_QUESTION","PROCEDURE","COMPARISON","OUT_OF_DOMAIN"]', prompt)
+        self.assertIn('"confidence": number from 0.0 to 1.0', prompt)
+        self.assertIn('"route": one of ["CANNED_RESPONSE","SMALL_MODEL_RESPONSE","RAG_SEARCH","CLARIFY","REFUSE_OR_REDIRECT"]', prompt)
         self.assertIn("short replies like \"yes\", \"how\", \"how to apply\"", prompt)
+        self.assertIn("Compare Italy and Germany", prompt)
         self.assertNotIn("For out-of-scope requests, choose OTHER", prompt)
 
     def test_classify_attachment_follow_up_extracts_resend_action(self) -> None:

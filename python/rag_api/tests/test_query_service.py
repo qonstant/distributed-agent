@@ -26,10 +26,10 @@ EN_PAGE_1_REFERENCE = "Especially check page 1 in the attached file; it has the 
 RU_PAGE_1_REFERENCE = "Особенно проверьте страницу 1 в приложенном файле: там самые релевантные детали по этому ответу."
 RU_PAGE_3_REFERENCE = "Особенно проверьте страницу 3 в приложенном файле: там самые релевантные детали по этому ответу."
 EN_FILE_OFFER = "Should I send you the file with this information?"
-EN_TOPIC_CLARIFICATION = "Which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?"
-EN_RETRIEVAL_FOLLOW_UP = "To find the right answer in the documents, which topic do you mean: university admission, student visa, student residence permit, DSU scholarship, CV, motivation letter, or recommendation letter?"
-EN_SCOPE_ANSWER = "I can help only with education-abroad questions: admission, student visas, student residence permits, scholarship, CVs, motivation letters, and recommendation letters."
-RU_SCOPE_ANSWER = "Я могу помогать только с вопросами про обучение за рубежом: поступление, студенческую визу, студенческий ВНЖ, стипендию, CV, мотивационное и рекомендательное письма."
+EN_TOPIC_CLARIFICATION = "Which topic do you mean: admission, student visa, residence permit, DSU scholarship, documents, deadlines, tuition, housing, exchange, CV, or letters?"
+EN_RETRIEVAL_FOLLOW_UP = "To find the right answer in the documents, which topic do you mean: admission, student visa, residence permit, DSU, documents, deadlines, tuition, housing, exchange, CV, or letters?"
+EN_SCOPE_ANSWER = "I can help only with education-abroad questions: admission, documents, scholarships, deadlines, tuition, exchange programs, student visas, residence permits, housing, CVs, and letters."
+RU_SCOPE_ANSWER = "Я могу помогать только с вопросами про обучение за рубежом: поступление, документы, стипендии, дедлайны, стоимость обучения, exchange, студенческую визу, ВНЖ, жилье, CV и письма."
 
 
 class FakeGateway:
@@ -229,6 +229,25 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(memory.requested_ids, ["conv-1"])
         self.assertEqual(gateway.guard_calls, [("Да да да", []), ("Да да да", history)])
         self.assertEqual(gateway.classify_calls, [("Да да да", history)])
+
+    def test_low_confidence_classification_asks_clarification_without_rag(self) -> None:
+        gateway = FakeGateway(
+            Classification(
+                intent="PROCEDURE",
+                explain="too ambiguous",
+                language="en",
+                confidence=0.42,
+                needs_rag=True,
+                route="RAG_SEARCH",
+            )
+        )
+        service = QueryService(gateway, FakeStore(), conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("How do I apply?", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, EN_TOPIC_CLARIFICATION)
+        self.assertEqual(gateway.embedded_queries, [])
+        self.assertEqual(gateway.clarity_calls, [])
 
     def test_factual_education_question_uses_rag_and_offers_file_without_sending(self) -> None:
         standalone_query = "What photo is required for an Italian student visa?"

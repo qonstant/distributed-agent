@@ -27,6 +27,10 @@ class ClassificationResponse(BaseModel):
     version: str = ""
     profile_action: str = ""
     preferred_name: str = ""
+    confidence: float = 0.0
+    needs_rag: bool = False
+    route: str = ""
+    rewritten_query: str = ""
 
 
 class UsageEventResponse(BaseModel):
@@ -93,6 +97,10 @@ def create_app() -> FastAPI:
                 version=result.classification.version,
                 profile_action=result.classification.profile_action,
                 preferred_name=result.classification.preferred_name,
+                confidence=result.classification.confidence,
+                needs_rag=result.classification.needs_rag,
+                route=result.classification.route,
+                rewritten_query=result.classification.rewritten_query,
             )
         return QueryResponse(
             answer=result.answer,

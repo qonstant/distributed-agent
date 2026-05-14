@@ -18,6 +18,7 @@ from rag_service.domain.models import (
     normalize_intent,
     normalize_language,
     normalize_profile_action,
+    normalize_route,
 )
 from rag_service.infrastructure.config import Settings
 from rag_service.infrastructure.prompts import build_history_lines, build_personalization_lines
@@ -55,7 +56,7 @@ class OpenAIGateway:
             " - Do not request context for standalone messages like \"How to get DSU\", \"How to apply to uni\", \"visa docs\", \"How can I apply for residence permit in Italy?\", \"Как получить ВНЖ\", or clearly unsafe/out-of-scope requests.\n"
             " - Do not request context for complete unrelated questions. Standalone unrelated questions are out_of_scope, not needs_context. Example: \"What is the capital of France?\" is out_of_scope.\n\n"
             "Allowed scope:\n"
-            " - Education/study-abroad support, including university admission abroad, university application guidance, admission documents, student visas for study/enrollment, student residence permits/permesso di soggiorno for study, study-related travel rights or constraints, scholarships, DSU scholarship/student financial aid in Italy, CV, motivation letter, and recommendation letter.\n"
+            " - Education/study-abroad support, including university admission abroad, university application guidance, required documents, deadlines, tuition and fees, exchange programs, housing basics, language requirements, student visas for study/enrollment, student residence permits/permesso di soggiorno for study, study-related travel rights or constraints, scholarships, DSU scholarship/student financial aid in Italy, CV, motivation letter, recommendation letter, and country/university/program comparisons.\n"
             " - Greetings, thanks, small talk, user profile/name updates, and questions about recent conversation are allowed because they help the assistant conversation.\n"
             " - Short follow-ups are allowed when recent conversation makes them refer to an in-scope topic. Examples: \"yes\", \"how\", \"how to apply\", \"steps\", \"documents\", \"да\", \"как\", \"қалай\".\n"
             " - Short confirmations or refusals are allowed when recent conversation makes them meaningful. Examples: \"yes\", \"no\", \"yeah\", \"nope\", \"да\", \"нет\", \"иә\", \"жоқ\", \"Да да да\".\n"
@@ -176,24 +177,35 @@ class OpenAIGateway:
     ) -> tuple[Classification, Optional[ModelUsage]]:
         history_block = self._history_block(history)
         prompt = (
-            "You are a compact intent classifier and language detector. Given the user's latest input and optional recent conversation context below, "
-            "return a JSON object with EXACTLY five keys:\n"
-            " - \"intent\": one of [\"GREETING\",\"CHIT_CHAT\",\"FACTUAL_QUESTION\",\"GUIDANCE\",\"DOCUMENT_REQUEST\"]\n"
-            " - \"explain\": one short sentence explaining why\n"
-            " - \"language\": exactly one of [\"kk\",\"ru\",\"en\",\"other\"]\n\n"
+            "You are a compact routing classifier and language detector for an education-abroad assistant. "
+            "Given the user's latest input and optional recent conversation context, return routing metadata.\n\n"
+            "Return a JSON object with EXACTLY nine keys:\n"
+            " - \"intent\": one of [\"GREETING\",\"CHITCHAT\",\"FACTUAL_QUESTION\",\"PROCEDURE\",\"COMPARISON\",\"OUT_OF_DOMAIN\"]\n"
+            " - \"confidence\": number from 0.0 to 1.0\n"
+            " - \"needs_rag\": boolean\n"
+            " - \"route\": one of [\"CANNED_RESPONSE\",\"SMALL_MODEL_RESPONSE\",\"RAG_SEARCH\",\"CLARIFY\",\"REFUSE_OR_REDIRECT\"]\n"
+            " - \"reason\": one short sentence explaining why\n"
+            " - \"rewritten_query\": improved search query for RAG, else \"\"\n"
+            " - \"language\": exactly one of [\"kk\",\"ru\",\"en\",\"other\"]\n"
             " - \"profile_action\": either \"set_preferred_name\" or \"\"\n"
-            " - \"preferred_name\": extracted preferred name if the user is telling you what to call them, else \"\"\n\n"
-            "The guardrail has already checked safety and assistant scope before this classifier runs. "
-            "Do not reject the request for being out of scope here; choose the best conversational or retrieval intent.\n\n"
+            " - \"preferred_name\": extracted preferred name if the user is telling you what name to use, else \"\"\n\n"
+            "The input guard has already checked unsafe content before this classifier runs. "
+            "If the latest message is safe but unrelated to education abroad, classify it as OUT_OF_DOMAIN.\n\n"
+            "Assistant domain:\n"
+            " - university admissions, required documents, scholarships, deadlines, tuition and fees, exchange programs, student visa basics, student residence permit basics, housing, language requirements, application procedures, and country/university/program comparisons.\n\n"
             "Conversation/context rules:\n"
-            " - Use recent conversation to classify short follow-ups. If the previous in-scope topic was DSU, scholarship, visa, residence permit, CV, motivation letter, recommendation letter, or university admission, short replies like \"yes\", \"how\", \"how to apply\", \"steps\", \"documents\", \"да\", \"как\", or \"қалай\" are continuations of that topic.\n"
+            " - Use recent conversation to classify short follow-ups. If the previous in-scope topic was DSU, scholarship, visa, residence permit, CV, motivation letter, recommendation letter, housing, exchange, tuition, deadlines, language requirements, or university admission, short replies like \"yes\", \"how\", \"how to apply\", \"steps\", \"documents\", \"да\", \"как\", or \"қалай\" are continuations of that topic.\n"
             " - Prefer making the helpful education-abroad assumption over asking for clarification when the topic is identifiable from the latest input or history.\n\n"
-            "Definitions/examples:\n"
-            " - GREETING: short hello/goodbye messages (no docs needed)\n"
-            " - CHIT_CHAT: small talk / thanks / compliment (no docs)\n"
-            " - FACTUAL_QUESTION: direct factual question. If it is about education-abroad documents or procedures, including student residence permits or study-related travel permissions, it will be answered using retrieval. If it is only about recent conversation or saved user info (e.g., \"What is my name?\"), no document retrieval is needed. Do NOT use for general world knowledge or out-of-scope travel/visa questions.\n"
-            " - GUIDANCE: user asks for in-scope education-abroad step-by-step guidance, procedures or how-to that should be answered using documents if available, but may be synthesized from top-K excerpts (do NOT invent facts). Also use GUIDANCE when the user asks to repeat/continue a previous in-scope answer in another supported language.\n"
-            " - DOCUMENT_REQUEST: user explicitly requests an in-scope education-abroad document, template, sample file, or wants 'send X' / 'пример файла' (must prefer returning a file path from available docs)\n\n"
+            "Class and route rules:\n"
+            " - GREETING: user only greets, thanks, says goodbye, or starts socially. confidence >=0.85, needs_rag=false, route=CANNED_RESPONSE.\n"
+            " - CHITCHAT: casual small talk such as how are you, are you real, tell me a joke. confidence >=0.75, needs_rag=false, route=SMALL_MODEL_RESPONSE.\n"
+            " - FACTUAL_QUESTION: asks for a specific education-abroad fact, requirement, document list, deadline, fee, eligibility rule, IELTS/language requirement, housing fact, visa/residence fact, or example/template/sample. needs_rag=true, route=RAG_SEARCH.\n"
+            " - PROCEDURE: asks how to do something, steps, checklist, timeline, application process, renewal, submission, enrollment, scholarship/visa/residence/housing/admission procedure. needs_rag=true, route=RAG_SEARCH.\n"
+            " - COMPARISON: asks to compare countries, universities, programs, scholarships, costs, requirements, or study options. needs_rag=true, route=RAG_SEARCH.\n"
+            " - OUT_OF_DOMAIN: safe but unrelated to education abroad, such as programming, sports, trading, generic health, or unrelated general knowledge. needs_rag=false, route=REFUSE_OR_REDIRECT.\n"
+            " - If confidence is low because the message is too ambiguous, use the best likely intent, route=CLARIFY, needs_rag=false, confidence below that intent's threshold, and put an empty rewritten_query.\n\n"
+            "Confidence thresholds to keep in mind: GREETING 0.85, CHITCHAT 0.75, FACTUAL_QUESTION 0.70, PROCEDURE 0.70, COMPARISON 0.75, OUT_OF_DOMAIN 0.80.\n"
+            "For RAG intents, fill rewritten_query with a clearer search query. If the user asks \"What documents do I need?\" without context, classify as FACTUAL_QUESTION with route=CLARIFY and rewritten_query=\"\".\n\n"
             "Language rules:\n"
             " - Do NOT choose Kazakh just because the text is written in Cyrillic.\n"
             " - Prefer \"ru\" for standard Russian wording such as \"Как меня зовут?\", \"Как зовут меня?\", \"Вот меня зовут ...\", \"Зови меня ...\", \"Привет\", \"Спасибо\".\n"
@@ -203,14 +215,16 @@ class OpenAIGateway:
             "\"call me Alex\", \"my name is Rocco\", \"зови меня Роман\", \"меня зовут Азамат\", or rename phrases like \"зовут меня теперь Heisenberg\". "
             "When you do that, put only the clean extracted name into preferred_name.\n\n"
             "Respond ONLY with valid JSON (no extra text). Example:\n"
-            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks for university admission guidance\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How to apply to uni\"\n"
-            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to get the Italian DSU scholarship\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How to get dsu\"\n"
-            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for an Italian student visa\",\"language\":\"ru\",\"profile_action\":\"\",\"preferred_name\":\"\"}\n"
-            "{\"intent\":\"GUIDANCE\",\"explain\":\"user asks how to apply for an Italian student residence permit\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How can I apply for residence permit in Italy?\"\n"
-            "{\"intent\":\"FACTUAL_QUESTION\",\"explain\":\"user asks about travel permission while studying abroad\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"Can I travel while studying in Italy?\"\n"
-            "{\"intent\":\"GREETING\",\"explain\":\"short greeting in Kazakh\",\"language\":\"kk\",\"profile_action\":\"\",\"preferred_name\":\"\"}\n"
-            "{\"intent\":\"CHIT_CHAT\",\"explain\":\"user sets a preferred name\",\"language\":\"ru\",\"profile_action\":\"set_preferred_name\",\"preferred_name\":\"Роман\"}\n"
-            "{\"intent\":\"FACTUAL_QUESTION\",\"explain\":\"user asks what their name is in Russian\",\"language\":\"ru\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"Как меня зовут?\"\n\n"
+            "{\"intent\":\"PROCEDURE\",\"confidence\":0.88,\"needs_rag\":true,\"route\":\"RAG_SEARCH\",\"reason\":\"User asks for university admission procedure.\",\"rewritten_query\":\"Italian university admission application steps for international students\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How to apply to uni\"\n"
+            "{\"intent\":\"PROCEDURE\",\"confidence\":0.90,\"needs_rag\":true,\"route\":\"RAG_SEARCH\",\"reason\":\"User asks how to get the Italian DSU scholarship.\",\"rewritten_query\":\"Italian DSU scholarship application procedure for international students\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How to get dsu\"\n"
+            "{\"intent\":\"FACTUAL_QUESTION\",\"confidence\":0.86,\"needs_rag\":true,\"route\":\"RAG_SEARCH\",\"reason\":\"User asks for required student visa documents.\",\"rewritten_query\":\"required documents for Italian student visa application\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"student visa docs\"\n"
+            "{\"intent\":\"PROCEDURE\",\"confidence\":0.87,\"needs_rag\":true,\"route\":\"RAG_SEARCH\",\"reason\":\"User asks how to apply for an Italian student residence permit.\",\"rewritten_query\":\"how to apply for Italian student residence permit permesso di soggiorno\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How can I apply for residence permit in Italy?\"\n"
+            "{\"intent\":\"COMPARISON\",\"confidence\":0.91,\"needs_rag\":true,\"route\":\"RAG_SEARCH\",\"reason\":\"User asks to compare two study-abroad options.\",\"rewritten_query\":\"compare Italy and Germany for international master's students admission tuition scholarships visa language requirements\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"Compare Italy and Germany for master's studies\"\n"
+            "{\"intent\":\"GREETING\",\"confidence\":0.96,\"needs_rag\":false,\"route\":\"CANNED_RESPONSE\",\"reason\":\"User only greeted the bot.\",\"rewritten_query\":\"\",\"language\":\"kk\",\"profile_action\":\"\",\"preferred_name\":\"\"}\n"
+            "{\"intent\":\"CHITCHAT\",\"confidence\":0.88,\"needs_rag\":false,\"route\":\"SMALL_MODEL_RESPONSE\",\"reason\":\"User asks casual small talk.\",\"rewritten_query\":\"\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How are you?\"\n"
+            "{\"intent\":\"CHITCHAT\",\"confidence\":0.93,\"needs_rag\":false,\"route\":\"SMALL_MODEL_RESPONSE\",\"reason\":\"User sets a preferred name.\",\"rewritten_query\":\"\",\"language\":\"ru\",\"profile_action\":\"set_preferred_name\",\"preferred_name\":\"Роман\"}\n"
+            "{\"intent\":\"FACTUAL_QUESTION\",\"confidence\":0.82,\"needs_rag\":false,\"route\":\"SMALL_MODEL_RESPONSE\",\"reason\":\"User asks about recent conversation memory.\",\"rewritten_query\":\"\",\"language\":\"ru\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"Как меня зовут?\"\n"
+            "{\"intent\":\"OUT_OF_DOMAIN\",\"confidence\":0.93,\"needs_rag\":false,\"route\":\"REFUSE_OR_REDIRECT\",\"reason\":\"User asks about programming, not education abroad.\",\"rewritten_query\":\"\",\"language\":\"en\",\"profile_action\":\"\",\"preferred_name\":\"\"} for input like \"How do I build a Docker image?\"\n\n"
             f"{history_block}"
             f"Latest user input: {json.dumps(query)}\n"
         )
@@ -218,25 +232,37 @@ class OpenAIGateway:
             response = self._client.responses.create(
                 model=self._settings.class_model,
                 input=prompt,
-                max_output_tokens=120,
+                max_output_tokens=220,
                 temperature=0.0,
             )
             raw_text = self._resp_to_text(response) or ""
             parsed = self._extract_json(raw_text) or {
-                "intent": "OTHER",
-                "explain": raw_text,
+                "intent": "OUT_OF_DOMAIN",
+                "reason": raw_text,
                 "language": "",
                 "profile_action": "",
                 "preferred_name": "",
+                "confidence": 0.0,
+                "needs_rag": False,
+                "route": "REFUSE_OR_REDIRECT",
+                "rewritten_query": "",
             }
+            intent = normalize_intent(str(parsed.get("intent") or ""))
+            route = normalize_route(str(parsed.get("route") or ""))
+            if not route:
+                route = self._default_route_for_intent(intent)
             return (
                 Classification(
-                    intent=normalize_intent(parsed.get("intent", "")),
-                    explain=str(parsed.get("explain") or ""),
+                    intent=intent,
+                    explain=str(parsed.get("reason") or parsed.get("explain") or ""),
                     language=normalize_language(str(parsed.get("language") or "")),
                     model=self._settings.class_model,
                     profile_action=normalize_profile_action(str(parsed.get("profile_action") or "")),
                     preferred_name=str(parsed.get("preferred_name") or "").strip(),
+                    confidence=self._json_float(parsed.get("confidence"), default=0.0),
+                    needs_rag=self._json_bool(parsed.get("needs_rag"), default=intent in {"FACTUAL_QUESTION", "PROCEDURE", "COMPARISON"}),
+                    route=route,
+                    rewritten_query=str(parsed.get("rewritten_query") or "").strip(),
                 ),
                 self._extract_usage(response, self._settings.class_model),
             )
@@ -244,12 +270,16 @@ class OpenAIGateway:
             print("[classify] classifier error:", exc)
             return (
                 Classification(
-                    intent="OTHER",
+                    intent="OUT_OF_DOMAIN",
                     explain=f"classifier error: {exc}",
                     language="other",
                     model=self._settings.class_model,
                     profile_action="",
                     preferred_name="",
+                    confidence=0.0,
+                    needs_rag=False,
+                    route="REFUSE_OR_REDIRECT",
+                    rewritten_query="",
                 ),
                 None,
             )
@@ -383,7 +413,7 @@ class OpenAIGateway:
             "whether it is specific enough to run retrieval now, or whether the assistant should ask exactly one clarifying question first.\n\n"
             "Current corpus scope:\n"
             " - Country defaults to Italy. Do NOT ask for country just because it is missing.\n"
-            " - Supported topics include: Italian university admission/application guidance, Italian student visa, Italian student residence permit/permesso di soggiorno, study-related travel rights or constraints, CV, DSU scholarship/student financial aid, motivation letter, and recommendation letter.\n"
+            " - Supported topics include: Italian university admission/application guidance, required documents, deadlines, tuition and fees, exchange programs, housing basics, language requirements, Italian student visa, Italian student residence permit/permesso di soggiorno, study-related travel rights or constraints, CV, DSU scholarship/student financial aid, motivation letter, recommendation letter, and education-abroad comparisons.\n"
             " - Retrieval-related means education/study-abroad only.\n"
             " - DSU defaults to the Italian student scholarship/financial-aid topic unless the user explicitly gives another meaning.\n"
             " - A visa question is in scope only when it is about a student/study/enrollment visa.\n"
@@ -408,7 +438,10 @@ class OpenAIGateway:
             " - If the latest user asks to answer/send/explain the previous in-scope topic in another supported language, set is_retrieval_related true, is_clear true, and reuse the previous in-scope topic as standalone_query.\n"
             " - Set target_language to the requested language code when the user asks for another language: English -> en, Russian -> ru, Kazakh -> kk.\n"
             " - Examples: \"Can you do it in English?\", \"А можно на английском?\", \"а на русском?\", \"қазақша бола ма?\".\n\n"
-            "If the classifier intent is OTHER, use the recent conversation to decide whether the latest message is a continuation of a document clarification. "
+            "Comparison handling:\n"
+            " - If the classifier intent is COMPARISON, produce a standalone query that includes all comparison targets and criteria if they are present.\n"
+            " - If a comparison is missing one side, ask which country, university, program, or scholarship the user wants to compare.\n\n"
+            "If the classifier intent is OUT_OF_DOMAIN, use the recent conversation to decide whether the latest message is a continuation of a document clarification. "
             "If it is not a document request/guidance question and not a clarification follow-up, set is_retrieval_related to false and leave standalone_query and clarifying_question empty.\n\n"
             "Return ONLY valid JSON with exactly these keys:\n"
             ' - "is_retrieval_related": boolean\n'
@@ -424,6 +457,7 @@ class OpenAIGateway:
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply for the Italian DSU student scholarship?","clarifying_question":"","target_language":"","reason":"DSU defaults to the Italian student scholarship topic."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What documents are needed for an Italian student visa?","clarifying_question":"","target_language":"","reason":"The visa document topic is clear."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply for an Italian student residence permit?","clarifying_question":"","target_language":"","reason":"Residence permit defaults to the student residence permit context."}\n'
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"Compare Italy and Germany for international master students by admission requirements, tuition, scholarships, visa, residence permit, language requirements, housing, and career opportunities.","clarifying_question":"","target_language":"","reason":"The comparison targets are clear."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"All available photo format requirements for an Italian student visa, including size, background, and ICAO standards if present in the documents.","clarifying_question":"","target_language":"","reason":"The visa photo detail is specific enough to search."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply for an Italian student visa?","clarifying_question":"","target_language":"en","reason":"The user asks to continue the previous visa topic in English."}\n'
             '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?","target_language":"","reason":"The user asks for documents but not the process."}\n'
@@ -498,7 +532,7 @@ class OpenAIGateway:
             "Your job is NOT to answer the user. Decide whether the retrieved excerpts are enough to answer the latest standalone query, "
             "or whether the assistant should ask exactly one more clarifying question first.\n\n"
             "Scope:\n"
-            " - The corpus currently covers Italy education-abroad topics: university admission/application guidance, student visa, student residence permit/permesso di soggiorno, study-related travel rights or constraints, CV, DSU scholarship/student financial aid, motivation letter, and recommendation letter.\n"
+            " - The corpus currently covers Italy education-abroad topics: university admission/application guidance, required documents, deadlines, tuition and fees, exchange programs, housing basics, language requirements, student visa, student residence permit/permesso di soggiorno, study-related travel rights or constraints, CV, DSU scholarship/student financial aid, motivation letter, recommendation letter, and education-abroad comparisons.\n"
             " - Sufficient means the excerpts directly discuss the requested topic and contain enough information to produce a grounded answer or send the requested document.\n"
             " - Insufficient means the excerpts are empty, mostly about the wrong document/topic, the query still lacks a detail that changes which document should be searched, or the requested information is not visible in the excerpts.\n"
             " - If the query asks a generic unsupported country/topic but the excerpts are only Italy docs, ask a clarification instead of guessing.\n"
@@ -668,22 +702,42 @@ class OpenAIGateway:
         return default
 
     @staticmethod
+    def _json_float(value: Any, default: float = 0.0) -> float:
+        try:
+            number = float(value)
+        except Exception:
+            return default
+        return max(0.0, min(1.0, number))
+
+    @staticmethod
+    def _default_route_for_intent(intent: str) -> str:
+        if intent == "GREETING":
+            return "CANNED_RESPONSE"
+        if intent == "CHITCHAT":
+            return "SMALL_MODEL_RESPONSE"
+        if intent in {"FACTUAL_QUESTION", "PROCEDURE", "COMPARISON"}:
+            return "RAG_SEARCH"
+        if intent == "OUT_OF_DOMAIN":
+            return "REFUSE_OR_REDIRECT"
+        return "CLARIFY"
+
+    @staticmethod
     def _default_clarifying_question(language_hint: str) -> str:
         normalized = normalize_language(language_hint)
         if normalized == "kk":
-            return "Қай тақырып бойынша сұрап тұрсыз: студенттік виза, студенттік тұруға рұқсат, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
+            return "Қай тақырып бойынша сұрап тұрсыз: оқуға түсу, студенттік виза, тұруға рұқсат, DSU, құжаттар, дедлайн, оқу ақысы, жатақхана, exchange, CV немесе хаттар?"
         if normalized == "ru":
-            return "По какой теме вы спрашиваете: студенческая виза, студенческий ВНЖ, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
-        return "Which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
+            return "По какой теме вы спрашиваете: поступление, студенческая виза, ВНЖ, DSU, документы, дедлайны, стоимость обучения, жилье, exchange, CV или письма?"
+        return "Which topic do you mean: admission, student visa, residence permit, DSU, documents, deadlines, tuition, housing, exchange, CV, or letters?"
 
     @staticmethod
     def _default_retrieval_follow_up_question(language_hint: str) -> str:
         normalized = normalize_language(language_hint)
         if normalized == "kk":
-            return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: студенттік виза, студенттік тұруға рұқсат, CV, шәкіртақы, мотивациялық хат немесе ұсыныс хат?"
+            return "Құжаттардан нақты жауап табу үшін тақырыпты нақтылай аласыз ба: оқуға түсу, студенттік виза, тұруға рұқсат, DSU, құжаттар, дедлайн, оқу ақысы, жатақхана, exchange, CV немесе хаттар?"
         if normalized == "ru":
-            return "Чтобы найти точный ответ в документах, уточните тему: студенческая виза, студенческий ВНЖ, CV, стипендия, мотивационное письмо или рекомендательное письмо?"
-        return "To find the right answer in the documents, which topic do you mean: student visa, student residence permit, CV, scholarship, motivation letter, or recommendation letter?"
+            return "Чтобы найти точный ответ в документах, уточните тему: поступление, студенческая виза, ВНЖ, DSU, документы, дедлайны, стоимость обучения, жилье, exchange, CV или письма?"
+        return "To find the right answer in the documents, which topic do you mean: admission, student visa, residence permit, DSU, documents, deadlines, tuition, housing, exchange, CV, or letters?"
 
     @staticmethod
     def _retrieval_excerpts_block(top_chunks: List[RetrievedHit]) -> str:

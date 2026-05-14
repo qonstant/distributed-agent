@@ -5,11 +5,11 @@ from typing import Any, Dict, List, Optional
 
 SUPPORTED_INTENTS = {
     "GREETING",
-    "CHIT_CHAT",
+    "CHITCHAT",
     "FACTUAL_QUESTION",
-    "GUIDANCE",
-    "DOCUMENT_REQUEST",
-    "OTHER",
+    "PROCEDURE",
+    "COMPARISON",
+    "OUT_OF_DOMAIN",
 }
 
 SUPPORTED_LANGUAGES = {
@@ -30,11 +30,43 @@ SUPPORTED_ATTACHMENT_ACTIONS = {
     "send_pending_attachment",
 }
 
+SUPPORTED_ROUTES = {
+    "CANNED_RESPONSE",
+    "SMALL_MODEL_RESPONSE",
+    "RAG_SEARCH",
+    "CLARIFY",
+    "REFUSE_OR_REDIRECT",
+}
+
 
 def normalize_intent(intent: str) -> str:
     value = (intent or "").strip().upper()
+    aliases = {
+        "CHIT_CHAT": "CHITCHAT",
+        "CHIT-CHAT": "CHITCHAT",
+        "GUIDANCE": "PROCEDURE",
+        "DOCUMENT_REQUEST": "FACTUAL_QUESTION",
+        "OTHER": "OUT_OF_DOMAIN",
+    }
+    value = aliases.get(value, value)
     if value not in SUPPORTED_INTENTS:
-        return "OTHER"
+        return "OUT_OF_DOMAIN"
+    return value
+
+
+def normalize_route(route: str) -> str:
+    value = (route or "").strip().upper()
+    aliases = {
+        "CANNED": "CANNED_RESPONSE",
+        "SMALL_RESPONSE": "SMALL_MODEL_RESPONSE",
+        "RAG": "RAG_SEARCH",
+        "RETRIEVAL": "RAG_SEARCH",
+        "REFUSE": "REFUSE_OR_REDIRECT",
+        "REDIRECT": "REFUSE_OR_REDIRECT",
+    }
+    value = aliases.get(value, value)
+    if value not in SUPPORTED_ROUTES:
+        return ""
     return value
 
 
@@ -123,6 +155,10 @@ class Classification:
     version: str = ""
     profile_action: str = ""
     preferred_name: str = ""
+    confidence: float = 0.0
+    needs_rag: bool = False
+    route: str = ""
+    rewritten_query: str = ""
 
 
 @dataclass(frozen=True)

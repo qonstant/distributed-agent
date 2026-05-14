@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
-	class guard \
+	class guard ret \
 	landing-build landing-up landing-down \
 	rabbitmq-up rabbitmq-down rabbitmq-logs \
 	go-build go-up go-down go-clean \
@@ -28,6 +28,8 @@ CLASS_EVAL_SCRIPT := $(RAG_LEGACY_DIR)/classification_eval.py
 CLASS_EVAL_CSV := $(RAG_LEGACY_DIR)/query_mappings.csv
 GUARD_EVAL_SCRIPT := $(RAG_LEGACY_DIR)/guardrail_eval.py
 GUARD_EVAL_CSV := $(RAG_LEGACY_DIR)/guardrail_mappings.csv
+RET_EVAL_SCRIPT := $(RAG_LEGACY_DIR)/retrieval_eval.py
+RET_EVAL_CSV := $(RAG_LEGACY_DIR)/query_mappings.csv
 EVAL_LIMIT ?=
 EVAL_REFRESH ?= 1
 EVAL_EXTRA ?=
@@ -63,8 +65,10 @@ help:
 	@echo "  make rag-chunks-manual"
 	@echo "  make class     # classification metrics, fresh LLM calls by default"
 	@echo "  make guard     # guardrail metrics, fresh LLM calls by default"
+	@echo "  make ret       # retrieval metrics over local python/RAG/out artifacts"
 	@echo "  make class EVAL_REFRESH=     # reuse cached classification predictions"
 	@echo "  make guard EVAL_REFRESH=     # reuse cached guardrail predictions"
+	@echo "  make ret EVAL_REFRESH=       # reuse cached retrieval predictions"
 	@echo ""
 	@echo "Landing page:"
 	@echo "  make landing-build"
@@ -150,6 +154,13 @@ class:
 guard:
 	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	"$(PYTHON)" "$(GUARD_EVAL_SCRIPT)" --csv "$(GUARD_EVAL_CSV)" \
+		$(if $(EVAL_LIMIT),--limit "$(EVAL_LIMIT)",) \
+		$(if $(EVAL_REFRESH),--refresh-cache,) \
+		$(EVAL_EXTRA)
+
+ret:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	"$(PYTHON)" "$(RET_EVAL_SCRIPT)" --csv "$(RET_EVAL_CSV)" --out-dir "$(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)" \
 		$(if $(EVAL_LIMIT),--limit "$(EVAL_LIMIT)",) \
 		$(if $(EVAL_REFRESH),--refresh-cache,) \
 		$(EVAL_EXTRA)

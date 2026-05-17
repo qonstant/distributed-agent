@@ -14,10 +14,11 @@ import numpy as np
 from dotenv import load_dotenv
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[1]
+EVAL_DIR = Path(__file__).resolve().parent
+RAG_DIR = EVAL_DIR.parent
+REPO_ROOT = RAG_DIR.parents[1]
 RAG_API_DIR = REPO_ROOT / "python" / "rag_api"
-OUT_DIR = SCRIPT_DIR / "out"
+OUT_DIR = RAG_DIR / "out"
 
 if str(RAG_API_DIR) not in sys.path:
     sys.path.insert(0, str(RAG_API_DIR))
@@ -146,7 +147,8 @@ def filter_cases_by_corpus(
 
 def settings_for_eval(class_model: str, llm_model: str, embed_model: str, out_dir: Path) -> Settings:
     load_dotenv(REPO_ROOT / ".env")
-    load_dotenv(SCRIPT_DIR / ".env", override=True)
+    load_dotenv(RAG_DIR / ".env", override=True)
+    load_dotenv(EVAL_DIR / ".env", override=True)
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -536,7 +538,7 @@ def parse_args() -> argparse.Namespace:
             "clarity rewrite, embedding, and FAISS search over python/RAG/out artifacts."
         )
     )
-    parser.add_argument("--csv", default=str(SCRIPT_DIR / "query_mappings.csv"), help="CSV with question and expected filename columns")
+    parser.add_argument("--csv", default=str(EVAL_DIR / "query_mappings.csv"), help="CSV with question and expected filename columns")
     parser.add_argument("--out-dir", default=str(OUT_DIR), help="Local artifact directory containing meta.json and index.faiss")
     parser.add_argument("--top-k", type=int, default=5, help="File-level top K for metrics")
     parser.add_argument("--raw-k", type=int, default=64, help="Raw production FAISS search K before file dedupe")

@@ -119,8 +119,8 @@ secrets.json
 
 *.venv
 *.csv
-python/RAG/query_mappings.csv
-python/RAG/guardrail_mappings.csv
+python/RAG/evaluation/query_mappings.csv
+python/RAG/evaluation/guardrail_mappings.csv
 __pycache__
 *.vscode
 *.docx

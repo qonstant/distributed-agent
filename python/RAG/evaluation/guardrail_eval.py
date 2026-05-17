@@ -14,10 +14,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from dotenv import load_dotenv
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[1]
+EVAL_DIR = Path(__file__).resolve().parent
+RAG_DIR = EVAL_DIR.parent
+REPO_ROOT = RAG_DIR.parents[1]
 RAG_API_DIR = REPO_ROOT / "python" / "rag_api"
-OUT_DIR = SCRIPT_DIR / "out"
+OUT_DIR = RAG_DIR / "out"
 
 if str(RAG_API_DIR) not in sys.path:
     sys.path.insert(0, str(RAG_API_DIR))
@@ -228,7 +229,8 @@ def load_cases(csv_path: Path) -> List[Dict[str, Any]]:
 
 def settings_for_guardrail(class_model: str) -> SimpleNamespace:
     load_dotenv(REPO_ROOT / ".env")
-    load_dotenv(SCRIPT_DIR / ".env", override=True)
+    load_dotenv(RAG_DIR / ".env", override=True)
+    load_dotenv(EVAL_DIR / ".env", override=True)
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -590,7 +592,7 @@ def parse_args() -> argparse.Namespace:
             "Reports first-pass, contextual, and real pipeline metrics."
         )
     )
-    parser.add_argument("--csv", default=str(SCRIPT_DIR / "guardrail_mappings.csv"), help="CSV with guardrail labels")
+    parser.add_argument("--csv", default=str(EVAL_DIR / "guardrail_mappings.csv"), help="CSV with guardrail labels")
     parser.add_argument("--class-model", default="", help="Override CLASS_MODEL for the evaluation")
     parser.add_argument("--limit", type=int, default=0, help="Evaluate only the first N rows")
     parser.add_argument("--attempts", type=int, default=2, help="LLM call attempts per uncached query")

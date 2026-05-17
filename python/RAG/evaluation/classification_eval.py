@@ -14,10 +14,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from dotenv import load_dotenv
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[1]
+EVAL_DIR = Path(__file__).resolve().parent
+RAG_DIR = EVAL_DIR.parent
+REPO_ROOT = RAG_DIR.parents[1]
 RAG_API_DIR = REPO_ROOT / "python" / "rag_api"
-OUT_DIR = SCRIPT_DIR / "out"
+OUT_DIR = RAG_DIR / "out"
 
 if str(RAG_API_DIR) not in sys.path:
     sys.path.insert(0, str(RAG_API_DIR))
@@ -154,7 +155,8 @@ def load_cases(
 
 def settings_for_classifier(class_model: str) -> SimpleNamespace:
     load_dotenv(REPO_ROOT / ".env")
-    load_dotenv(SCRIPT_DIR / ".env", override=True)
+    load_dotenv(RAG_DIR / ".env", override=True)
+    load_dotenv(EVAL_DIR / ".env", override=True)
 
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
@@ -429,7 +431,7 @@ def parse_args() -> argparse.Namespace:
             "Uses rag_service.infrastructure.openai_gateway.OpenAIGateway.classify_query."
         )
     )
-    parser.add_argument("--csv", default=str(SCRIPT_DIR / "query_mappings.csv"), help="CSV with question and expected intent columns")
+    parser.add_argument("--csv", default=str(EVAL_DIR / "query_mappings.csv"), help="CSV with question and expected intent columns")
     parser.add_argument("--question-column", default="", help="Override question column name")
     parser.add_argument("--intent-column", default="", help="Override expected intent column name")
     parser.add_argument("--language-column", default="", help="Optional expected language column name")

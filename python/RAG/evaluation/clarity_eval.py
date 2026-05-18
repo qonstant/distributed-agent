@@ -50,7 +50,7 @@ COLOR_CODES = {
     "red": "\033[31m",
     "reset": "\033[0m",
 }
-CACHE_VERSION = "clarity-eval-v6"
+CACHE_VERSION = "clarity-eval-v7"
 
 
 def should_colorize(mode: str) -> bool:

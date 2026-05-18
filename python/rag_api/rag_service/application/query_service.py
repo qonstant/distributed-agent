@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional, Tuple
+import json
+import logging
+import time
+import uuid
+from dataclasses import asdict, is_dataclass
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 from rag_service.application.usage_estimation import (
     estimate_classification_event,
@@ -43,6 +48,9 @@ RETRIEVAL_INTENTS = {
     "GUIDANCE",
     "DOCUMENT_REQUEST",
 }
+
+TRACE_LOGGER = logging.getLogger("rag.trace")
+TRACE_LOGGER.setLevel(logging.INFO)
 
 INTENT_CONFIDENCE_THRESHOLDS = {
     "GREETING": 0.85,
@@ -353,10 +361,19 @@ def _fallback_retrieval_follow_up_question(language: str) -> str:
 
 
 class QueryService:
-    def __init__(self, gateway: "OpenAIGateway", store, conversation_memory=None) -> None:
+    def __init__(
+        self,
+        gateway: "OpenAIGateway",
+        store,
+        conversation_memory=None,
+        trace_enabled: bool = True,
+        trace_max_chars: int = 240,
+    ) -> None:
         self._gateway = gateway
         self._store = store
         self._conversation_memory = conversation_memory
+        self._trace_enabled = trace_enabled
+        self._trace_max_chars = max(40, int(trace_max_chars or 240))
 
     def handle_query(
         self,
@@ -370,6 +387,47 @@ class QueryService:
         if not normalized_query:
             raise ValueError("query is empty")
         normalized_preferred_name = (preferred_name or "").strip()
+        trace_id = uuid.uuid4().hex[:12]
+        started_at = time.perf_counter()
+
+        def trace(stage: str, **fields: Any) -> None:
+            self._trace(
+                trace_id,
+                stage,
+                conversation_id=conversation_id,
+                **fields,
+            )
+
+        def finish(result: QueryResult, outcome: str) -> QueryResult:
+            trace(
+                "response.final",
+                outcome=outcome,
+                answer_chars=len(result.answer or ""),
+                file=result.file,
+                classification_intent=(
+                    result.classification.intent if result.classification is not None else ""
+                ),
+                usage_events=[
+                    {
+                        "type": item.event_type,
+                        "input": item.input_tokens,
+                        "output": item.output_tokens,
+                        "total": item.total_tokens,
+                        "cost": round(item.estimated_cost, 8),
+                    }
+                    for item in result.usage_events
+                ],
+                elapsed_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            )
+            return result
+
+        trace(
+            "request.start",
+            query=normalized_query,
+            raw_k=raw_k,
+            top_for_llm=top_for_llm,
+            has_preferred_name=bool(normalized_preferred_name),
+        )
 
         history: List[ConversationMessage] = []
         history_loaded = False
@@ -379,9 +437,15 @@ class QueryService:
             if not history_loaded:
                 history = self._load_history(conversation_id)
                 history_loaded = True
+                trace(
+                    "history.loaded",
+                    count=len(history),
+                    messages=self._history_preview(history),
+                )
             return history
 
         guardrail, guardrail_usage = self._gateway.guard_query(normalized_query, history=None)
+        trace("guard.first", **self._guardrail_trace(guardrail))
         usage_events = [
             self._guardrail_usage_event(
                 normalized_query,
@@ -398,6 +462,23 @@ class QueryService:
                     normalized_query,
                     history=contextual_history,
                 )
+                trace("guard.context_retry", **self._guardrail_trace(guardrail))
+                usage_events.append(
+                    self._guardrail_usage_event(
+                        normalized_query,
+                        contextual_history,
+                        guardrail,
+                        guardrail_usage,
+                    )
+                )
+        elif not guardrail.allowed:
+            contextual_history = ensure_history_loaded()
+            if contextual_history:
+                guardrail, guardrail_usage = self._gateway.guard_query(
+                    normalized_query,
+                    history=contextual_history,
+                )
+                trace("guard.blocked_retry", **self._guardrail_trace(guardrail))
                 usage_events.append(
                     self._guardrail_usage_event(
                         normalized_query,
@@ -408,19 +489,15 @@ class QueryService:
                 )
 
         guardrail_language = guardrail.language or ""
-        print(
-            f"[query] guardrail -> allowed={guardrail.allowed} "
-            f"needs_context={guardrail.needs_context} violation={guardrail.violation} "
-            f"lang={guardrail_language} reason={guardrail.reason}"
-        )
+        trace("guard.final", **self._guardrail_trace(guardrail))
 
         if not guardrail.allowed:
-            return QueryResult(
+            return finish(QueryResult(
                 answer=_guardrail_blocked_answer(guardrail_language, guardrail.violation),
                 file=None,
                 classification=None,
                 usage_events=usage_events,
-            )
+            ), "guard_blocked")
 
         history = ensure_history_loaded()
         classification, classification_usage = self._gateway.classify_query(normalized_query, history=history)
@@ -436,64 +513,107 @@ class QueryService:
         intent = normalize_intent(raw_intent)
         clarity_intent = raw_intent if raw_intent in {"CHIT_CHAT", "GUIDANCE", "DOCUMENT_REQUEST", "OTHER"} else intent
         language = classification.language or guardrail_language
-        print(
-            f"[query] classifier -> intent={intent} lang={language} "
-            f"route={classification.route} confidence={classification.confidence:.2f} "
-            f"explain={classification.explain}"
-        )
+        trace("classifier", **self._classification_trace(classification, normalized_intent=intent))
+
+        forced_clarity: Optional[RetrievalClarity] = None
 
         if classification.profile_action == "set_preferred_name" and (classification.preferred_name or "").strip():
-            return QueryResult(
+            return finish(QueryResult(
                 answer="",
                 file=None,
                 classification=classification,
                 usage_events=usage_events,
-            )
+            ), "profile_update")
 
         if classification.route == "CLARIFY" or _below_confidence_threshold(intent, classification.confidence):
-            return QueryResult(
-                answer=_fallback_clarifying_question(language),
-                file=None,
-                classification=classification,
-                usage_events=usage_events,
-            )
+            if history:
+                clarity, clarity_usage = self._retrieval_clarity(
+                    normalized_query,
+                    language,
+                    clarity_intent,
+                    history,
+                    trace_id=trace_id,
+                    conversation_id=conversation_id,
+                )
+                if clarity_usage is not None:
+                    usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
+
+                if clarity.is_retrieval_related:
+                    if not clarity.is_clear:
+                        response_language = _effective_language(language, clarity.target_language)
+                        answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
+                        return finish(QueryResult(
+                            answer=answer,
+                            file=None,
+                            classification=classification,
+                            usage_events=usage_events,
+                        ), "clarity_question_after_classifier")
+                    forced_clarity = clarity
+                    if intent not in RETRIEVAL_INTENTS:
+                        intent = "PROCEDURE"
+                else:
+                    return finish(QueryResult(
+                        answer=_out_of_scope_answer(language),
+                        file=None,
+                        classification=classification,
+                        usage_events=usage_events,
+                    ), "clarity_not_retrieval_after_classifier")
+            else:
+                return finish(QueryResult(
+                    answer=_fallback_clarifying_question(language),
+                    file=None,
+                    classification=classification,
+                    usage_events=usage_events,
+                ), "classifier_clarify_no_history")
 
         pending_file = self._pending_attachment_source(conversation_id)
         latest_attachment = _find_latest_assistant_attachment(history)
+        if latest_attachment is not None or pending_file:
+            trace(
+                "attachment.context",
+                pending_file=pending_file,
+                latest_attachment=(
+                    (latest_attachment.source or latest_attachment.name)
+                    if latest_attachment is not None
+                    else ""
+                ),
+            )
         if latest_attachment is not None or pending_file:
             attachment_action, attachment_action_usage = self._gateway.classify_attachment_follow_up(
                 normalized_query,
                 history=history,
                 pending_file=pending_file,
             )
+            trace("attachment.classifier", action=attachment_action)
             if attachment_action_usage is not None:
                 usage_events.append(usage_event_from_model_usage("classification", attachment_action_usage))
 
             if attachment_action == "send_pending_attachment" and pending_file:
                 self._clear_pending_attachment(conversation_id)
-                return QueryResult(
+                return finish(QueryResult(
                     answer=_send_pending_attachment_answer(pending_file, language),
                     file=pending_file,
                     classification=classification,
                     usage_events=usage_events,
-                )
+                ), "send_pending_attachment")
 
             resend_source = _resend_attachment_source(latest_attachment) if latest_attachment is not None else None
             if attachment_action == "resend_last_attachment" and resend_source is not None:
-                return QueryResult(
+                return finish(QueryResult(
                     answer=_resend_attachment_answer(latest_attachment, language),
                     file=resend_source,
                     classification=classification,
                     usage_events=usage_events,
-                )
+                ), "resend_last_attachment")
 
-        forced_clarity: Optional[RetrievalClarity] = None
         if intent == "CHITCHAT" and history:
             clarity, clarity_usage = self._retrieval_clarity(
                 normalized_query,
                 language,
                 clarity_intent,
                 history,
+                trace_id=trace_id,
+                conversation_id=conversation_id,
             )
             if clarity_usage is not None:
                 usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
@@ -502,12 +622,12 @@ class QueryService:
                 if not clarity.is_clear:
                     response_language = _effective_language(language, clarity.target_language)
                     answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
-                    return QueryResult(
+                    return finish(QueryResult(
                         answer=answer,
                         file=None,
                         classification=classification,
                         usage_events=usage_events,
-                    )
+                    ), "chitchat_clarity_question")
                 forced_clarity = clarity
                 intent = "PROCEDURE"
 
@@ -518,7 +638,7 @@ class QueryService:
                 preferred_name=normalized_preferred_name,
                 history=history,
             )
-            return QueryResult(
+            return finish(QueryResult(
                 answer=greeting,
                 file=None,
                 classification=classification,
@@ -531,14 +651,16 @@ class QueryService:
                         greeting_mode=True,
                     )
                 ],
-            )
+            ), "small_reply")
 
-        if intent == "FACTUAL_QUESTION":
+        if intent == "FACTUAL_QUESTION" and forced_clarity is None:
             clarity, clarity_usage = self._retrieval_clarity(
                 normalized_query,
                 language,
                 clarity_intent,
                 history,
+                trace_id=trace_id,
+                conversation_id=conversation_id,
             )
             if clarity_usage is not None:
                 usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
@@ -547,12 +669,12 @@ class QueryService:
                 if not clarity.is_clear:
                     response_language = _effective_language(language, clarity.target_language)
                     answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
-                    return QueryResult(
+                    return finish(QueryResult(
                         answer=answer,
                         file=None,
                         classification=classification,
                         usage_events=usage_events,
-                    )
+                    ), "factual_clarity_question")
                 forced_clarity = clarity
             else:
                 answer, completion_usage = self._gateway.answer_factual(
@@ -561,7 +683,7 @@ class QueryService:
                     preferred_name=normalized_preferred_name,
                     history=history,
                 )
-                return QueryResult(
+                return finish(QueryResult(
                     answer=answer,
                     file=None,
                     classification=classification,
@@ -573,7 +695,7 @@ class QueryService:
                             completion_usage,
                         )
                     ],
-                )
+                ), "non_retrieval_factual")
 
         if forced_clarity is not None or _should_run_retrieval_clarity(intent, history):
             if forced_clarity is not None:
@@ -584,27 +706,29 @@ class QueryService:
                     language,
                     clarity_intent,
                     history,
+                    trace_id=trace_id,
+                    conversation_id=conversation_id,
                 )
                 if clarity_usage is not None:
                     usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
 
             if not clarity.is_retrieval_related:
-                return QueryResult(
+                return finish(QueryResult(
                     answer=_out_of_scope_answer(language),
                     file=None,
                     classification=classification,
                     usage_events=usage_events,
-                )
+                ), "clarity_not_retrieval")
 
             if not clarity.is_clear:
                 response_language = _effective_language(language, clarity.target_language)
                 answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
-                return QueryResult(
+                return finish(QueryResult(
                     answer=answer,
                     file=None,
                     classification=classification,
                     usage_events=usage_events,
-                )
+                ), "clarity_question")
 
             retrieval_query = (
                 (clarity.standalone_query or "").strip()
@@ -620,6 +744,14 @@ class QueryService:
             response_language = _effective_language(language, clarity.target_language)
             response_language_label = _language_label(response_language)
             rewrite_usage = None
+            trace(
+                "retrieval.start",
+                query=retrieval_query,
+                retrieval_intent=retrieval_intent,
+                response_language=response_language,
+                raw_k=raw_k or 64,
+                top_for_llm=top_for_llm or 8,
+            )
 
             try:
                 query_embedding, embedding_usage = self._gateway.embed_text(retrieval_query)
@@ -638,6 +770,12 @@ class QueryService:
 
             top_n = max(1, int(top_for_llm or 8))
             top_chunks = results[:top_n]
+            trace(
+                "retrieval.results",
+                count=len(results),
+                top_chunks=len(top_chunks),
+                top_hits=self._hits_preview(top_chunks),
+            )
             rag_usage_events = self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
             sufficiency, sufficiency_usage = self._retrieval_sufficiency(
                 retrieval_query,
@@ -645,6 +783,8 @@ class QueryService:
                 retrieval_intent,
                 top_chunks,
                 history,
+                trace_id=trace_id,
+                conversation_id=conversation_id,
             )
             sufficiency_usage_events = (
                 [usage_event_from_model_usage("classification", sufficiency_usage)]
@@ -657,12 +797,12 @@ class QueryService:
                     (sufficiency.clarifying_question or "").strip()
                     or _fallback_retrieval_follow_up_question(response_language)
                 )
-                return QueryResult(
+                return finish(QueryResult(
                     answer=answer,
                     file=None,
                     classification=classification,
                     usage_events=usage_events + rag_usage_events + sufficiency_usage_events,
-                )
+                ), "retrieval_weak")
 
             best_file_agg, best_chunk = _aggregate_by_file(results)
             supporting_file = _source_file_from_hit(best_chunk) or _normalize_file_choice(best_file_agg)
@@ -702,6 +842,13 @@ class QueryService:
                 prompt = f"Answer in the same language as detected/requested: {response_language_label}\n\n" + prompt
             else:
                 prompt = "Answer in the same language as the user's query if possible.\n\n" + prompt
+            trace(
+                "answer.prompt",
+                prompt_type=retrieval_intent,
+                prompt_chars=len(prompt),
+                retrieved_files=sorted(retrieved_files),
+                best_supporting_file=supporting_file,
+            )
 
             llm_json, completion_usage = self._gateway.generate_json_response(prompt, max_tokens=512)
 
@@ -710,17 +857,17 @@ class QueryService:
                 llm_file_choice = _validated_retrieved_file_choice(llm_json.get("file"), retrieved_files)
             else:
                 if best_chunk is None:
-                    return QueryResult(
+                    return finish(QueryResult(
                         answer=_fallback_retrieval_follow_up_question(response_language),
                         file=None,
                         classification=classification,
                         usage_events=usage_events + rag_usage_events + sufficiency_usage_events,
-                    )
+                    ), "answer_missing_best_chunk")
                 chunk_meta = best_chunk.meta
                 answer = (chunk_meta.get("text") or chunk_meta.get("md") or "").strip()
 
             if not answer or not _should_attach_supporting_file(answer):
-                return QueryResult(
+                return finish(QueryResult(
                     answer=_fallback_retrieval_follow_up_question(response_language),
                     file=None,
                     classification=classification,
@@ -728,13 +875,13 @@ class QueryService:
                     + rag_usage_events
                     + sufficiency_usage_events
                     + [self._prompt_completion_usage_event(prompt, answer, completion_usage)],
-                )
+                ), "answer_empty_or_unknown")
             if len(answer) > 1600:
                 answer = answer[:1600].rstrip() + "..."
 
             file_chosen = llm_file_choice or supporting_file
             if file_chosen:
-                print(f"[query] selected supporting file={file_chosen}")
+                trace("answer.file_selected", file=file_chosen)
                 page_hit = _best_hit_for_file(results, file_chosen) or best_chunk
                 answer = _append_page_reference(answer, page_hit, response_language)
             response_file = file_chosen
@@ -748,9 +895,9 @@ class QueryService:
             previous_attachment = _find_previously_sent_attachment(history, response_file)
             if previous_attachment:
                 file_label = _attachment_display_label(previous_attachment, response_file)
-                print(f"[memory] file was sent before, sending again for current answer: {file_label}")
+                trace("attachment.previously_sent", file=file_label)
 
-            return QueryResult(
+            return finish(QueryResult(
                 answer=answer,
                 file=response_file,
                 classification=classification,
@@ -758,14 +905,14 @@ class QueryService:
                 + rag_usage_events
                 + sufficiency_usage_events
                 + [self._prompt_completion_usage_event(prompt, answer, completion_usage)],
-            )
+            ), "rag_answer")
 
-        return QueryResult(
+        return finish(QueryResult(
             answer=_out_of_scope_answer(language),
             file=None,
             classification=classification,
             usage_events=usage_events,
-        )
+        ), "fallback_out_of_scope")
 
     def _retrieval_clarity(
         self,
@@ -773,16 +920,35 @@ class QueryService:
         language: str,
         intent: str,
         history: List[ConversationMessage],
+        trace_id: str = "",
+        conversation_id: Optional[str] = None,
     ) -> Tuple[RetrievalClarity, object]:
         try:
-            return self._gateway.clarify_or_rewrite_query(
+            clarity, usage = self._gateway.clarify_or_rewrite_query(
                 query,
                 language,
                 intent,
                 history=history,
             )
+            self._trace(
+                trace_id,
+                "clarity",
+                conversation_id=conversation_id,
+                related=clarity.is_retrieval_related,
+                clear=clarity.is_clear,
+                target_language=clarity.target_language,
+                standalone_query=clarity.standalone_query,
+                clarifying_question=clarity.clarifying_question,
+                reason=clarity.reason,
+            )
+            return clarity, usage
         except Exception as exc:  # pragma: no cover - defensive fallback
-            print("[clarify] clarity gateway failed:", exc)
+            self._trace(
+                trace_id,
+                "clarity.error",
+                conversation_id=conversation_id,
+                error=str(exc),
+            )
             return RetrievalClarity(is_clear=True, standalone_query=query), None
 
     def _retrieval_sufficiency(
@@ -792,28 +958,127 @@ class QueryService:
         intent: str,
         top_chunks: List[RetrievedHit],
         history: List[ConversationMessage],
+        trace_id: str = "",
+        conversation_id: Optional[str] = None,
     ) -> Tuple[RetrievalSufficiency, object]:
         try:
-            return self._gateway.assess_retrieval_sufficiency(
+            sufficiency, usage = self._gateway.assess_retrieval_sufficiency(
                 query,
                 language,
                 intent,
                 top_chunks,
                 history=history,
             )
+            self._trace(
+                trace_id,
+                "sufficiency",
+                conversation_id=conversation_id,
+                sufficient=sufficiency.is_sufficient,
+                clarifying_question=sufficiency.clarifying_question,
+                reason=sufficiency.reason,
+            )
+            return sufficiency, usage
         except Exception as exc:  # pragma: no cover - defensive fallback
-            print("[sufficiency] retrieval sufficiency gateway failed:", exc)
+            self._trace(
+                trace_id,
+                "sufficiency.error",
+                conversation_id=conversation_id,
+                error=str(exc),
+            )
             return RetrievalSufficiency(is_sufficient=True, reason=f"sufficiency failed: {exc}"), None
+
+    def _trace(self, trace_id: str, stage: str, **fields: Any) -> None:
+        if not self._trace_enabled:
+            return
+        payload = {
+            "event": "rag_trace",
+            "trace_id": trace_id or "",
+            "stage": stage,
+            **fields,
+        }
+        TRACE_LOGGER.info(
+            json.dumps(self._sanitize_trace(payload), ensure_ascii=False, default=str)
+        )
+
+    def _sanitize_trace(self, value: Any) -> Any:
+        if is_dataclass(value):
+            return self._sanitize_trace(asdict(value))
+        if isinstance(value, str):
+            normalized = value.replace("\n", "\\n").strip()
+            if len(normalized) > self._trace_max_chars:
+                return normalized[: self._trace_max_chars].rstrip() + "..."
+            return normalized
+        if isinstance(value, dict):
+            return {
+                str(key): self._sanitize_trace(item)
+                for key, item in value.items()
+                if item is not None
+            }
+        if isinstance(value, (list, tuple)):
+            return [self._sanitize_trace(item) for item in value]
+        return value
+
+    def _history_preview(self, history: List[ConversationMessage]) -> List[dict[str, Any]]:
+        return [
+            {
+                "role": message.role,
+                "text": message.text,
+                "attachments": [
+                    attachment.source or attachment.name
+                    for attachment in message.attachments
+                    if (attachment.source or attachment.name)
+                ],
+            }
+            for message in history
+        ]
+
+    @staticmethod
+    def _guardrail_trace(guardrail: GuardrailResult) -> dict[str, Any]:
+        return {
+            "allowed": guardrail.allowed,
+            "needs_context": guardrail.needs_context,
+            "violation": guardrail.violation,
+            "language": guardrail.language,
+            "reason": guardrail.reason,
+        }
+
+    @staticmethod
+    def _classification_trace(
+        classification: Classification,
+        normalized_intent: str,
+    ) -> dict[str, Any]:
+        return {
+            "intent": normalized_intent,
+            "raw_intent": classification.intent,
+            "route": classification.route,
+            "confidence": round(classification.confidence, 4),
+            "needs_rag": classification.needs_rag,
+            "language": classification.language,
+            "rewritten_query": classification.rewritten_query,
+            "profile_action": classification.profile_action,
+            "reason": classification.explain,
+        }
+
+    @staticmethod
+    def _hits_preview(hits: List[RetrievedHit]) -> List[dict[str, Any]]:
+        preview = []
+        for hit in hits:
+            meta = hit.meta or {}
+            preview.append(
+                {
+                    "score": round(float(hit.score), 6),
+                    "source_file": meta.get("source_file") or meta.get("filename") or "",
+                    "page": meta.get("page"),
+                    "text": (meta.get("text") or meta.get("md") or "")[:180],
+                }
+            )
+        return preview
 
     def _load_history(self, conversation_id: Optional[str]) -> List[ConversationMessage]:
         if not conversation_id or self._conversation_memory is None:
             return []
 
         history = self._conversation_memory.load_messages(conversation_id)
-        if history:
-            print(
-                f"[memory] loaded {len(history)} messages for conversation_id={conversation_id}"
-            )
         return history
 
     def _pending_attachment_source(self, conversation_id: Optional[str]) -> str:

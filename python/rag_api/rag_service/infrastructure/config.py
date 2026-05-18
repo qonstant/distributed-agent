@@ -28,6 +28,8 @@ class Settings:
     class_model: str = "gpt-4o-mini"
     conversation_key_prefix: str = "chat:conv:"
     conversation_max_items: int = 8
+    trace_logs_enabled: bool = True
+    trace_log_max_chars: int = 240
 
 
 def load_settings() -> Settings:
@@ -52,6 +54,19 @@ def load_settings() -> Settings:
     except ValueError:
         conversation_max_items = 8
 
+    trace_log_max_chars_raw = os.getenv("RAG_TRACE_LOG_MAX_CHARS", "240")
+    try:
+        trace_log_max_chars = max(40, int(trace_log_max_chars_raw))
+    except ValueError:
+        trace_log_max_chars = 240
+
+    trace_logs_enabled = os.getenv("RAG_TRACE_LOGS", "true").lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
     return Settings(
         openai_api_key=openai_api_key,
         redis_url=os.getenv("REDIS_URL"),
@@ -70,4 +85,6 @@ def load_settings() -> Settings:
         class_model=class_model,
         conversation_key_prefix=os.getenv("CONVERSATION_MEMORY_KEY_PREFIX", "chat:conv:"),
         conversation_max_items=conversation_max_items,
+        trace_logs_enabled=trace_logs_enabled,
+        trace_log_max_chars=trace_log_max_chars,
     )

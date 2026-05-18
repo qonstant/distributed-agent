@@ -230,6 +230,105 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.guard_calls, [("Да да да", []), ("Да да да", history)])
         self.assertEqual(gateway.classify_calls, [("Да да да", history)])
 
+    def test_guardrail_blocked_first_pass_retries_with_history_before_refusing(self) -> None:
+        history = [
+            ConversationMessage(role="user", text="How to apply for residence permit", ts=1),
+            ConversationMessage(
+                role="assistant",
+                text=(
+                    "Are you looking for the general application steps for the student "
+                    "residence permit, or do you need specific details about required documents?"
+                ),
+                ts=2,
+            ),
+        ]
+        standalone_query = "Italian student residence permit application process and required documents."
+        gateway = FakeGateway(
+            Classification(intent="CHIT_CHAT", explain="frustrated confirmation", language="en"),
+            guardrail=[
+                GuardrailResult(
+                    allowed=False,
+                    reason="The latest message contains profanity.",
+                    language="en",
+                    violation="unsafe",
+                ),
+                GuardrailResult(
+                    allowed=True,
+                    reason="The user impatiently confirms the previous in-scope residence permit topic.",
+                    language="en",
+                ),
+            ],
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query=standalone_query,
+                reason="The frustrated confirmation continues the previous student residence permit topic.",
+            ),
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/Visa_en.pdf", "page": 1, "text": "student residence permit process"},
+            )
+        ]
+        service = QueryService(gateway, FakeStore(results), conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("Fucking yes, send me already", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, f"Use this sample.\n\n{EN_PAGE_1_REFERENCE}")
+        self.assertEqual(result.file, "italy/Visa_en.pdf")
+        self.assertEqual(gateway.guard_calls, [("Fucking yes, send me already", []), ("Fucking yes, send me already", history)])
+        self.assertEqual(gateway.clarity_calls, [("Fucking yes, send me already", "en", "CHIT_CHAT", history)])
+        self.assertEqual(gateway.embedded_queries, [standalone_query])
+
+    def test_clarify_classification_with_history_uses_clarity_before_asking_again(self) -> None:
+        history = [
+            ConversationMessage(role="user", text="How to apply for residence permit", ts=1),
+            ConversationMessage(
+                role="assistant",
+                text="Are you looking for the application process details, required documents, or both for the student residence permit?",
+                ts=2,
+            ),
+        ]
+        standalone_query = "Required documents for an Italian student residence permit / permesso di soggiorno."
+        gateway = FakeGateway(
+            Classification(
+                intent="FACTUAL_QUESTION",
+                explain="short follow-up could be ambiguous without history",
+                language="en",
+                confidence=0.42,
+                needs_rag=False,
+                route="CLARIFY",
+            ),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query=standalone_query,
+                reason="Docs required continues the previous student residence permit topic.",
+            ),
+            json_response={
+                "answer": "For a student residence permit, prepare the required documents listed in the retrieved guide.",
+                "file": "italy/Visa_en.pdf",
+            },
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/Visa_en.pdf", "page": 1, "text": "student residence permit required documents"},
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("Docs required", conversation_id="conv-1")
+
+        self.assertNotEqual(result.answer, EN_TOPIC_CLARIFICATION)
+        self.assertEqual(result.file, None)
+        self.assertIn("student residence permit", result.answer)
+        self.assertEqual(gateway.clarity_calls, [("Docs required", "en", "FACTUAL_QUESTION", history)])
+        self.assertEqual(gateway.embedded_queries, [standalone_query])
+        self.assertEqual(store.search_calls[0]["query_text"], standalone_query)
+
     def test_low_confidence_classification_asks_clarification_without_rag(self) -> None:
         gateway = FakeGateway(
             Classification(

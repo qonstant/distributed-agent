@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -49,6 +51,10 @@ class QueryResponse(BaseModel):
 
 
 def create_app() -> FastAPI:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(message)s",
+    )
     settings = load_settings()
     gateway = OpenAIGateway(settings)
     store = FaissMetadataStore.load(settings)
@@ -69,7 +75,13 @@ def create_app() -> FastAPI:
         except Exception as exc:
             print(f"[memory] redis conversation history disabled: {exc}")
 
-    query_service = QueryService(gateway, store, conversation_memory=conversation_memory)
+    query_service = QueryService(
+        gateway,
+        store,
+        conversation_memory=conversation_memory,
+        trace_enabled=settings.trace_logs_enabled,
+        trace_max_chars=settings.trace_log_max_chars,
+    )
 
     app = FastAPI(title="RAG — classification-driven prompt engineering")
 

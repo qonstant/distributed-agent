@@ -19,10 +19,14 @@ class UsageEventType(str, Enum):
 class ClassifierIntent(str, Enum):
     GREETING = "GREETING"
     CHIT_CHAT = "CHIT_CHAT"
+    CHITCHAT = "CHITCHAT"
     FACTUAL_QUESTION = "FACTUAL_QUESTION"
     GUIDANCE = "GUIDANCE"
+    PROCEDURE = "PROCEDURE"
     DOCUMENT_REQUEST = "DOCUMENT_REQUEST"
+    COMPARISON = "COMPARISON"
     OTHER = "OTHER"
+    OUT_OF_DOMAIN = "OUT_OF_DOMAIN"
 
 
 class AdminActionType(str, Enum):

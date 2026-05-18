@@ -35,10 +35,14 @@ usage_event_type_enum = ENUM(
 classifier_intent_enum = ENUM(
     "GREETING",
     "CHIT_CHAT",
+    "CHITCHAT",
     "FACTUAL_QUESTION",
     "GUIDANCE",
+    "PROCEDURE",
     "DOCUMENT_REQUEST",
+    "COMPARISON",
     "OTHER",
+    "OUT_OF_DOMAIN",
     name="classifier_intent",
     create_type=True,
 )

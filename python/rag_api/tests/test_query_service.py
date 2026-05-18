@@ -156,69 +156,6 @@ class FakeConversationMemory:
 
 
 class QueryServiceTests(unittest.TestCase):
-    def test_short_greeting_uses_local_small_reply(self) -> None:
-        gateway = FakeGateway(
-            Classification(intent="OUT_OF_DOMAIN", explain="would be wrong", language="en"),
-        )
-        service = QueryService(gateway, FakeStore())
-
-        result = service.handle_query("Hey")
-
-        self.assertEqual(result.answer, "hello")
-        self.assertEqual(
-            result.classification,
-            Classification(
-                intent="GREETING",
-                explain="local fast path for a greeting-only message",
-                language="en",
-                confidence=1.0,
-                needs_rag=False,
-                route="CANNED_RESPONSE",
-            ),
-        )
-        self.assertEqual(gateway.guard_calls, [])
-        self.assertEqual(gateway.classify_calls, [])
-        self.assertEqual(
-            result.usage_events,
-            [usage_event_from_model_usage("chat_completion", gateway.greeting_usage)],
-        )
-
-    def test_short_meta_follow_up_uses_small_reply_with_history(self) -> None:
-        history = [
-            ConversationMessage(
-                role="assistant",
-                text=EN_SCOPE_ANSWER,
-                ts=1,
-            ),
-        ]
-        gateway = FakeGateway(
-            Classification(intent="OUT_OF_DOMAIN", explain="would be wrong", language="en"),
-        )
-        memory = FakeConversationMemory(history)
-        service = QueryService(gateway, FakeStore(), conversation_memory=memory)
-
-        result = service.handle_query("Fuck u mean", conversation_id="conv-1")
-
-        self.assertEqual(result.answer, "hello")
-        self.assertEqual(
-            result.classification,
-            Classification(
-                intent="CHITCHAT",
-                explain="local fast path for a short question about the recent assistant reply",
-                language="en",
-                confidence=1.0,
-                needs_rag=False,
-                route="SMALL_MODEL_RESPONSE",
-            ),
-        )
-        self.assertEqual(memory.requested_ids, ["conv-1"])
-        self.assertEqual(gateway.guard_calls, [])
-        self.assertEqual(gateway.classify_calls, [])
-        self.assertEqual(
-            result.usage_events,
-            [usage_event_from_model_usage("chat_completion", gateway.greeting_usage)],
-        )
-
     def test_factual_query_uses_history_loaded_from_conversation_id(self) -> None:
         history = [
             ConversationMessage(role="user", text="The test code is ALPHA-123", ts=1),
@@ -342,6 +279,57 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(result.file, "italy/Visa_en.pdf")
         self.assertEqual(gateway.guard_calls, [("Fucking yes, send me already", []), ("Fucking yes, send me already", history)])
         self.assertEqual(gateway.clarity_calls, [("Fucking yes, send me already", "en", "CHIT_CHAT", history)])
+        self.assertEqual(gateway.embedded_queries, [standalone_query])
+
+    def test_guardrail_out_of_scope_follow_up_can_return_to_student_residence_permit_topic(self) -> None:
+        history = [
+            ConversationMessage(role="user", text="How to apply for residence permit", ts=1),
+            ConversationMessage(
+                role="assistant",
+                text="Are you looking for the application process for the student residence permit specifically, or general information about residence permits in Italy?",
+                ts=2,
+            ),
+            ConversationMessage(role="user", text="General", ts=3),
+            ConversationMessage(role="assistant", text=EN_SCOPE_ANSWER, ts=4),
+        ]
+        standalone_query = "Italian student residence permit application process and required documents."
+        gateway = FakeGateway(
+            Classification(intent="PROCEDURE", explain="student residence permit follow-up", language="en"),
+            guardrail=[
+                GuardrailResult(
+                    allowed=False,
+                    reason="The latest message needs context.",
+                    language="en",
+                    needs_context=True,
+                ),
+                GuardrailResult(
+                    allowed=True,
+                    reason="The user returns to the student residence permit option.",
+                    language="en",
+                ),
+            ],
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query=standalone_query,
+                reason="The user returns to the student residence permit option.",
+            ),
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/Visa_en.pdf", "page": 1, "text": "student residence permit process"},
+            )
+        ]
+        service = QueryService(gateway, FakeStore(results), conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("What about student", conversation_id="conv-1")
+
+        self.assertNotEqual(result.answer, EN_SCOPE_ANSWER)
+        self.assertEqual(result.answer, f"Use this sample.\n\n{EN_PAGE_1_REFERENCE}")
+        self.assertEqual(gateway.guard_calls, [("What about student", []), ("What about student", history)])
+        self.assertEqual(gateway.classify_calls, [("What about student", history)])
+        self.assertEqual(gateway.clarity_calls, [("What about student", "en", "PROCEDURE", history)])
         self.assertEqual(gateway.embedded_queries, [standalone_query])
 
     def test_clarify_classification_with_history_uses_clarity_before_asking_again(self) -> None:
@@ -694,6 +682,42 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(result.answer, "Are you asking about the student visa or scholarship?")
         self.assertIsNone(result.file)
         self.assertEqual(gateway.sufficiency_calls, [("how does it work?", "en", "GUIDANCE", results, [])])
+        self.assertEqual(gateway.generated_prompts, [])
+
+    def test_residence_permit_weak_retrieval_does_not_ask_student_vs_general_loop_question(self) -> None:
+        standalone_query = "How to apply for an Italian student residence permit / permesso di soggiorno?"
+        gateway = FakeGateway(
+            Classification(intent="PROCEDURE", explain="student residence permit process", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query=standalone_query,
+                reason="Residence permit defaults to the student residence permit topic.",
+            ),
+            sufficiency=RetrievalSufficiency(
+                is_sufficient=False,
+                clarifying_question="I could not find enough reliable information in the available documents about the Italian student residence permit. Please send a university, Questura, or other official link so I can check it more accurately.",
+                reason="The excerpts do not specifically address the application process.",
+            ),
+        )
+        results = [
+            RetrievedHit(
+                score=0.65,
+                nid=1,
+                meta={
+                    "source_file": "italy/Visa_en.pdf",
+                    "page": 5,
+                    "text": "Residence permit if the visa application is submitted outside the country of citizenship.",
+                },
+            )
+        ]
+        service = QueryService(gateway, FakeStore(results), conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("How to apply for residence permit", conversation_id="conv-1")
+
+        self.assertIn("Italian student residence permit", result.answer)
+        self.assertIn("could not find enough reliable information", result.answer)
+        self.assertNotIn("general information about residence permits", result.answer)
+        self.assertIsNone(result.file)
         self.assertEqual(gateway.generated_prompts, [])
 
     def test_guidance_asks_post_retrieval_question_when_no_results(self) -> None:

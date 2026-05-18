@@ -351,70 +351,6 @@ def _guardrail_blocked_answer(language: str, violation: str) -> str:
     return _out_of_scope_answer(language)
 
 
-_LOCAL_GREETING_MESSAGES = {
-    "hi",
-    "hey",
-    "hello",
-    "hello there",
-    "good morning",
-    "good afternoon",
-    "good evening",
-    "bye",
-    "goodbye",
-}
-
-_LOCAL_CHITCHAT_MESSAGES = {
-    "good",
-    "nice",
-    "cool",
-}
-
-_LOCAL_META_FOLLOW_UP_MESSAGES = {
-    "what",
-    "what do you mean",
-    "what you mean",
-    "fuck u mean",
-    "fuck you mean",
-    "wtf do you mean",
-    "wdym",
-    "huh",
-}
-
-
-def _compact_short_message(value: str) -> str:
-    normalized = (value or "").strip().lower()
-    for old, new in (("’", "'"), ("`", "'"), ("…", " "), ("?", " "), ("!", " "), (".", " "), (",", " "), (":", " "), (";", " ")):
-        normalized = normalized.replace(old, new)
-    return " ".join(normalized.split())
-
-
-def _local_social_classification(query: str) -> Optional[Classification]:
-    compact = _compact_short_message(query)
-    if compact in _LOCAL_GREETING_MESSAGES:
-        return Classification(
-            intent="GREETING",
-            explain="local fast path for a greeting-only message",
-            language="en",
-            confidence=1.0,
-            needs_rag=False,
-            route="CANNED_RESPONSE",
-        )
-    if compact in _LOCAL_CHITCHAT_MESSAGES:
-        return Classification(
-            intent="CHITCHAT",
-            explain="local fast path for a short social message",
-            language="en",
-            confidence=1.0,
-            needs_rag=False,
-            route="SMALL_MODEL_RESPONSE",
-        )
-    return None
-
-
-def _is_local_meta_follow_up(query: str) -> bool:
-    return _compact_short_message(query) in _LOCAL_META_FOLLOW_UP_MESSAGES
-
-
 def _fallback_retrieval_follow_up_question(language: str) -> str:
     normalized_language = (language or "").strip().lower()
     if normalized_language == "kk":
@@ -507,47 +443,6 @@ class QueryService:
                     messages=self._history_preview(history),
                 )
             return history
-
-        local_classification = _local_social_classification(normalized_query)
-        if local_classification is None and conversation_id and _is_local_meta_follow_up(normalized_query):
-            contextual_history = ensure_history_loaded()
-            if contextual_history:
-                local_classification = Classification(
-                    intent="CHITCHAT",
-                    explain="local fast path for a short question about the recent assistant reply",
-                    language="en",
-                    confidence=1.0,
-                    needs_rag=False,
-                    route="SMALL_MODEL_RESPONSE",
-                )
-
-        if local_classification is not None:
-            history = ensure_history_loaded()
-            language = local_classification.language or "en"
-            try:
-                small_reply, completion_usage = self._gateway.generate_greeting_reply(
-                    normalized_query,
-                    language,
-                    preferred_name=normalized_preferred_name,
-                    history=history,
-                )
-            except Exception:
-                small_reply = "Hi! I can help with studying abroad, admissions, documents, scholarships, visas, residence permits, housing, and exchange programs."
-                completion_usage = None
-            return finish(QueryResult(
-                answer=small_reply,
-                file=None,
-                classification=local_classification,
-                usage_events=[
-                    self._chat_completion_usage_event(
-                        normalized_query,
-                        history,
-                        small_reply,
-                        completion_usage,
-                        greeting_mode=True,
-                    )
-                ],
-            ), "local_small_reply")
 
         guardrail, guardrail_usage = self._gateway.guard_query(normalized_query, history=None)
         trace("guard.first", **self._guardrail_trace(guardrail))

@@ -11,9 +11,13 @@ CREATE TYPE "usage_event_type" AS ENUM (
 CREATE TYPE "classifier_intent" AS ENUM (
   'GREETING',
   'CHIT_CHAT',
+  'CHITCHAT',
   'FACTUAL_QUESTION',
   'GUIDANCE',
   'DOCUMENT_REQUEST',
+  'PROCEDURE',
+  'COMPARISON',
+  'OUT_OF_DOMAIN',
   'OTHER'
 );
 

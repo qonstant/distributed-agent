@@ -105,6 +105,10 @@ func (c *TurnConsumer) Consume(ctx context.Context, handler func(context.Context
 			}
 
 			if err := handler(ctx, event); err != nil {
+				if delivery.Redelivered {
+					_ = delivery.Nack(false, false)
+					continue
+				}
 				_ = delivery.Nack(false, true)
 				continue
 			}

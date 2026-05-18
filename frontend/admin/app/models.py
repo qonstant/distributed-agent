@@ -26,6 +26,7 @@ usage_event_type_enum = ENUM(
     "chat_completion",
     "embedding",
     "classification",
+    "guardrail",
     "admin_action",
     "other",
     name="usage_event_type",

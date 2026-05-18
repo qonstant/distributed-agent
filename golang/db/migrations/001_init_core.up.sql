@@ -4,6 +4,7 @@ CREATE TYPE "usage_event_type" AS ENUM (
   'chat_completion',
   'embedding',
   'classification',
+  'guardrail',
   'admin_action',
   'other'
 );

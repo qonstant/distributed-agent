@@ -12,6 +12,7 @@ class UsageEventType(str, Enum):
     chat_completion = "chat_completion"
     embedding = "embedding"
     classification = "classification"
+    guardrail = "guardrail"
     admin_action = "admin_action"
     other = "other"
 

@@ -156,6 +156,69 @@ class FakeConversationMemory:
 
 
 class QueryServiceTests(unittest.TestCase):
+    def test_short_greeting_uses_local_small_reply(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="OUT_OF_DOMAIN", explain="would be wrong", language="en"),
+        )
+        service = QueryService(gateway, FakeStore())
+
+        result = service.handle_query("Hey")
+
+        self.assertEqual(result.answer, "hello")
+        self.assertEqual(
+            result.classification,
+            Classification(
+                intent="GREETING",
+                explain="local fast path for a greeting-only message",
+                language="en",
+                confidence=1.0,
+                needs_rag=False,
+                route="CANNED_RESPONSE",
+            ),
+        )
+        self.assertEqual(gateway.guard_calls, [])
+        self.assertEqual(gateway.classify_calls, [])
+        self.assertEqual(
+            result.usage_events,
+            [usage_event_from_model_usage("chat_completion", gateway.greeting_usage)],
+        )
+
+    def test_short_meta_follow_up_uses_small_reply_with_history(self) -> None:
+        history = [
+            ConversationMessage(
+                role="assistant",
+                text=EN_SCOPE_ANSWER,
+                ts=1,
+            ),
+        ]
+        gateway = FakeGateway(
+            Classification(intent="OUT_OF_DOMAIN", explain="would be wrong", language="en"),
+        )
+        memory = FakeConversationMemory(history)
+        service = QueryService(gateway, FakeStore(), conversation_memory=memory)
+
+        result = service.handle_query("Fuck u mean", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "hello")
+        self.assertEqual(
+            result.classification,
+            Classification(
+                intent="CHITCHAT",
+                explain="local fast path for a short question about the recent assistant reply",
+                language="en",
+                confidence=1.0,
+                needs_rag=False,
+                route="SMALL_MODEL_RESPONSE",
+            ),
+        )
+        self.assertEqual(memory.requested_ids, ["conv-1"])
+        self.assertEqual(gateway.guard_calls, [])
+        self.assertEqual(gateway.classify_calls, [])
+        self.assertEqual(
+            result.usage_events,
+            [usage_event_from_model_usage("chat_completion", gateway.greeting_usage)],
+        )
+
     def test_factual_query_uses_history_loaded_from_conversation_id(self) -> None:
         history = [
             ConversationMessage(role="user", text="The test code is ALPHA-123", ts=1),

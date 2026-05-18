@@ -308,6 +308,8 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("For a generic residence permit query, assume student residence permit", prompt)
         self.assertIn("can I travel while studying", prompt)
         self.assertIn("Short follow-up handling", prompt)
+        self.assertIn("Clarification-loop prevention", prompt)
+        self.assertIn("process-vs-requirements", prompt)
         self.assertIn('If the latest user asks a short continuation like "how"', prompt)
         self.assertIn("Language-switch follow-up handling", prompt)
         self.assertIn('"target_language": string', prompt)

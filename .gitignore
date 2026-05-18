@@ -121,6 +121,7 @@ secrets.json
 *.csv
 python/RAG/evaluation/query_mappings.csv
 python/RAG/evaluation/guardrail_mappings.csv
+python/RAG/evaluation/clarity_mappings.csv
 __pycache__
 *.vscode
 *.docx

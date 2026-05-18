@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
-	class guard ret \
+	class guard clarity ret \
 	landing-build landing-up landing-down \
 	rabbitmq-up rabbitmq-down rabbitmq-logs \
 	go-build go-up go-down go-clean \
@@ -29,6 +29,8 @@ CLASS_EVAL_SCRIPT := $(RAG_EVAL_DIR)/classification_eval.py
 CLASS_EVAL_CSV := $(RAG_EVAL_DIR)/query_mappings.csv
 GUARD_EVAL_SCRIPT := $(RAG_EVAL_DIR)/guardrail_eval.py
 GUARD_EVAL_CSV := $(RAG_EVAL_DIR)/guardrail_mappings.csv
+CLARITY_EVAL_SCRIPT := $(RAG_EVAL_DIR)/clarity_eval.py
+CLARITY_EVAL_CSV := $(RAG_EVAL_DIR)/clarity_mappings.csv
 RET_EVAL_SCRIPT := $(RAG_EVAL_DIR)/retrieval_eval.py
 RET_EVAL_CSV := $(RAG_EVAL_DIR)/query_mappings.csv
 EVAL_LIMIT ?=
@@ -66,9 +68,11 @@ help:
 	@echo "  make rag-chunks-manual"
 	@echo "  make class     # classification metrics, fresh LLM calls by default"
 	@echo "  make guard     # guardrail metrics, fresh LLM calls by default"
+	@echo "  make clarity   # clarity/rewrite metrics, fresh LLM calls by default"
 	@echo "  make ret       # retrieval metrics over local python/RAG/out artifacts"
 	@echo "  make class EVAL_REFRESH=     # reuse cached classification predictions"
 	@echo "  make guard EVAL_REFRESH=     # reuse cached guardrail predictions"
+	@echo "  make clarity EVAL_REFRESH=   # reuse cached clarity predictions"
 	@echo "  make ret EVAL_REFRESH=       # reuse cached retrieval predictions"
 	@echo ""
 	@echo "Landing page:"
@@ -155,6 +159,13 @@ class:
 guard:
 	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	"$(PYTHON)" "$(GUARD_EVAL_SCRIPT)" --csv "$(GUARD_EVAL_CSV)" \
+		$(if $(EVAL_LIMIT),--limit "$(EVAL_LIMIT)",) \
+		$(if $(EVAL_REFRESH),--refresh-cache,) \
+		$(EVAL_EXTRA)
+
+clarity:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	"$(PYTHON)" "$(CLARITY_EVAL_SCRIPT)" --csv "$(CLARITY_EVAL_CSV)" \
 		$(if $(EVAL_LIMIT),--limit "$(EVAL_LIMIT)",) \
 		$(if $(EVAL_REFRESH),--refresh-cache,) \
 		$(EVAL_EXTRA)

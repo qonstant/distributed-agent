@@ -607,8 +607,8 @@ class QueryService:
                 )
 
             retrieval_query = (
-                (classification.rewritten_query or "").strip()
-                or (clarity.standalone_query or "").strip()
+                (clarity.standalone_query or "").strip()
+                or (classification.rewritten_query or "").strip()
                 or normalized_query
             )
             if raw_intent == "DOCUMENT_REQUEST":

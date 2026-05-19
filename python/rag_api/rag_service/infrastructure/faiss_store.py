@@ -4,7 +4,7 @@ import json
 import re
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 import faiss
 import numpy as np
@@ -17,11 +17,50 @@ from rag_service.infrastructure.config import Settings
 # Current corpus contains only Italy. Keep this as one small switch so the
 # resolver can later be replaced by a DB/user-profile country selector.
 DEFAULT_COUNTRY_FILTER = "italy"
+FAQ_ARTIFACT = "faq.jsonl"
+METADATA_HINT_BOOST = 0.20
+FAQ_BASE_SCORE = 0.68
+FAQ_MAX_SCORE = 0.98
 
 
 def _normalize_slug(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
     return re.sub(r"_+", "_", normalized).strip("_")
+
+
+def _tokenize_metadata(value: str) -> Set[str]:
+    normalized = re.sub(r"[_/.-]+", " ", str(value or "").lower())
+    return {
+        token
+        for token in re.findall(r"[0-9a-zа-яёәғқңөұүһі]+", normalized, flags=re.IGNORECASE)
+        if len(token) >= 2
+    }
+
+
+def _normalize_phrase(value: str) -> str:
+    normalized = re.sub(r"[_/.-]+", " ", str(value or "").lower())
+    normalized = re.sub(r"[^0-9a-zа-яёәғқңөұүһі]+", " ", normalized, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _iter_metadata_values(value: Any) -> Iterable[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (int, float, bool)):
+        return [str(value)]
+    if isinstance(value, list):
+        values: List[str] = []
+        for item in value:
+            values.extend(_iter_metadata_values(item))
+        return values
+    if isinstance(value, dict):
+        values: List[str] = []
+        for item in value.values():
+            values.extend(_iter_metadata_values(item))
+        return values
+    return [str(value)]
 
 
 def _normalize_filter_language(value: str) -> str:
@@ -31,6 +70,12 @@ def _normalize_filter_language(value: str) -> str:
 
 def _source_file(meta: Dict[str, Any]) -> str:
     return str(meta.get("source_file") or meta.get("filename") or "")
+
+
+def _is_faq_meta(meta: Dict[str, Any]) -> bool:
+    kind = str(meta.get("kind") or meta.get("type") or "").strip().lower()
+    source_file = _source_file(meta).strip().lower()
+    return bool(meta.get("is_faq")) or kind == "faq" or source_file.startswith("faq://")
 
 
 def _meta_country(meta: Dict[str, Any]) -> str:
@@ -62,6 +107,125 @@ def _chunk_key(hit: RetrievedHit) -> str:
     page = meta.get("page", "")
     chunk_index = meta.get("chunk_index", "")
     return str(meta.get("id") or f"{source_file}:{page}:{chunk_index}" or hit.nid)
+
+
+def _metadata_lookup_values(
+    meta: Dict[str, Any],
+    *,
+    include_location_fields: bool = True,
+) -> List[str]:
+    fields = [
+        "canonical_doc_id",
+        "doc_type",
+        "topic",
+        "topics",
+        "title",
+        "question",
+        "questions",
+        "aliases",
+        "keywords",
+        "tags",
+    ]
+    if include_location_fields:
+        fields.extend(
+            [
+                "country",
+                "language",
+                "lang",
+                "source_file",
+                "filename",
+            ]
+        )
+    if _is_faq_meta(meta):
+        fields.extend(["answer", "text", "body"])
+
+    values: List[str] = []
+    for field in fields:
+        values.extend(_iter_metadata_values(meta.get(field)))
+    return [value for value in values if str(value).strip()]
+
+
+def _metadata_match_score(
+    query_text: str,
+    meta: Dict[str, Any],
+    *,
+    include_location_fields: bool = True,
+) -> float:
+    query_tokens = _tokenize_metadata(query_text)
+    if not query_tokens:
+        return 0.0
+
+    normalized_query = _normalize_phrase(query_text)
+    metadata_values = _metadata_lookup_values(
+        meta,
+        include_location_fields=include_location_fields,
+    )
+    for value in metadata_values:
+        phrase = _normalize_phrase(value)
+        if len(phrase.split()) >= 2 and phrase in normalized_query:
+            return 1.0
+
+    metadata_text = " ".join(metadata_values)
+    metadata_tokens = _tokenize_metadata(metadata_text)
+    if not metadata_tokens:
+        return 0.0
+
+    overlap = len(query_tokens & metadata_tokens)
+    if overlap == 0:
+        return 0.0
+
+    # Ratio against the shorter side rewards compact metadata such as aliases.
+    denominator = max(1, min(len(query_tokens), len(metadata_tokens)))
+    return min(1.0, overlap / denominator)
+
+
+def _with_metadata_boost(hit: RetrievedHit, query_text: str) -> RetrievedHit:
+    match_score = _metadata_match_score(query_text, hit.meta)
+    if match_score <= 0:
+        return hit
+
+    meta = dict(hit.meta)
+    meta["semantic_score"] = float(hit.score)
+    meta["metadata_score"] = match_score
+    meta["metadata_boost"] = METADATA_HINT_BOOST * match_score
+    return RetrievedHit(
+        score=float(hit.score) + float(meta["metadata_boost"]),
+        nid=hit.nid,
+        meta=meta,
+    )
+
+
+def _load_faq_entries(path: Path) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+
+    entries: List[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line_number, line in enumerate(fh, start=1):
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                parsed = json.loads(raw)
+            except Exception as exc:
+                print(f"[faq] skipping invalid JSON at {path}:{line_number}: {exc}")
+                continue
+            if not isinstance(parsed, dict):
+                continue
+
+            question = str(parsed.get("question") or parsed.get("title") or "").strip()
+            answer = str(parsed.get("answer") or parsed.get("text") or "").strip()
+            if not question and not answer:
+                continue
+
+            entry = dict(parsed)
+            entry.setdefault("kind", "faq")
+            entry.setdefault("is_faq", True)
+            entry.setdefault("source_file", f"faq://{entry.get('id') or line_number}")
+            entry.setdefault("page", "")
+            entry["text"] = " ".join(part for part in (question, answer) if part).strip()
+            entries.append(entry)
+    return entries
 
 
 def _build_search_stages(country: str, language: str) -> List[Dict[str, str]]:
@@ -130,9 +294,15 @@ def _diversify_by_file(hits: List[RetrievedHit], limit: int) -> List[RetrievedHi
 
 
 class FaissMetadataStore:
-    def __init__(self, meta: Dict[str, Any], index) -> None:
+    def __init__(
+        self,
+        meta: Dict[str, Any],
+        index,
+        faq_entries: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         self._meta = meta
         self._index = index
+        self._faq_entries = faq_entries or []
 
     @classmethod
     def load(cls, settings: Settings) -> "FaissMetadataStore":
@@ -160,7 +330,11 @@ class FaissMetadataStore:
             traceback.print_exc()
             raise
 
-        return cls(meta=meta, index=index)
+        faq_entries = _load_faq_entries(settings.out_dir / FAQ_ARTIFACT)
+        if faq_entries:
+            print(f"[faq] loaded {len(faq_entries)} FAQ entries from {settings.out_dir / FAQ_ARTIFACT}")
+
+        return cls(meta=meta, index=index, faq_entries=faq_entries)
 
     def available_countries(self) -> List[str]:
         countries = {_meta_country(item) for item in self._meta.values() if _meta_country(item)}
@@ -208,7 +382,13 @@ class FaissMetadataStore:
             if not meta:
                 print(f"[search] warn: missing meta for id {nid}")
                 continue
-            ranked_results.append(RetrievedHit(score=float(score), nid=int(nid), meta=meta))
+            ranked_results.append(
+                _with_metadata_boost(
+                    RetrievedHit(score=float(score), nid=int(nid), meta=meta),
+                    query_text,
+                )
+            )
+        ranked_results.extend(self._faq_hits(query_text))
 
         selected: List[RetrievedHit] = []
         seen_chunks: Set[str] = set()
@@ -234,3 +414,21 @@ class FaissMetadataStore:
                     return selected
 
         return selected
+
+    def _faq_hits(self, query_text: str) -> List[RetrievedHit]:
+        hits: List[RetrievedHit] = []
+        for index, meta in enumerate(self._faq_entries, start=1):
+            score = _metadata_match_score(query_text, meta, include_location_fields=False)
+            if score <= 0:
+                continue
+            enriched_meta = dict(meta)
+            enriched_meta["metadata_score"] = score
+            enriched_meta["metadata_boost"] = score
+            hits.append(
+                RetrievedHit(
+                    score=min(FAQ_MAX_SCORE, FAQ_BASE_SCORE + (score * (FAQ_MAX_SCORE - FAQ_BASE_SCORE))),
+                    nid=-index,
+                    meta=enriched_meta,
+                )
+            )
+        return hits

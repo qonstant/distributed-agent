@@ -80,7 +80,7 @@ def load_settings() -> Settings:
         out_dir=out_dir,
         meta_json_path=out_dir / "meta.json",
         faiss_index_path=out_dir / "index.faiss",
-        optional_artifacts=["embeddings.npy", "ids.npy", "chunks.jsonl", "manifest.json"],
+        optional_artifacts=["embeddings.npy", "ids.npy", "chunks.jsonl", "manifest.json", "faq.jsonl"],
         llm_model=llm_model,
         class_model=class_model,
         conversation_key_prefix=os.getenv("CONVERSATION_MEMORY_KEY_PREFIX", "chat:conv:"),

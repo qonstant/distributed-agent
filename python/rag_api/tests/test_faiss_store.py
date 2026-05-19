@@ -60,6 +60,110 @@ class FaissMetadataStoreTests(unittest.TestCase):
 
         self.assertEqual(results[0].meta["source_file"], "italy/CV_en.pdf")
 
+    def test_search_boosts_matching_metadata_aliases(self) -> None:
+        meta = {
+            "1": {
+                "source_file": "italy/Visa_en.pdf",
+                "country": "italy",
+                "language": "en",
+                "doc_type": "visa",
+                "page": 1,
+            },
+            "2": {
+                "source_file": "italy/ResidencePermit_en.pdf",
+                "country": "italy",
+                "language": "en",
+                "doc_type": "residence_permit",
+                "aliases": ["residence permit", "permesso di soggiorno"],
+                "page": 1,
+            },
+        }
+        index = FakeIndex(ids=[1, 2], scores=[0.80, 0.70])
+        store = FaissMetadataStore(meta=meta, index=index)
+
+        results = store.search(
+            np.array([1.0], dtype=np.float32),
+            k=1,
+            language="en",
+            query_text="How do I get residence permit",
+        )
+
+        self.assertEqual(results[0].meta["source_file"], "italy/ResidencePermit_en.pdf")
+        self.assertGreater(results[0].meta["metadata_boost"], 0)
+
+    def test_search_can_return_faq_hits_from_metadata_artifact(self) -> None:
+        meta = {
+            "1": {
+                "source_file": "italy/Visa_en.pdf",
+                "country": "italy",
+                "language": "en",
+                "doc_type": "visa",
+                "page": 1,
+            },
+        }
+        faq_entries = [
+            {
+                "id": "residence-permit-en",
+                "kind": "faq",
+                "is_faq": True,
+                "source_file": "faq://residence-permit-en",
+                "country": "italy",
+                "language": "en",
+                "doc_type": "residence_permit",
+                "question": "How do I get an Italian student residence permit?",
+                "answer": "Apply for the permesso di soggiorno after arrival using the official kit.",
+                "aliases": ["residence permit", "permesso di soggiorno"],
+            }
+        ]
+        index = FakeIndex(ids=[1], scores=[0.80])
+        store = FaissMetadataStore(meta=meta, index=index, faq_entries=faq_entries)
+
+        results = store.search(
+            np.array([1.0], dtype=np.float32),
+            k=1,
+            language="en",
+            query_text="How do I get residence permit",
+        )
+
+        self.assertEqual(results[0].meta["source_file"], "faq://residence-permit-en")
+        self.assertTrue(results[0].meta["is_faq"])
+
+    def test_search_does_not_return_faq_from_country_match_only(self) -> None:
+        meta = {
+            "1": {
+                "source_file": "italy/CV_en.pdf",
+                "country": "italy",
+                "language": "en",
+                "doc_type": "cv",
+                "page": 1,
+            },
+        }
+        faq_entries = [
+            {
+                "id": "residence-permit-en",
+                "kind": "faq",
+                "is_faq": True,
+                "source_file": "faq://residence-permit-en",
+                "country": "italy",
+                "language": "en",
+                "doc_type": "residence_permit",
+                "question": "How do I get an Italian student residence permit?",
+                "answer": "Apply for the permesso di soggiorno after arrival.",
+                "aliases": ["residence permit", "permesso di soggiorno"],
+            }
+        ]
+        index = FakeIndex(ids=[1], scores=[0.80])
+        store = FaissMetadataStore(meta=meta, index=index, faq_entries=faq_entries)
+
+        results = store.search(
+            np.array([1.0], dtype=np.float32),
+            k=1,
+            language="en",
+            query_text="Italy CV help",
+        )
+
+        self.assertEqual(results[0].meta["source_file"], "italy/CV_en.pdf")
+
 
 if __name__ == "__main__":
     unittest.main()

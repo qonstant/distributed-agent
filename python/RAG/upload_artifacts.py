@@ -15,6 +15,7 @@ OPTIONAL_FILES = (
     "embeddings.npy",
     "ids.npy",
     "manifest.json",
+    "faq.jsonl",
     "eval_report.json",
     "classification_eval_report.json",
     "guardrail_eval_report.json",

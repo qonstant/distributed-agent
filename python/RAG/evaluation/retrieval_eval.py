@@ -119,10 +119,11 @@ def load_cases(csv_path: Path) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any
 
 def available_source_files(store: FaissMetadataStore) -> List[str]:
     meta = getattr(store, "_meta", {})
+    faq_entries = getattr(store, "_faq_entries", [])
     return sorted(
         {
             str(item.get("source_file") or item.get("filename") or "")
-            for item in meta.values()
+            for item in [*meta.values(), *faq_entries]
             if str(item.get("source_file") or item.get("filename") or "")
         }
     )

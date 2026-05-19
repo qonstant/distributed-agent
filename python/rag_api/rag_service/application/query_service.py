@@ -66,8 +66,9 @@ def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Opti
     file_sum: dict[str, float] = {}
     best_chunk_for_file: dict[str, RetrievedHit] = {}
     for hit in results:
-        meta = hit.meta
-        source_file = meta.get("source_file") or meta.get("filename") or "unknown"
+        source_file = _source_file_from_hit(hit)
+        if not source_file:
+            continue
         file_sum[source_file] = file_sum.get(source_file, 0.0) + hit.score
         if source_file not in best_chunk_for_file or hit.score > best_chunk_for_file[source_file].score:
             best_chunk_for_file[source_file] = hit
@@ -176,7 +177,11 @@ def _normalize_file_choice(value) -> Optional[str]:
 def _source_file_from_hit(hit: Optional[RetrievedHit]) -> Optional[str]:
     if hit is None:
         return None
-    return _normalize_file_choice(hit.meta.get("source_file") or hit.meta.get("filename"))
+    kind = str(hit.meta.get("kind") or hit.meta.get("type") or "").strip().lower()
+    source = str(hit.meta.get("source_file") or hit.meta.get("filename") or "").strip()
+    if hit.meta.get("is_faq") or kind == "faq" or source.lower().startswith("faq://"):
+        return None
+    return _normalize_file_choice(source)
 
 
 def _source_files_from_hits(results: List[RetrievedHit]) -> set[str]:

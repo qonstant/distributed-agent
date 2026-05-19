@@ -391,12 +391,15 @@ class QueryService:
         conversation_memory=None,
         trace_enabled: bool = True,
         trace_max_chars: int = 240,
+        trace_log_format: str = "pretty",
     ) -> None:
         self._gateway = gateway
         self._store = store
         self._conversation_memory = conversation_memory
         self._trace_enabled = trace_enabled
         self._trace_max_chars = max(40, int(trace_max_chars or 240))
+        normalized_format = (trace_log_format or "pretty").strip().lower()
+        self._trace_log_format = normalized_format if normalized_format in {"pretty", "json"} else "pretty"
 
     def handle_query(
         self,
@@ -1016,9 +1019,265 @@ class QueryService:
             "stage": stage,
             **fields,
         }
-        TRACE_LOGGER.info(
-            json.dumps(self._sanitize_trace(payload), ensure_ascii=False, default=str)
-        )
+        sanitized = self._sanitize_trace(payload)
+        if self._trace_log_format == "json":
+            TRACE_LOGGER.info(json.dumps(sanitized, ensure_ascii=False, default=str))
+            return
+        TRACE_LOGGER.info(self._format_trace_payload(sanitized))
+
+    def _format_trace_payload(self, payload: dict[str, Any]) -> str:
+        stage = str(payload.get("stage") or "trace")
+        trace_id = str(payload.get("trace_id") or "-")
+        prefix = f"[rag][{trace_id}] {stage}"
+
+        if stage == "request.start":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("conv", self._short_conversation_id(payload.get("conversation_id"))),
+                    self._trace_field("q", payload.get("query"), quoted=True),
+                    self._trace_field("k", payload.get("raw_k")),
+                    self._trace_field("llm", payload.get("top_for_llm")),
+                    self._trace_field("name", self._yes_no(payload.get("has_preferred_name"))),
+                ]
+                if part
+            )
+
+        if stage.startswith("guard."):
+            if payload.get("needs_context"):
+                status = "NEEDS_CTX"
+            else:
+                status = "PASS" if payload.get("allowed") else "BLOCK"
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    status,
+                    self._trace_field("lang", payload.get("language")),
+                    self._trace_field("violation", payload.get("violation")),
+                    self._trace_field("reason", payload.get("reason"), quoted=True),
+                ]
+                if part
+            )
+
+        if stage == "history.loaded":
+            messages = self._format_history_messages(payload.get("messages"))
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("count", payload.get("count")),
+                    self._trace_field("latest", messages, quoted=True),
+                ]
+                if part
+            )
+
+        if stage == "classifier":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("intent", payload.get("intent")),
+                    self._trace_field("route", payload.get("route")),
+                    self._trace_field("conf", payload.get("confidence")),
+                    self._trace_field("rag", self._yes_no(payload.get("needs_rag"))),
+                    self._trace_field("lang", payload.get("language")),
+                    self._trace_field("rewrite", payload.get("rewritten_query"), quoted=True),
+                    self._trace_field("reason", payload.get("reason"), quoted=True),
+                ]
+                if part
+            )
+
+        if stage == "clarity":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("related", self._yes_no(payload.get("related"))),
+                    self._trace_field("clear", self._yes_no(payload.get("clear"))),
+                    self._trace_field("lang", payload.get("target_language")),
+                    self._trace_field("query", payload.get("standalone_query"), quoted=True),
+                    self._trace_field("ask", payload.get("clarifying_question"), quoted=True),
+                    self._trace_field("reason", payload.get("reason"), quoted=True),
+                ]
+                if part
+            )
+
+        if stage == "retrieval.start":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("intent", payload.get("retrieval_intent")),
+                    self._trace_field("lang", payload.get("response_language")),
+                    self._trace_field("q", payload.get("query"), quoted=True),
+                    self._trace_field("k", payload.get("raw_k")),
+                    self._trace_field("llm", payload.get("top_for_llm")),
+                ]
+                if part
+            )
+
+        if stage == "retrieval.results":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("hits", payload.get("count")),
+                    self._trace_field("top", payload.get("top_chunks")),
+                    self._trace_field("files", self._format_top_hits(payload.get("top_hits")), quoted=True),
+                ]
+                if part
+            )
+
+        if stage == "sufficiency":
+            status = "ENOUGH" if payload.get("sufficient") else "WEAK"
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    status,
+                    self._trace_field("ask", payload.get("clarifying_question"), quoted=True),
+                    self._trace_field("reason", payload.get("reason"), quoted=True),
+                ]
+                if part
+            )
+
+        if stage == "answer.prompt":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("type", payload.get("prompt_type")),
+                    self._trace_field("chars", payload.get("prompt_chars")),
+                    self._trace_field("best", payload.get("best_supporting_file")),
+                    self._trace_field("files", self._count_items(payload.get("retrieved_files"))),
+                ]
+                if part
+            )
+
+        if stage == "answer.file_selected":
+            return f"{prefix} {self._trace_field('file', payload.get('file'))}".rstrip()
+
+        if stage == "response.final":
+            usage = self._format_usage_events(payload.get("usage_events"))
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("outcome", payload.get("outcome")),
+                    self._trace_field("intent", payload.get("classification_intent")),
+                    self._trace_field("file", payload.get("file")),
+                    self._trace_field("answer_chars", payload.get("answer_chars")),
+                    self._trace_field("elapsed", self._format_elapsed(payload.get("elapsed_ms"))),
+                    usage,
+                ]
+                if part
+            )
+
+        return self._format_generic_trace(prefix, payload)
+
+    def _format_generic_trace(self, prefix: str, payload: dict[str, Any]) -> str:
+        ignored = {"event", "trace_id", "stage", "conversation_id"}
+        parts = [prefix]
+        for key, value in payload.items():
+            if key in ignored or value in ("", None, [], {}):
+                continue
+            if isinstance(value, (list, dict)):
+                parts.append(self._trace_field(key, self._count_items(value)))
+            else:
+                parts.append(self._trace_field(key, value, quoted=isinstance(value, str)))
+        return " ".join(part for part in parts if part)
+
+    def _format_history_messages(self, messages: Any) -> str:
+        if not isinstance(messages, list) or not messages:
+            return ""
+        items = []
+        for message in messages[-4:]:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role") or "?")[:1].lower()
+            text = self._compact_trace_text(message.get("text"), limit=90)
+            items.append(f"{role}:{text}")
+        return " | ".join(items)
+
+    def _format_top_hits(self, hits: Any) -> str:
+        if not isinstance(hits, list) or not hits:
+            return ""
+        items = []
+        for index, hit in enumerate(hits[:5], start=1):
+            if not isinstance(hit, dict):
+                continue
+            source = _basename(str(hit.get("source_file") or "unknown"))
+            page = hit.get("page")
+            score = hit.get("score")
+            page_part = f":p{page}" if page not in ("", None) else ""
+            score_part = f"{float(score):.3f}" if isinstance(score, (int, float)) else str(score or "")
+            items.append(f"#{index} {score_part} {source}{page_part}".strip())
+        return "; ".join(items)
+
+    def _format_usage_events(self, events: Any) -> str:
+        if not isinstance(events, list) or not events:
+            return ""
+        total_tokens = 0
+        total_cost = 0.0
+        counts: dict[str, int] = {}
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            event_type = str(event.get("event_type") or event.get("type") or "usage")
+            counts[event_type] = counts.get(event_type, 0) + 1
+            total_tokens += int(event.get("total_tokens") or event.get("total") or 0)
+            total_cost += float(event.get("estimated_cost") or event.get("cost") or 0.0)
+        labels = ",".join(f"{key}x{value}" for key, value in sorted(counts.items()))
+        parts = [
+            self._trace_field("usage", labels),
+            self._trace_field("tokens", total_tokens or None),
+            self._trace_field("cost", f"${total_cost:.6f}" if total_cost > 0 else ""),
+        ]
+        return " ".join(part for part in parts if part)
+
+    def _trace_field(self, key: str, value: Any, *, quoted: bool = False) -> str:
+        if value in ("", None, [], {}):
+            return ""
+        if quoted:
+            return f'{key}="{self._compact_trace_text(value)}"'
+        return f"{key}={value}"
+
+    @staticmethod
+    def _compact_trace_text(value: Any, *, limit: int = 240) -> str:
+        text = str(value or "").replace('"', "'").strip()
+        if len(text) <= limit:
+            return text
+        return text[:limit].rstrip() + "..."
+
+    @staticmethod
+    def _yes_no(value: Any) -> str:
+        if value is None or value == "":
+            return ""
+        return "yes" if bool(value) else "no"
+
+    @staticmethod
+    def _short_conversation_id(value: Any) -> str:
+        text = str(value or "")
+        if not text:
+            return ""
+        return text if len(text) <= 14 else "..." + text[-12:]
+
+    @staticmethod
+    def _format_elapsed(value: Any) -> str:
+        if value in ("", None):
+            return ""
+        try:
+            return f"{float(value):.0f}ms"
+        except (TypeError, ValueError):
+            return str(value)
+
+    @staticmethod
+    def _count_items(value: Any) -> Any:
+        if isinstance(value, (list, tuple, set, dict)):
+            return len(value)
+        return value
 
     def _sanitize_trace(self, value: Any) -> Any:
         if is_dataclass(value):

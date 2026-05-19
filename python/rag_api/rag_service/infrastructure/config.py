@@ -30,6 +30,7 @@ class Settings:
     conversation_max_items: int = 8
     trace_logs_enabled: bool = True
     trace_log_max_chars: int = 240
+    trace_log_format: str = "pretty"
 
 
 def load_settings() -> Settings:
@@ -66,6 +67,9 @@ def load_settings() -> Settings:
         "no",
         "off",
     )
+    trace_log_format = os.getenv("RAG_TRACE_LOG_FORMAT", "pretty").strip().lower()
+    if trace_log_format not in {"pretty", "json"}:
+        trace_log_format = "pretty"
 
     return Settings(
         openai_api_key=openai_api_key,
@@ -87,4 +91,5 @@ def load_settings() -> Settings:
         conversation_max_items=conversation_max_items,
         trace_logs_enabled=trace_logs_enabled,
         trace_log_max_chars=trace_log_max_chars,
+        trace_log_format=trace_log_format,
     )

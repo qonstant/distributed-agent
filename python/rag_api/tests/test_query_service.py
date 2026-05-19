@@ -156,6 +156,63 @@ class FakeConversationMemory:
 
 
 class QueryServiceTests(unittest.TestCase):
+    def test_pretty_trace_formats_final_response_without_raw_json_noise(self) -> None:
+        service = QueryService(
+            FakeGateway(Classification(intent="GREETING", language="en")),
+            FakeStore(),
+            trace_log_format="pretty",
+        )
+
+        line = service._format_trace_payload(
+            {
+                "event": "rag_trace",
+                "trace_id": "abc123",
+                "stage": "response.final",
+                "outcome": "rag_answer",
+                "classification_intent": "PROCEDURE",
+                "file": "italy/Visa_en.pdf",
+                "answer_chars": 873,
+                "usage_events": [
+                    {"event_type": "guardrail", "total_tokens": 13, "estimated_cost": 0.1},
+                    {"event_type": "classification", "total_tokens": 18, "estimated_cost": 0.2},
+                ],
+                "elapsed_ms": 18164.38,
+            }
+        )
+
+        self.assertIn("[rag][abc123] response.final", line)
+        self.assertIn("outcome=rag_answer", line)
+        self.assertIn("usage=classificationx1,guardrailx1", line)
+        self.assertIn("tokens=31", line)
+        self.assertIn("cost=$0.300000", line)
+        self.assertNotIn("usage_events", line)
+        self.assertNotIn("{", line)
+
+    def test_pretty_trace_formats_retrieval_hits_compactly(self) -> None:
+        service = QueryService(
+            FakeGateway(Classification(intent="PROCEDURE", language="en")),
+            FakeStore(),
+            trace_log_format="pretty",
+        )
+
+        line = service._format_trace_payload(
+            {
+                "event": "rag_trace",
+                "trace_id": "abc123",
+                "stage": "retrieval.results",
+                "count": 64,
+                "top_chunks": 8,
+                "top_hits": [
+                    {"score": 0.714209, "source_file": "italy/Visa_en.pdf", "page": 1},
+                    {"score": 0.602951, "source_file": "italy/DSU_Scholarship_en.pdf", "page": 4},
+                ],
+            }
+        )
+
+        self.assertIn("hits=64", line)
+        self.assertIn('files="#1 0.714 Visa_en.pdf:p1; #2 0.603 DSU_Scholarship_en.pdf:p4"', line)
+        self.assertNotIn("top_hits", line)
+
     def test_factual_query_uses_history_loaded_from_conversation_id(self) -> None:
         history = [
             ConversationMessage(role="user", text="The test code is ALPHA-123", ts=1),

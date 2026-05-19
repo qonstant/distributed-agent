@@ -55,6 +55,8 @@ def create_app() -> FastAPI:
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
         format="%(message)s",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
     settings = load_settings()
     gateway = OpenAIGateway(settings)
     store = FaissMetadataStore.load(settings)
@@ -81,6 +83,7 @@ def create_app() -> FastAPI:
         conversation_memory=conversation_memory,
         trace_enabled=settings.trace_logs_enabled,
         trace_max_chars=settings.trace_log_max_chars,
+        trace_log_format=settings.trace_log_format,
     )
 
     app = FastAPI(title="RAG — classification-driven prompt engineering")

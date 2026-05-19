@@ -658,7 +658,7 @@ class QueryServiceTests(unittest.TestCase):
         )
         self.assertIsNone(result.file)
 
-    def test_guidance_asks_post_retrieval_question_when_results_are_insufficient(self) -> None:
+    def test_guidance_returns_not_enough_info_when_clear_query_results_are_insufficient(self) -> None:
         gateway = FakeGateway(
             Classification(intent="GUIDANCE", explain="supported guidance", language="en"),
             sufficiency=RetrievalSufficiency(
@@ -679,7 +679,8 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("how does it work?", conversation_id="conv-1")
 
-        self.assertEqual(result.answer, "Are you asking about the student visa or scholarship?")
+        self.assertIn("could not find enough reliable information", result.answer)
+        self.assertNotIn("student visa or scholarship", result.answer)
         self.assertIsNone(result.file)
         self.assertEqual(gateway.sufficiency_calls, [("how does it work?", "en", "GUIDANCE", results, [])])
         self.assertEqual(gateway.generated_prompts, [])
@@ -695,7 +696,7 @@ class QueryServiceTests(unittest.TestCase):
             ),
             sufficiency=RetrievalSufficiency(
                 is_sufficient=False,
-                clarifying_question="I could not find enough reliable information in the available documents about the Italian student residence permit. Please send a university, Questura, or other official link so I can check it more accurately.",
+                clarifying_question="Could you specify if you need information on the application process for the student residence permit or details about required documents for it?",
                 reason="The excerpts do not specifically address the application process.",
             ),
         )
@@ -714,13 +715,13 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("How to apply for residence permit", conversation_id="conv-1")
 
-        self.assertIn("Italian student residence permit", result.answer)
         self.assertIn("could not find enough reliable information", result.answer)
-        self.assertNotIn("general information about residence permits", result.answer)
+        self.assertNotIn("application process", result.answer)
+        self.assertNotIn("required documents", result.answer)
         self.assertIsNone(result.file)
         self.assertEqual(gateway.generated_prompts, [])
 
-    def test_guidance_asks_post_retrieval_question_when_no_results(self) -> None:
+    def test_guidance_returns_not_enough_info_when_no_results(self) -> None:
         gateway = FakeGateway(
             Classification(intent="GUIDANCE", explain="supported guidance", language="ru"),
             sufficiency=RetrievalSufficiency(
@@ -734,10 +735,8 @@ class QueryServiceTests(unittest.TestCase):
 
         result = service.handle_query("что нужно?", conversation_id="conv-1")
 
-        self.assertEqual(
-            result.answer,
-            "Уточните, пожалуйста, вы спрашиваете про студенческую визу, CV или стипендию?",
-        )
+        self.assertIn("не нашлось достаточно надежной информации", result.answer)
+        self.assertNotIn("студенческую визу, CV или стипендию", result.answer)
         self.assertIsNone(result.file)
         self.assertEqual(gateway.sufficiency_calls, [("что нужно?", "ru", "GUIDANCE", [], [])])
         self.assertEqual(gateway.generated_prompts, [])

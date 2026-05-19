@@ -139,6 +139,7 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("residence permit documents", prompt)
         self.assertIn("Do not require the words Italy or student", prompt)
         self.assertIn("Как получить ВНЖ", prompt)
+        self.assertIn("тұруға рұқсатты қалай алуға болады", prompt)
         self.assertIn("What is the capital of France?", prompt)
         self.assertIn("Италияда оқып жүріп саяхаттай аламын ба?", prompt)
         self.assertIn("How do I move to Italy permanently?", prompt)
@@ -240,10 +241,11 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn('"confidence": number from 0.0 to 1.0', prompt)
         self.assertIn('"route": one of ["CANNED_RESPONSE","SMALL_MODEL_RESPONSE","RAG_SEARCH","CLARIFY","REFUSE_OR_REDIRECT"]', prompt)
         self.assertIn("short replies like \"yes\", \"how\", \"how to apply\"", prompt)
-        self.assertIn("Bare residence-permit queries default to Italian student residence permit", prompt)
+        self.assertIn("Bare residence-permit queries in English, Russian, or Kazakh default", prompt)
         self.assertIn("How do I get residence permit", prompt)
         self.assertIn("How to apply for residence permit", prompt)
         self.assertIn("residence permit documents", prompt)
+        self.assertIn("тұруға рұқсатты қалай алуға болады", prompt)
         self.assertIn("Profanity or impatience does not change the route", prompt)
         self.assertIn("greeting-only or social-only message", prompt)
         self.assertIn("Fuck u mean", prompt)
@@ -329,6 +331,7 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn('"How do I get residence permit"', prompt)
         self.assertIn('"How to apply for residence permit', prompt)
         self.assertIn('"residence permit documents"', prompt)
+        self.assertIn("тұруға рұқсатты қалай алуға болады", prompt)
         self.assertIn("Docs required", prompt)
         self.assertIn("Fucking yes, send me already", prompt)
         self.assertIn("NEVER ask whether they want process or documents", prompt)
@@ -423,10 +426,35 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("Treat short topic queries", prompt)
         self.assertIn("Do NOT ask the user to choose between documents and process", prompt)
         self.assertIn("Do NOT ask the user to choose sub-aspects inside an already identified document topic", prompt)
+        self.assertIn("already passed a clarity gate", prompt)
+        self.assertIn("Do NOT ask process-vs-documents", prompt)
+        self.assertIn("not a question", prompt)
+        self.assertIn("enough reliable information was not found in the available documents", prompt)
         self.assertIn("NEVER ask whether the user means student residence permit specifically or general residence permit information", prompt)
         self.assertIn("enough reliable student residence permit information was not found", prompt)
+        self.assertIn("тұруға рұқсат", prompt)
         self.assertIn("visa photo format", prompt)
         self.assertIn('"is_sufficient": boolean', prompt)
+
+    def test_assess_retrieval_sufficiency_fails_closed_on_gateway_error(self) -> None:
+        gateway, fake_client = self._gateway_with_output("{}")
+
+        def raise_connection_error(**_kwargs):
+            raise RuntimeError("connection boom")
+
+        fake_client.responses.create = raise_connection_error
+
+        sufficiency, usage = gateway.assess_retrieval_sufficiency(
+            "How do I get residence permit",
+            "en",
+            "PROCEDURE",
+            [],
+        )
+
+        self.assertFalse(sufficiency.is_sufficient)
+        self.assertEqual(sufficiency.clarifying_question, "")
+        self.assertIn("sufficiency check failed", sufficiency.reason)
+        self.assertIsNone(usage)
 
     def test_assess_retrieval_sufficiency_returns_clarifying_question_when_context_is_weak(self) -> None:
         gateway, _ = self._gateway_with_output(

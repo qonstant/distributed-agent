@@ -360,6 +360,24 @@ def _fallback_retrieval_follow_up_question(language: str) -> str:
     return "To find the right answer in the documents, which topic do you mean: admission, student visa, residence permit, DSU, documents, deadlines, tuition, housing, exchange, CV, or letters?"
 
 
+def _not_enough_reliable_info_answer(language: str) -> str:
+    normalized_language = (language or "").strip().lower()
+    if normalized_language == "kk":
+        return (
+            "Қолда бар құжаттардан бұл сұраққа жеткілікті сенімді ақпарат табылмады. "
+            "Университеттің, ресми сайттың немесе нақты құжаттың сілтемесін жіберсеңіз, нақтырақ тексеріп беремін."
+        )
+    if normalized_language == "ru":
+        return (
+            "В доступных документах не нашлось достаточно надежной информации по этому вопросу. "
+            "Пришлите ссылку университета, официальный источник или конкретный документ, и я проверю точнее."
+        )
+    return (
+        "I could not find enough reliable information about this in the available documents. "
+        "Please send a university link, official source, or specific document so I can check it more accurately."
+    )
+
+
 class QueryService:
     def __init__(
         self,
@@ -793,10 +811,7 @@ class QueryService:
             )
 
             if not results or not sufficiency.is_sufficient:
-                answer = (
-                    (sufficiency.clarifying_question or "").strip()
-                    or _fallback_retrieval_follow_up_question(response_language)
-                )
+                answer = _not_enough_reliable_info_answer(response_language)
                 return finish(QueryResult(
                     answer=answer,
                     file=None,
@@ -985,7 +1000,7 @@ class QueryService:
                 conversation_id=conversation_id,
                 error=str(exc),
             )
-            return RetrievalSufficiency(is_sufficient=True, reason=f"sufficiency failed: {exc}"), None
+            return RetrievalSufficiency(is_sufficient=False, reason=f"sufficiency failed: {exc}"), None
 
     def _trace(self, trace_id: str, stage: str, **fields: Any) -> None:
         if not self._trace_enabled:

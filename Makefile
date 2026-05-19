@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
-	class guard clarity ret \
+	class guard clarity suff ret \
 	landing-build landing-up landing-down \
 	rabbitmq-up rabbitmq-down rabbitmq-logs \
 	go-build go-up go-down go-clean \
@@ -31,6 +31,8 @@ GUARD_EVAL_SCRIPT := $(RAG_EVAL_DIR)/guardrail_eval.py
 GUARD_EVAL_CSV := $(RAG_EVAL_DIR)/guardrail_mappings.csv
 CLARITY_EVAL_SCRIPT := $(RAG_EVAL_DIR)/clarity_eval.py
 CLARITY_EVAL_CSV := $(RAG_EVAL_DIR)/clarity_mappings.csv
+SUFF_EVAL_SCRIPT := $(RAG_EVAL_DIR)/sufficiency_eval.py
+SUFF_EVAL_CSV := $(RAG_EVAL_DIR)/sufficiency_mappings.csv
 RET_EVAL_SCRIPT := $(RAG_EVAL_DIR)/retrieval_eval.py
 RET_EVAL_CSV := $(RAG_EVAL_DIR)/query_mappings.csv
 EVAL_LIMIT ?=
@@ -69,10 +71,12 @@ help:
 	@echo "  make class     # classification metrics, fresh LLM calls by default"
 	@echo "  make guard     # guardrail metrics, fresh LLM calls by default"
 	@echo "  make clarity   # clarity/rewrite metrics, fresh LLM calls by default"
+	@echo "  make suff      # retrieval sufficiency metrics, fresh LLM calls by default"
 	@echo "  make ret       # retrieval metrics over local python/RAG/out artifacts"
 	@echo "  make class EVAL_REFRESH=     # reuse cached classification predictions"
 	@echo "  make guard EVAL_REFRESH=     # reuse cached guardrail predictions"
 	@echo "  make clarity EVAL_REFRESH=   # reuse cached clarity predictions"
+	@echo "  make suff EVAL_REFRESH=      # reuse cached sufficiency predictions"
 	@echo "  make ret EVAL_REFRESH=       # reuse cached retrieval predictions"
 	@echo ""
 	@echo "Landing page:"
@@ -166,6 +170,13 @@ guard:
 clarity:
 	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	"$(PYTHON)" "$(CLARITY_EVAL_SCRIPT)" --csv "$(CLARITY_EVAL_CSV)" \
+		$(if $(EVAL_LIMIT),--limit "$(EVAL_LIMIT)",) \
+		$(if $(EVAL_REFRESH),--refresh-cache,) \
+		$(EVAL_EXTRA)
+
+suff:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	"$(PYTHON)" "$(SUFF_EVAL_SCRIPT)" --csv "$(SUFF_EVAL_CSV)" \
 		$(if $(EVAL_LIMIT),--limit "$(EVAL_LIMIT)",) \
 		$(if $(EVAL_REFRESH),--refresh-cache,) \
 		$(EVAL_EXTRA)

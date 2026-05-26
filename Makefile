@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
-	class guard clarity suff ret \
+	class guard clarity suff ret eval \
 	landing-build landing-up landing-down \
 	rabbitmq-up rabbitmq-down rabbitmq-logs \
 	go-build go-up go-down go-clean \
@@ -73,6 +73,7 @@ help:
 	@echo "  make clarity   # clarity/rewrite metrics, fresh LLM calls by default"
 	@echo "  make suff      # retrieval sufficiency metrics, fresh LLM calls by default"
 	@echo "  make ret       # retrieval metrics over local python/RAG/out artifacts"
+	@echo "  make eval      # run guard, class, clarity, suff, and ret metrics"
 	@echo "  make class EVAL_REFRESH=     # reuse cached classification predictions"
 	@echo "  make guard EVAL_REFRESH=     # reuse cached guardrail predictions"
 	@echo "  make clarity EVAL_REFRESH=   # reuse cached clarity predictions"
@@ -187,6 +188,8 @@ ret:
 		$(if $(EVAL_LIMIT),--limit "$(EVAL_LIMIT)",) \
 		$(if $(EVAL_REFRESH),--refresh-cache,) \
 		$(EVAL_EXTRA)
+
+eval: guard class clarity suff ret
 
 # ----------------------------
 # Landing page

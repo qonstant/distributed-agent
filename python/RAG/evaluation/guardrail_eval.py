@@ -283,6 +283,8 @@ def guard_with_retry(
     for attempt in range(1, attempts + 1):
         try:
             guardrail, _usage = gateway.guard_query(query, history=history_arg)
+            if (guardrail.reason or "").startswith("guardrail error:"):
+                raise RuntimeError(guardrail.reason)
             return {
                 "allowed": guardrail.allowed,
                 "needs_context": guardrail.needs_context,

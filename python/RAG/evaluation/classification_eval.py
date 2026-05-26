@@ -199,6 +199,8 @@ def classify_with_retry(
     for attempt in range(1, attempts + 1):
         try:
             classification, _usage = gateway.classify_query(query)
+            if (classification.explain or "").startswith("classifier error:"):
+                raise RuntimeError(classification.explain)
             return {
                 "intent": classification.intent,
                 "explain": classification.explain,

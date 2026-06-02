@@ -27,11 +27,13 @@ from ..crud import (
     verify_user_payment,
 )
 from ..db import get_db
+from ..lightrag_jobs import get_lightrag_job_manager
 from ..schemas import ClassifierIntent
 
 router = APIRouter(prefix="/admin-ui", tags=["admin-ui"], include_in_schema=False)
 templates = Jinja2Templates(directory="app/templates")
 CLASSIFIER_INTENTS = [intent.value for intent in ClassifierIntent]
+lightrag_jobs = get_lightrag_job_manager()
 
 
 def cookie_secure_enabled() -> bool:
@@ -306,6 +308,48 @@ async def update_user_identity_ui(
         return HTMLResponse("User not found", status_code=404)
 
     return RedirectResponse(f"/admin-ui/users/{telegram_id}", status_code=HTTP_302_FOUND)
+
+
+@router.get("/lightrag", response_class=HTMLResponse)
+async def lightrag_page(
+    request: Request,
+    admin_user=Depends(get_current_admin_user),
+):
+    if not admin_user:
+        return RedirectResponse("/admin-ui/login", status_code=HTTP_302_FOUND)
+
+    return render_template(
+        request,
+        "lightrag.html",
+        {
+            "admin_user": admin_user,
+            "job": lightrag_jobs.snapshot(),
+        },
+    )
+
+
+@router.post("/lightrag/start-full")
+async def start_lightrag_full(
+    request: Request,
+    admin_user=Depends(get_current_admin_user),
+):
+    if not admin_user:
+        return RedirectResponse("/admin-ui/login", status_code=HTTP_302_FOUND)
+
+    lightrag_jobs.start("full")
+    return RedirectResponse("/admin-ui/lightrag", status_code=HTTP_302_FOUND)
+
+
+@router.post("/lightrag/continue")
+async def continue_lightrag_build(
+    request: Request,
+    admin_user=Depends(get_current_admin_user),
+):
+    if not admin_user:
+        return RedirectResponse("/admin-ui/login", status_code=HTTP_302_FOUND)
+
+    lightrag_jobs.start("continue")
+    return RedirectResponse("/admin-ui/lightrag", status_code=HTTP_302_FOUND)
 
 
 @router.post("/grant/{telegram_id}")

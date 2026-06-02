@@ -4,7 +4,7 @@ WORKDIR /app
 
 # install dependencies
 RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y gcc libpq-dev && \
+    apt-get install -y gcc libpq-dev make && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy requirements

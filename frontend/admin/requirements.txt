@@ -9,3 +9,5 @@ pydantic<2
 httpx
 python-jose[cryptography]
 jinja2
+boto3
+lightrag-hku>=1.4.16

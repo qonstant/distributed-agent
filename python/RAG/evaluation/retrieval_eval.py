@@ -423,17 +423,16 @@ def evaluate_cases(
         }
         rows.append(row)
         status = "ok" if row["hit"] else "MISS"
-        status_display = colorize(status, "green", color_enabled) if row["hit"] else status
         top_file = ranked_files[0] if ranked_files else "-"
         line = (
             f"[{index:03d}/{len(cases):03d}] "
-            f"{status_display} "
+            f"{status} "
             f"rank={row['first_relevant_rank'] or '-'} "
             f"intent={row['intent']} "
             f"expected={','.join(case['expected_files'])} top={top_file} "
             f"query={case['query'][:70]}"
         )
-        print(line if row["hit"] else colorize(line, "red", color_enabled))
+        print(colorize(line, "green" if row["hit"] else "red", color_enabled))
     return rows
 
 

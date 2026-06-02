@@ -2,7 +2,7 @@ SHELL := /bin/bash
 
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
-	class guard clarity suff ret eval \
+	class guard clarity suff ret eval lightrag lightrag-pages lightrag-view lightrag-install rag-compare \
 	landing-build landing-up landing-down \
 	rabbitmq-up rabbitmq-down rabbitmq-logs \
 	go-build go-up go-down go-clean \
@@ -35,6 +35,34 @@ SUFF_EVAL_SCRIPT := $(RAG_EVAL_DIR)/sufficiency_eval.py
 SUFF_EVAL_CSV := $(RAG_EVAL_DIR)/sufficiency_mappings.csv
 RET_EVAL_SCRIPT := $(RAG_EVAL_DIR)/retrieval_eval.py
 RET_EVAL_CSV := $(RAG_EVAL_DIR)/query_mappings.csv
+LIGHTRAG_EVAL_SCRIPT := $(RAG_EVAL_DIR)/lightrag_eval.py
+LIGHTRAG_VIEWER_SCRIPT := $(RAG_EVAL_DIR)/lightrag_viewer.py
+LIGHTRAG_REQUIREMENTS := $(RAG_EVAL_DIR)/lightrag_requirements.txt
+RETRIEVAL_COMPARE_SCRIPT := $(RAG_EVAL_DIR)/compare_retrieval_reports.py
+LIGHTRAG_WORK_DIR ?= $(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)/lightrag
+LIGHTRAG_PROVIDER ?= openai
+LIGHTRAG_MODES ?= naive,local,global,hybrid,mix
+LIGHTRAG_REBUILD ?=
+LIGHTRAG_RESET ?=
+LIGHTRAG_INDEX_ONLY ?=
+LIGHTRAG_INDEX_LIMIT ?=
+LIGHTRAG_LLM_MODEL ?=
+LIGHTRAG_EMBED_MODEL ?=
+LIGHTRAG_EMBED_DIM ?=
+LIGHTRAG_OLLAMA_NUM_CTX ?=
+LIGHTRAG_CHUNK_TOKEN_SIZE ?=
+LIGHTRAG_CHUNK_OVERLAP_TOKEN_SIZE ?=
+LIGHTRAG_ENTITY_EXTRACT_MAX_GLEANING ?=
+LIGHTRAG_MAX_EXTRACT_INPUT_TOKENS ?=
+LIGHTRAG_LLM_TIMEOUT ?=
+LIGHTRAG_LLM_MAX_ASYNC ?=
+LIGHTRAG_MAX_PARALLEL_INSERT ?=
+LIGHTRAG_METADATA_RERANK ?= append
+COMPARE_LIMIT ?= 25
+COMPARE_TOP_K ?=
+COMPARE_REFRESH ?=
+COMPARE_RET_REPORT ?= $(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)/retrieval_compare_report.json
+COMPARE_LIGHTRAG_REPORT ?= $(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)/lightrag_compare_report.json
 EVAL_LIMIT ?=
 EVAL_REFRESH ?= 1
 EVAL_EXTRA ?=
@@ -74,6 +102,18 @@ help:
 	@echo "  make suff      # retrieval sufficiency metrics, fresh LLM calls by default"
 	@echo "  make ret       # retrieval metrics over local python/RAG/out artifacts"
 	@echo "  make eval      # run guard, class, clarity, suff, and ret metrics"
+	@echo "  make lightrag  # compare LightRAG modes over local markdown corpus"
+	@echo "  make lightrag LIGHTRAG_REBUILD=1 # resume/recheck missing LightRAG docs"
+	@echo "  make lightrag LIGHTRAG_REBUILD=1 LIGHTRAG_INDEX_ONLY=1 # resume index without eval queries"
+	@echo "  make lightrag LIGHTRAG_RESET=1 # delete LightRAG index and rebuild from scratch"
+	@echo "  make lightrag-pages # enrich existing LightRAG graph with PDF page refs"
+	@echo "  make lightrag-view # open official LightRAG 3D GraphML viewer"
+	@echo "  make lightrag-install # install optional LightRAG eval dependency"
+	@echo "  make rag-compare # compare FAISS retrieval vs LightRAG on first 25 labeled rows"
+	@echo "  make rag-compare COMPARE_REFRESH=1 # refresh FAISS classifier/clarity cache"
+	@echo "  make rag-compare COMPARE_TOP_K=10 # compare with larger retrieval K"
+	@echo "  make lightrag LIGHTRAG_METADATA_RERANK=off # raw LightRAG only, no metadata rerank"
+	@echo "  make lightrag LIGHTRAG_PROVIDER=ollama LIGHTRAG_LLM_MODEL=qwen2.5:14b LIGHTRAG_EMBED_MODEL=nomic-embed-text LIGHTRAG_EMBED_DIM=768"
 	@echo "  make class EVAL_REFRESH=     # reuse cached classification predictions"
 	@echo "  make guard EVAL_REFRESH=     # reuse cached guardrail predictions"
 	@echo "  make clarity EVAL_REFRESH=   # reuse cached clarity predictions"
@@ -190,6 +230,52 @@ ret:
 		$(EVAL_EXTRA)
 
 eval: guard class clarity suff ret
+
+lightrag-install:
+	"$(PYTHON)" -m pip install -r "$(LIGHTRAG_REQUIREMENTS)"
+
+lightrag:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	"$(PYTHON)" "$(LIGHTRAG_EVAL_SCRIPT)" \
+		--csv "$(RET_EVAL_CSV)" \
+		--docs-dir "$(RAG_MARKDOWN_DST_DIR)" \
+		--working-dir "$(LIGHTRAG_WORK_DIR)" \
+		--provider "$(LIGHTRAG_PROVIDER)" \
+		--modes "$(LIGHTRAG_MODES)" \
+		$(if $(EVAL_LIMIT),--limit "$(EVAL_LIMIT)",) \
+		$(if $(LIGHTRAG_INDEX_LIMIT),--index-limit "$(LIGHTRAG_INDEX_LIMIT)",) \
+		$(if $(LIGHTRAG_LLM_MODEL),--llm-model "$(LIGHTRAG_LLM_MODEL)",) \
+		$(if $(LIGHTRAG_EMBED_MODEL),--embed-model "$(LIGHTRAG_EMBED_MODEL)",) \
+		$(if $(LIGHTRAG_EMBED_DIM),--embed-dim "$(LIGHTRAG_EMBED_DIM)",) \
+		$(if $(LIGHTRAG_OLLAMA_NUM_CTX),--ollama-num-ctx "$(LIGHTRAG_OLLAMA_NUM_CTX)",) \
+		$(if $(LIGHTRAG_CHUNK_TOKEN_SIZE),--chunk-token-size "$(LIGHTRAG_CHUNK_TOKEN_SIZE)",) \
+		$(if $(LIGHTRAG_CHUNK_OVERLAP_TOKEN_SIZE),--chunk-overlap-token-size "$(LIGHTRAG_CHUNK_OVERLAP_TOKEN_SIZE)",) \
+		$(if $(LIGHTRAG_ENTITY_EXTRACT_MAX_GLEANING),--entity-extract-max-gleaning "$(LIGHTRAG_ENTITY_EXTRACT_MAX_GLEANING)",) \
+		$(if $(LIGHTRAG_MAX_EXTRACT_INPUT_TOKENS),--max-extract-input-tokens "$(LIGHTRAG_MAX_EXTRACT_INPUT_TOKENS)",) \
+		$(if $(LIGHTRAG_LLM_TIMEOUT),--llm-timeout "$(LIGHTRAG_LLM_TIMEOUT)",) \
+		$(if $(LIGHTRAG_LLM_MAX_ASYNC),--llm-max-async "$(LIGHTRAG_LLM_MAX_ASYNC)",) \
+		$(if $(LIGHTRAG_MAX_PARALLEL_INSERT),--max-parallel-insert "$(LIGHTRAG_MAX_PARALLEL_INSERT)",) \
+		--metadata-rerank "$(LIGHTRAG_METADATA_RERANK)" \
+		$(if $(LIGHTRAG_REBUILD),--rebuild,) \
+		$(if $(LIGHTRAG_RESET),--reset,) \
+		$(if $(LIGHTRAG_INDEX_ONLY),--index-only,) \
+		$(EVAL_EXTRA)
+
+lightrag-pages:
+	"$(PYTHON)" "$(LIGHTRAG_EVAL_SCRIPT)" \
+		--working-dir "$(LIGHTRAG_WORK_DIR)" \
+		--page-refs-only
+
+lightrag-view:
+	"$(PYTHON)" "$(LIGHTRAG_VIEWER_SCRIPT)" \
+		--graph "$(LIGHTRAG_WORK_DIR)/graph_chunk_entity_relation.graphml"
+
+rag-compare:
+	@$(MAKE) --no-print-directory ret EVAL_LIMIT="$(COMPARE_LIMIT)" EVAL_REFRESH="$(COMPARE_REFRESH)" EVAL_EXTRA='$(if $(COMPARE_TOP_K),--top-k "$(COMPARE_TOP_K)",) --output "$(COMPARE_RET_REPORT)"'
+	@$(MAKE) --no-print-directory lightrag EVAL_LIMIT="$(COMPARE_LIMIT)" EVAL_EXTRA='$(if $(COMPARE_TOP_K),--top-k "$(COMPARE_TOP_K)",) --output "$(COMPARE_LIGHTRAG_REPORT)"'
+	@"$(PYTHON)" "$(RETRIEVAL_COMPARE_SCRIPT)" \
+		--retrieval-report "$(COMPARE_RET_REPORT)" \
+		--lightrag-report "$(COMPARE_LIGHTRAG_REPORT)"
 
 # ----------------------------
 # Landing page

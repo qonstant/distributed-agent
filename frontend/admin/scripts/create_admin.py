@@ -55,8 +55,7 @@ ADMIN_TELEGRAM_ID = required_admin_telegram_id()
 
 
 async def save_admin(session, user: User, action: str) -> None:
-    if not user.username:
-        user.username = INITIAL_ADMIN_USERNAME
+    user.username = INITIAL_ADMIN_USERNAME
     user.telegram_id = ADMIN_TELEGRAM_ID
     user.is_admin = True
     user.is_blocked = False

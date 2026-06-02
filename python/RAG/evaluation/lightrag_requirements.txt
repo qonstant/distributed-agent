@@ -1,0 +1,1 @@
+lightrag-hku[tools]>=1.4.16

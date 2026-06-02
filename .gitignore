@@ -127,3 +127,4 @@ __pycache__
 *.docx
 alembic.ini
 alembic/
+*.graphml

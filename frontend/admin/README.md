@@ -70,3 +70,35 @@ need to match the Telegram username stored in the `users` table.
 Keep `ADMIN_BIND_HOST=127.0.0.1` unless you intentionally put the admin panel
 behind a private reverse proxy, VPN, or firewall. Setting it to `0.0.0.0` exposes
 the port on the server network interface.
+
+### LightRAG artifact builds
+
+The admin panel includes `/admin-ui/lightrag` for starting LightRAG artifact
+generation without interrupting the currently active artifacts.
+
+Two build actions are available:
+
+- `Continue Build` runs `LIGHTRAG_BUILD_CONTINUE_COMMAND`, intended to resume an
+  incomplete LightRAG index.
+- `Generate From Beginning` runs `LIGHTRAG_BUILD_FULL_COMMAND`, intended to reset
+  local LightRAG state and rebuild from scratch.
+
+After a successful build, the admin panel uploads every file from
+`LIGHTRAG_WORK_DIR` into the vectors bucket under:
+
+```text
+<LIGHTRAG_S3_PREFIX>/releases/<build_id>/*
+```
+
+Then it updates this pointer:
+
+```text
+<LIGHTRAG_S3_PREFIX>/releases/current
+```
+
+That pointer update is the promotion step. Existing users keep using the previous
+artifacts while the new build is running.
+
+The admin container must be able to run the configured build commands. In
+production, either mount the repository into `LIGHTRAG_REPO_DIR` or set the
+commands to call a separate build runner.

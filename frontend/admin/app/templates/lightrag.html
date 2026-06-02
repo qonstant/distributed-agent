@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}LightRAG Builds{% endblock %}
+{% block topbar_title %}LightRAG Artifact Builds{% endblock %}
+
+{% block content %}
+<section class="hero-panel">
+    <div class="hero-kicker">Knowledge Graph</div>
+    <h1 class="hero-title">Build LightRAG safely, then promote only after success.</h1>
+    <p class="hero-copy">These controls generate LightRAG artifacts in the configured working directory. When the build succeeds, the admin panel uploads a staged S3 release and updates the LightRAG pointer, so active users keep using the previous artifacts until the new build is ready.</p>
+    <div class="hero-actions">
+        <form action="/admin-ui/lightrag/continue" method="post">
+            <button type="submit" class="btn btn-app btn-app-primary" {% if job.status == 'running' %}disabled{% endif %}>
+                Continue Build
+            </button>
+        </form>
+        <form action="/admin-ui/lightrag/start-full" method="post" onsubmit="return confirm('Start a full LightRAG rebuild from scratch? This should reset local LightRAG state before rebuilding.');">
+            <button type="submit" class="btn btn-tonal danger" {% if job.status == 'running' %}disabled{% endif %}>
+                Generate From Beginning
+            </button>
+        </form>
+    </div>
+</section>
+
+<section class="stat-grid">
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-activity"></i>Status</div>
+        <div class="stat-value">{{ job.status|upper }}</div>
+        <div class="stat-footnote">Current in-process admin build state.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-arrow-repeat"></i>Mode</div>
+        <div class="stat-value">{{ job.mode or '-' }}</div>
+        <div class="stat-footnote">Full rebuild or continue/resume.</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-box-arrow-up"></i>S3 Upload</div>
+        <div class="stat-value">{{ 'ON' if job.config.upload_enabled else 'OFF' }}</div>
+        <div class="stat-footnote">Prefix: {{ job.config.s3_prefix }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label"><i class="bi bi-clock-history"></i>Started</div>
+        <div class="stat-value" style="font-size: 0.95rem; line-height: 1.35;">{{ job.started_at or '-' }}</div>
+        <div class="stat-footnote">UTC timestamp from the admin job.</div>
+    </div>
+</section>
+
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Configuration</h2>
+            <p class="panel-caption">These values come from environment variables inside the admin panel container.</p>
+        </div>
+        <a href="/admin-ui/lightrag" class="btn btn-app btn-app-secondary">Refresh</a>
+    </div>
+
+    <div class="info-list">
+        <div class="info-item">
+            <span>Repo directory</span>
+            <strong>{{ job.config.repo_dir }}</strong>
+        </div>
+        <div class="info-item">
+            <span>LightRAG working directory</span>
+            <strong>{{ job.config.working_dir }}</strong>
+        </div>
+        <div class="info-item">
+            <span>Resolved upload directory</span>
+            <strong>{{ job.config.resolved_working_dir }}</strong>
+        </div>
+        <div class="info-item">
+            <span>Continue command</span>
+            <strong>{{ job.config.continue_command }}</strong>
+        </div>
+        <div class="info-item">
+            <span>Full rebuild command</span>
+            <strong>{{ job.config.full_command }}</strong>
+        </div>
+    </div>
+</section>
+
+{% if job.release %}
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Last Promoted Release</h2>
+            <p class="panel-caption">The S3 pointer was updated only after all files uploaded successfully.</p>
+        </div>
+    </div>
+    <div class="info-list">
+        <div class="info-item">
+            <span>Release prefix</span>
+            <strong>{{ job.release.release_prefix }}</strong>
+        </div>
+        <div class="info-item">
+            <span>Pointer key</span>
+            <strong>{{ job.release.pointer_key }}</strong>
+        </div>
+        <div class="info-item">
+            <span>Uploaded files</span>
+            <strong>{{ job.release.uploaded|length }}</strong>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{% if job.error %}
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Error</h2>
+            <p class="panel-caption">{{ job.error }}</p>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<section class="surface-panel">
+    <div class="panel-heading">
+        <div>
+            <h2 class="panel-title">Build Logs</h2>
+            <p class="panel-caption">Latest 500 lines are kept in memory. If the admin container restarts, this view resets.</p>
+        </div>
+    </div>
+    <pre style="min-height: 18rem; max-height: 34rem; overflow: auto; border-radius: 16px; padding: 1rem; background: var(--surface-muted); color: var(--ink); border: 1px solid var(--border); white-space: pre-wrap;">{% for line in job.logs %}{{ line }}
+{% endfor %}</pre>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+{% if job.status == 'running' %}
+<script>
+    window.setTimeout(function () {
+        window.location.reload();
+    }, 5000);
+</script>
+{% endif %}
+{% endblock %}

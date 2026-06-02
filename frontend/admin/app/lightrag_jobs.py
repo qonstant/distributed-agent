@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
 import threading
@@ -43,7 +44,7 @@ class LightRAGJobManager:
 
     @staticmethod
     def working_dir() -> Path:
-        return Path(os.getenv("LIGHTRAG_WORK_DIR", "python/RAG/out/lightrag"))
+        return Path(os.getenv("LIGHTRAG_WORK_DIR", "/tmp/nomadmit-lightrag-work"))
 
     @classmethod
     def resolved_working_dir(cls) -> Path:
@@ -55,6 +56,11 @@ class LightRAGJobManager:
     @staticmethod
     def upload_enabled() -> bool:
         value = os.getenv("LIGHTRAG_UPLOAD_ENABLED", "true").strip().lower()
+        return value in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def cleanup_enabled() -> bool:
+        value = os.getenv("LIGHTRAG_CLEAN_LOCAL_AFTER_UPLOAD", "true").strip().lower()
         return value in {"1", "true", "yes", "on"}
 
     @staticmethod
@@ -73,6 +79,7 @@ class LightRAGJobManager:
             "working_dir": str(self.working_dir()),
             "resolved_working_dir": str(self.resolved_working_dir()),
             "upload_enabled": self.upload_enabled(),
+            "cleanup_enabled": self.cleanup_enabled(),
             "s3_prefix": os.getenv("LIGHTRAG_S3_PREFIX", "lightrag"),
             "source_prefix": os.getenv("LIGHTRAG_SOURCE_PREFIX", "italy"),
             "markdown_prefix": os.getenv("LIGHTRAG_MARKDOWN_S3_PREFIX", "markdowns"),
@@ -156,6 +163,8 @@ class LightRAGJobManager:
                     "[admin] promoted LightRAG release "
                     f"{release['release_prefix']} via {release['pointer_key']}"
                 )
+                if self.cleanup_enabled():
+                    self._cleanup_working_dir(self.resolved_working_dir())
             else:
                 self._append_log("[admin] upload disabled; leaving artifacts local only")
 
@@ -186,6 +195,12 @@ class LightRAGJobManager:
             if error:
                 self._job.logs.append(f"[admin] error: {error}")
             self._job.logs.append(f"[admin] job {status}")
+
+    def _cleanup_working_dir(self, working_dir: Path) -> None:
+        if not working_dir.exists():
+            return
+        self._append_log(f"[admin] cleanup local LightRAG scratch dir {working_dir}")
+        shutil.rmtree(working_dir, ignore_errors=True)
 
     @staticmethod
     def _now() -> str:

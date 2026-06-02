@@ -76,11 +76,11 @@ the port on the server network interface.
 The admin panel includes `/admin-ui/lightrag` for starting LightRAG artifact
 generation without interrupting the currently active artifacts. The build flow is:
 
-1. Download source PDFs/docs from `LIGHTRAG_SOURCE_PREFIX` in the vectors bucket.
+1. Download source PDFs/docs from `LIGHTRAG_SOURCE_PREFIX` in `S3_BUCKET`.
 2. Convert them to markdown in a temporary build directory.
-3. Upload generated markdowns to `LIGHTRAG_MARKDOWN_S3_PREFIX`.
-4. Generate LightRAG artifacts.
-5. Upload LightRAG artifacts to a staged release and update the LightRAG pointer.
+3. Upload generated markdowns to `LIGHTRAG_MARKDOWN_S3_PREFIX` in `S3_BUCKET_VECTORS`.
+4. Generate LightRAG artifacts in a temporary local scratch directory.
+5. Upload LightRAG artifacts to a staged release in `S3_BUCKET_VECTORS` and update the LightRAG pointer.
 
 Two build actions are available:
 
@@ -104,6 +104,11 @@ Then it updates this pointer:
 
 That pointer update is the promotion step. Existing users keep using the previous
 artifacts while the new build is running.
+
+`LIGHTRAG_WORK_DIR` is only build scratch because LightRAG needs a filesystem
+while it generates the graph. By default it uses `/tmp/nomadmit-lightrag-work`
+and is removed after a successful S3 upload when
+`LIGHTRAG_CLEAN_LOCAL_AFTER_UPLOAD=true`.
 
 The admin container must be able to run the configured build commands. In
 production, either mount the repository into `LIGHTRAG_REPO_DIR` or set the

@@ -40,6 +40,9 @@ def _build_s3_client() -> tuple[Any, str]:
     if not endpoint.startswith(("http://", "https://")):
         endpoint = f"{'https' if use_ssl else 'http'}://{endpoint}"
 
+    print(f"[lightrag-upload] S3 endpoint: {endpoint}", flush=True)
+    print(f"[lightrag-upload] S3 bucket: {bucket}", flush=True)
+
     client = boto3.client(
         "s3",
         endpoint_url=endpoint,

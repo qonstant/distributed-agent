@@ -20,7 +20,7 @@ RAG_DIR = Path(__file__).resolve().parent
 REPO_ROOT = RAG_DIR.parents[1]
 MARKDOWN_TOOL = RAG_DIR / "markdown" / "markdown.py"
 LIGHTRAG_EVAL = RAG_DIR / "evaluation" / "lightrag_eval.py"
-DEFAULT_WORKING_DIR = RAG_DIR / "out" / "lightrag"
+DEFAULT_WORKING_DIR = Path(tempfile.gettempdir()) / "nomadmit-lightrag-work"
 SUPPORTED_SOURCE_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 
 
@@ -31,20 +31,25 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def build_s3_client() -> tuple[Any, str]:
+def build_s3_client() -> tuple[Any, str, str]:
     endpoint = os.getenv("S3_ENDPOINT", "").strip()
-    bucket = os.getenv("S3_BUCKET_VECTORS", "").strip()
+    vectors_bucket = os.getenv("S3_BUCKET_VECTORS", "").strip()
+    docs_bucket = (os.getenv("S3_BUCKET") or vectors_bucket).strip()
     access_key = (os.getenv("S3_ACCESS_KEY_ID") or os.getenv("S3_ACCESS_KEY") or "").strip()
     secret_key = (os.getenv("S3_SECRET_ACCESS_KEY") or os.getenv("S3_SECRET") or "").strip()
     use_ssl = env_bool("S3_USE_SSL", default=False)
     verify_raw = os.getenv("S3_VERIFY", "").strip().lower()
     verify = False if verify_raw in {"0", "false", "no"} else use_ssl
 
-    if not endpoint or not bucket or not access_key or not secret_key:
+    if not endpoint or not vectors_bucket or not docs_bucket or not access_key or not secret_key:
         raise RuntimeError("S3_ENDPOINT, S3_BUCKET_VECTORS, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required")
 
     if not endpoint.startswith(("http://", "https://")):
         endpoint = f"{'https' if use_ssl else 'http'}://{endpoint}"
+
+    print(f"[lightrag-s3] S3 endpoint: {endpoint}", flush=True)
+    print(f"[lightrag-s3] S3 docs bucket: {docs_bucket}", flush=True)
+    print(f"[lightrag-s3] S3 vectors bucket: {vectors_bucket}", flush=True)
 
     client = boto3.client(
         "s3",
@@ -54,7 +59,7 @@ def build_s3_client() -> tuple[Any, str]:
         config=BotoConfig(signature_version="s3v4"),
         verify=verify,
     )
-    return client, bucket
+    return client, docs_bucket, vectors_bucket
 
 
 def list_source_keys(s3: Any, bucket: str, prefix: str) -> list[str]:
@@ -174,22 +179,23 @@ def main() -> None:
         print(f"[lightrag-s3] temp root: {temp_root}", flush=True)
         print(f"[lightrag-s3] source prefix: {args.source_prefix}", flush=True)
         print(f"[lightrag-s3] markdown S3 prefix: {args.markdown_prefix}", flush=True)
-        print(f"[lightrag-s3] LightRAG working dir: {working_dir}", flush=True)
+        print(f"[lightrag-s3] LightRAG scratch dir: {working_dir}", flush=True)
+        print("[lightrag-s3] persistent inputs/outputs stay in S3; local paths are temporary build scratch", flush=True)
         if args.mode == "full":
             clean_for_full(working_dir)
 
         source_dir.mkdir(parents=True, exist_ok=True)
         markdown_dir.mkdir(parents=True, exist_ok=True)
 
-        s3, bucket = build_s3_client()
-        source_keys = list_source_keys(s3, bucket, args.source_prefix)
+        s3, docs_bucket, vectors_bucket = build_s3_client()
+        source_keys = list_source_keys(s3, docs_bucket, args.source_prefix)
         if not source_keys:
-            raise RuntimeError(f"no source documents found in s3://{bucket}/{args.source_prefix.strip('/')}/")
+            raise RuntimeError(f"no source documents found in s3://{docs_bucket}/{args.source_prefix.strip('/')}/")
         print(f"[lightrag-s3] found {len(source_keys)} source document(s)", flush=True)
 
         download_sources(
             s3,
-            bucket,
+            docs_bucket,
             source_keys,
             source_prefix=args.source_prefix,
             source_dir=source_dir,
@@ -209,7 +215,7 @@ def main() -> None:
             cwd=REPO_ROOT,
         )
         print(f"[lightrag-s3] created {count_markdowns(markdown_dir)} markdown file(s)", flush=True)
-        upload_markdowns(s3, bucket, markdown_dir, args.markdown_prefix)
+        upload_markdowns(s3, vectors_bucket, markdown_dir, args.markdown_prefix)
 
         print("[lightrag-s3] starting LightRAG indexing from generated markdowns", flush=True)
         lightrag_args = [

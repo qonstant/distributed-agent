@@ -102,3 +102,7 @@ artifacts while the new build is running.
 The admin container must be able to run the configured build commands. In
 production, either mount the repository into `LIGHTRAG_REPO_DIR` or set the
 commands to call a separate build runner.
+
+The Docker image installs LightRAG into `/opt/lightrag-venv` instead of the admin
+app environment. This avoids mixing LightRAG's Pydantic v2 dependencies with the
+admin app's Pydantic v1 runtime.

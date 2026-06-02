@@ -12,6 +12,12 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Keep graph-build dependencies isolated because LightRAG currently pulls
+# Pydantic v2, while the admin app still runs on Pydantic v1.
+RUN python -m venv /opt/lightrag-venv && \
+    /opt/lightrag-venv/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/lightrag-venv/bin/pip install --no-cache-dir "lightrag-hku>=1.4.16" python-dotenv
+
 # Copy the entire project
 COPY . .
 

@@ -3,6 +3,7 @@ SHELL := /bin/bash
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
 	class guard clarity suff ret eval lightrag lightrag-pages lightrag-view lightrag-install rag-compare \
+	lightrag-s3-full lightrag-s3-continue \
 	landing-build landing-up landing-down \
 	rabbitmq-up rabbitmq-down rabbitmq-logs \
 	go-build go-up go-down go-clean \
@@ -38,6 +39,7 @@ RET_EVAL_CSV := $(RAG_EVAL_DIR)/query_mappings.csv
 LIGHTRAG_EVAL_SCRIPT := $(RAG_EVAL_DIR)/lightrag_eval.py
 LIGHTRAG_VIEWER_SCRIPT := $(RAG_EVAL_DIR)/lightrag_viewer.py
 LIGHTRAG_REQUIREMENTS := $(RAG_EVAL_DIR)/lightrag_requirements.txt
+LIGHTRAG_S3_PIPELINE_SCRIPT := $(RAG_LEGACY_DIR)/lightrag_s3_pipeline.py
 RETRIEVAL_COMPARE_SCRIPT := $(RAG_EVAL_DIR)/compare_retrieval_reports.py
 LIGHTRAG_WORK_DIR ?= $(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)/lightrag
 LIGHTRAG_PROVIDER ?= openai
@@ -107,6 +109,8 @@ help:
 	@echo "  make lightrag LIGHTRAG_REBUILD=1 LIGHTRAG_INDEX_ONLY=1 # resume index without eval queries"
 	@echo "  make lightrag LIGHTRAG_RESET=1 # delete LightRAG index and rebuild from scratch"
 	@echo "  make lightrag-pages # enrich existing LightRAG graph with PDF page refs"
+	@echo "  make lightrag-s3-full # download S3 docs, regenerate markdown, rebuild LightRAG"
+	@echo "  make lightrag-s3-continue # download S3 docs, resume markdown/LightRAG build"
 	@echo "  make lightrag-view # open official LightRAG 3D GraphML viewer"
 	@echo "  make lightrag-install # install optional LightRAG eval dependency"
 	@echo "  make rag-compare # compare FAISS retrieval vs LightRAG on first 25 labeled rows"
@@ -265,6 +269,12 @@ lightrag-pages:
 	"$(PYTHON)" "$(LIGHTRAG_EVAL_SCRIPT)" \
 		--working-dir "$(LIGHTRAG_WORK_DIR)" \
 		--page-refs-only
+
+lightrag-s3-full:
+	"$(PYTHON)" "$(LIGHTRAG_S3_PIPELINE_SCRIPT)" --mode full
+
+lightrag-s3-continue:
+	"$(PYTHON)" "$(LIGHTRAG_S3_PIPELINE_SCRIPT)" --mode continue
 
 lightrag-view:
 	"$(PYTHON)" "$(LIGHTRAG_VIEWER_SCRIPT)" \

@@ -74,14 +74,20 @@ the port on the server network interface.
 ### LightRAG artifact builds
 
 The admin panel includes `/admin-ui/lightrag` for starting LightRAG artifact
-generation without interrupting the currently active artifacts.
+generation without interrupting the currently active artifacts. The build flow is:
+
+1. Download source PDFs/docs from `LIGHTRAG_SOURCE_PREFIX` in the vectors bucket.
+2. Convert them to markdown under `python/RAG/markdown/docs_md`.
+3. Upload generated markdowns to `LIGHTRAG_MARKDOWN_S3_PREFIX`.
+4. Generate LightRAG artifacts.
+5. Upload LightRAG artifacts to a staged release and update the LightRAG pointer.
 
 Two build actions are available:
 
-- `Continue Build` runs `LIGHTRAG_BUILD_CONTINUE_COMMAND`, intended to resume an
-  incomplete LightRAG index.
+- `Continue Build` runs `LIGHTRAG_BUILD_CONTINUE_COMMAND`, intended to reuse
+  existing local state and resume an incomplete LightRAG index.
 - `Generate From Beginning` runs `LIGHTRAG_BUILD_FULL_COMMAND`, intended to reset
-  local LightRAG state and rebuild from scratch.
+  local source, markdown, and LightRAG state and rebuild from scratch.
 
 After a successful build, the admin panel uploads every file from
 `LIGHTRAG_WORK_DIR` into the vectors bucket under:

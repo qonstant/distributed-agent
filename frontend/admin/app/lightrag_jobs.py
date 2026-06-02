@@ -57,11 +57,11 @@ class LightRAGJobManager:
 
     @staticmethod
     def full_command() -> str:
-        return os.getenv("LIGHTRAG_BUILD_FULL_COMMAND", "make lightrag LIGHTRAG_RESET=1 LIGHTRAG_INDEX_ONLY=1")
+        return os.getenv("LIGHTRAG_BUILD_FULL_COMMAND", "make lightrag-s3-full PYTHON=/opt/lightrag-venv/bin/python")
 
     @staticmethod
     def continue_command() -> str:
-        return os.getenv("LIGHTRAG_BUILD_CONTINUE_COMMAND", "make lightrag LIGHTRAG_REBUILD=1 LIGHTRAG_INDEX_ONLY=1")
+        return os.getenv("LIGHTRAG_BUILD_CONTINUE_COMMAND", "make lightrag-s3-continue PYTHON=/opt/lightrag-venv/bin/python")
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -72,6 +72,8 @@ class LightRAGJobManager:
             "resolved_working_dir": str(self.resolved_working_dir()),
             "upload_enabled": self.upload_enabled(),
             "s3_prefix": os.getenv("LIGHTRAG_S3_PREFIX", "lightrag"),
+            "source_prefix": os.getenv("LIGHTRAG_SOURCE_PREFIX", "italy"),
+            "markdown_prefix": os.getenv("LIGHTRAG_MARKDOWN_S3_PREFIX", "markdowns"),
             "full_command": self.full_command(),
             "continue_command": self.continue_command(),
         }

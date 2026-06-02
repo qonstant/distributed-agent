@@ -7,7 +7,7 @@
 <section class="hero-panel">
     <div class="hero-kicker">Knowledge Graph</div>
     <h1 class="hero-title">Build LightRAG safely, then promote only after success.</h1>
-    <p class="hero-copy">These controls generate LightRAG artifacts in the configured working directory. When the build succeeds, the admin panel uploads a staged S3 release and updates the LightRAG pointer, so active users keep using the previous artifacts until the new build is ready.</p>
+    <p class="hero-copy">These controls download source PDFs/docs from S3, convert them to markdown, upload the markdowns, then generate LightRAG artifacts. When the build succeeds, the admin panel uploads a staged S3 release and updates the LightRAG pointer, so active users keep using the previous artifacts until the new build is ready.</p>
     <div class="hero-actions">
         <form action="/admin-ui/lightrag/continue" method="post">
             <button type="submit" class="btn btn-app btn-app-primary" {% if job.status == 'running' %}disabled{% endif %}>
@@ -36,7 +36,7 @@
     <div class="stat-card">
         <div class="stat-label"><i class="bi bi-box-arrow-up"></i>S3 Upload</div>
         <div class="stat-value">{{ 'ON' if job.config.upload_enabled else 'OFF' }}</div>
-        <div class="stat-footnote">Prefix: {{ job.config.s3_prefix }}</div>
+        <div class="stat-footnote">Artifacts: {{ job.config.s3_prefix }}</div>
     </div>
     <div class="stat-card">
         <div class="stat-label"><i class="bi bi-clock-history"></i>Started</div>
@@ -66,6 +66,14 @@
         <div class="info-item">
             <span>Resolved upload directory</span>
             <strong>{{ job.config.resolved_working_dir }}</strong>
+        </div>
+        <div class="info-item">
+            <span>Source docs S3 prefix</span>
+            <strong>{{ job.config.source_prefix }}</strong>
+        </div>
+        <div class="info-item">
+            <span>Markdown S3 prefix</span>
+            <strong>{{ job.config.markdown_prefix }}</strong>
         </div>
         <div class="info-item">
             <span>Continue command</span>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import threading
 from dataclasses import asdict, dataclass, field
@@ -34,6 +35,7 @@ class LightRAGJobManager:
         self._lock = threading.Lock()
         self._job = LightRAGJob()
         self._thread: threading.Thread | None = None
+        self._process: subprocess.Popen[str] | None = None
 
     @staticmethod
     def repo_dir() -> Path:
@@ -97,10 +99,28 @@ class LightRAGJobManager:
             self._thread.start()
             return True
 
+    def stop(self) -> bool:
+        with self._lock:
+            process = self._process
+            if self._job.status != "running" or process is None:
+                return False
+            self._job.logs.append("[admin] stop requested")
+
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return False
+        except Exception as exc:
+            self._append_log(f"[admin] stop failed: {exc}")
+            return False
+        return True
+
     def _run_job(self, command: str, cwd: str) -> None:
         try:
             self._append_log(f"[admin] cwd={cwd}")
             self._append_log(f"[admin] command={command}")
+            env = os.environ.copy()
+            env.setdefault("PYTHONUNBUFFERED", "1")
             process = subprocess.Popen(
                 command,
                 cwd=cwd if Path(cwd).exists() else None,
@@ -109,12 +129,21 @@ class LightRAGJobManager:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                env=env,
+                start_new_session=True,
             )
+            with self._lock:
+                self._process = process
             assert process.stdout is not None
             for line in process.stdout:
                 self._append_log(line.rstrip())
             returncode = process.wait()
+            with self._lock:
+                self._process = None
             self._set_returncode(returncode)
+            if returncode == -signal.SIGTERM:
+                self._finish("failed", error="build stopped by admin")
+                return
             if returncode != 0:
                 self._finish("failed", error=f"build command exited with code {returncode}")
                 return
@@ -132,6 +161,8 @@ class LightRAGJobManager:
 
             self._finish("succeeded")
         except Exception as exc:
+            with self._lock:
+                self._process = None
             self._finish("failed", error=str(exc))
 
     def _append_log(self, line: str) -> None:

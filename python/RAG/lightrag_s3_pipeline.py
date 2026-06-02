@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -19,8 +20,6 @@ RAG_DIR = Path(__file__).resolve().parent
 REPO_ROOT = RAG_DIR.parents[1]
 MARKDOWN_TOOL = RAG_DIR / "markdown" / "markdown.py"
 LIGHTRAG_EVAL = RAG_DIR / "evaluation" / "lightrag_eval.py"
-DEFAULT_SOURCE_DIR = RAG_DIR / "docx2pdf" / "output"
-DEFAULT_MARKDOWN_DIR = RAG_DIR / "markdown" / "docs_md"
 DEFAULT_WORKING_DIR = RAG_DIR / "out" / "lightrag"
 SUPPORTED_SOURCE_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
 
@@ -105,7 +104,9 @@ def upload_markdowns(s3: Any, bucket: str, markdown_dir: Path, prefix: str) -> d
 
     root_prefix = prefix.strip().strip("/")
     uploaded: list[str] = []
-    for path in sorted(markdown_dir.rglob("*.md")):
+    markdown_files = sorted(markdown_dir.rglob("*.md"))
+    print(f"[lightrag-s3] uploading {len(markdown_files)} markdown file(s) to prefix {root_prefix}", flush=True)
+    for path in markdown_files:
         rel = path.relative_to(markdown_dir).as_posix()
         key = f"{root_prefix}/{rel}" if root_prefix else rel
         print(f"[lightrag-s3] upload markdown {path} -> s3://{bucket}/{key}", flush=True)
@@ -134,11 +135,21 @@ def run_command(args: list[str], cwd: Path) -> None:
     subprocess.run(args, cwd=str(cwd), check=True)
 
 
-def clean_for_full(source_dir: Path, markdown_dir: Path, working_dir: Path) -> None:
-    for path in (source_dir, markdown_dir, working_dir):
+def count_markdowns(markdown_dir: Path) -> int:
+    return sum(1 for _path in markdown_dir.rglob("*.md")) if markdown_dir.exists() else 0
+
+
+def clean_for_full(working_dir: Path) -> None:
+    for path in (working_dir,):
         if path.exists():
             print(f"[lightrag-s3] remove {path}", flush=True)
             shutil.rmtree(path)
+
+
+def remove_temp_dir(path: Path) -> None:
+    if path.exists():
+        print(f"[lightrag-s3] cleanup temp {path}", flush=True)
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def main() -> None:
@@ -146,67 +157,78 @@ def main() -> None:
     parser.add_argument("--mode", choices=("full", "continue"), default=os.getenv("LIGHTRAG_PIPELINE_MODE", "continue"))
     parser.add_argument("--source-prefix", default=os.getenv("LIGHTRAG_SOURCE_PREFIX", "italy"))
     parser.add_argument("--markdown-prefix", default=os.getenv("LIGHTRAG_MARKDOWN_S3_PREFIX", "markdowns"))
-    parser.add_argument("--source-dir", default=os.getenv("LIGHTRAG_SOURCE_DIR", str(DEFAULT_SOURCE_DIR)))
-    parser.add_argument("--markdown-dir", default=os.getenv("LIGHTRAG_MARKDOWN_DIR", str(DEFAULT_MARKDOWN_DIR)))
+    parser.add_argument("--source-dir", default=os.getenv("LIGHTRAG_SOURCE_DIR", ""))
+    parser.add_argument("--markdown-dir", default=os.getenv("LIGHTRAG_MARKDOWN_DIR", ""))
     parser.add_argument("--working-dir", default=os.getenv("LIGHTRAG_WORK_DIR", str(DEFAULT_WORKING_DIR)))
     parser.add_argument("--doc-prefix", default=os.getenv("RAG_DOC_PREFIX", os.getenv("LIGHTRAG_DOC_PREFIX", "italy")))
     parser.add_argument("--strip-source-prefix", action="store_true", default=env_bool("LIGHTRAG_STRIP_SOURCE_PREFIX", True))
     parser.add_argument("--no-strip-source-prefix", action="store_false", dest="strip_source_prefix")
     args = parser.parse_args()
 
-    source_dir = Path(args.source_dir)
-    markdown_dir = Path(args.markdown_dir)
+    temp_root = Path(tempfile.mkdtemp(prefix="nomadmit-lightrag-"))
+    source_dir = Path(args.source_dir) if args.source_dir else temp_root / "source_docs"
+    markdown_dir = Path(args.markdown_dir) if args.markdown_dir else temp_root / "markdowns"
     working_dir = Path(args.working_dir)
 
-    if args.mode == "full":
-        clean_for_full(source_dir, markdown_dir, working_dir)
+    try:
+        print(f"[lightrag-s3] temp root: {temp_root}", flush=True)
+        print(f"[lightrag-s3] source prefix: {args.source_prefix}", flush=True)
+        print(f"[lightrag-s3] markdown S3 prefix: {args.markdown_prefix}", flush=True)
+        print(f"[lightrag-s3] LightRAG working dir: {working_dir}", flush=True)
+        if args.mode == "full":
+            clean_for_full(working_dir)
 
-    source_dir.mkdir(parents=True, exist_ok=True)
-    markdown_dir.mkdir(parents=True, exist_ok=True)
+        source_dir.mkdir(parents=True, exist_ok=True)
+        markdown_dir.mkdir(parents=True, exist_ok=True)
 
-    s3, bucket = build_s3_client()
-    source_keys = list_source_keys(s3, bucket, args.source_prefix)
-    if not source_keys:
-        raise RuntimeError(f"no source documents found in s3://{bucket}/{args.source_prefix.strip('/')}/")
-    print(f"[lightrag-s3] found {len(source_keys)} source document(s)", flush=True)
+        s3, bucket = build_s3_client()
+        source_keys = list_source_keys(s3, bucket, args.source_prefix)
+        if not source_keys:
+            raise RuntimeError(f"no source documents found in s3://{bucket}/{args.source_prefix.strip('/')}/")
+        print(f"[lightrag-s3] found {len(source_keys)} source document(s)", flush=True)
 
-    download_sources(
-        s3,
-        bucket,
-        source_keys,
-        source_prefix=args.source_prefix,
-        source_dir=source_dir,
-        strip_prefix=args.strip_source_prefix,
-    )
+        download_sources(
+            s3,
+            bucket,
+            source_keys,
+            source_prefix=args.source_prefix,
+            source_dir=source_dir,
+            strip_prefix=args.strip_source_prefix,
+        )
 
-    run_command(
-        [
+        run_command(
+            [
+                sys.executable,
+                str(MARKDOWN_TOOL),
+                str(source_dir),
+                "-o",
+                str(markdown_dir),
+                "-d",
+                args.doc_prefix,
+            ],
+            cwd=REPO_ROOT,
+        )
+        print(f"[lightrag-s3] created {count_markdowns(markdown_dir)} markdown file(s)", flush=True)
+        upload_markdowns(s3, bucket, markdown_dir, args.markdown_prefix)
+
+        print("[lightrag-s3] starting LightRAG indexing from generated markdowns", flush=True)
+        lightrag_args = [
             sys.executable,
-            str(MARKDOWN_TOOL),
-            str(source_dir),
-            "-o",
+            str(LIGHTRAG_EVAL),
+            "--docs-dir",
             str(markdown_dir),
-            "-d",
-            args.doc_prefix,
-        ],
-        cwd=REPO_ROOT,
-    )
-    upload_markdowns(s3, bucket, markdown_dir, args.markdown_prefix)
-
-    lightrag_args = [
-        sys.executable,
-        str(LIGHTRAG_EVAL),
-        "--docs-dir",
-        str(markdown_dir),
-        "--working-dir",
-        str(working_dir),
-        "--index-only",
-    ]
-    if args.mode == "full":
-        lightrag_args.append("--reset")
-    else:
-        lightrag_args.append("--rebuild")
-    run_command(lightrag_args, cwd=REPO_ROOT)
+            "--working-dir",
+            str(working_dir),
+            "--index-only",
+        ]
+        if args.mode == "full":
+            lightrag_args.append("--reset")
+        else:
+            lightrag_args.append("--rebuild")
+        run_command(lightrag_args, cwd=REPO_ROOT)
+    finally:
+        if not args.source_dir and not args.markdown_dir:
+            remove_temp_dir(temp_root)
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ services:
       - ADMIN_COOKIE_SECURE=${ADMIN_COOKIE_SECURE:-false}
       - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-*}
       - LIGHTRAG_REPO_DIR=${LIGHTRAG_REPO_DIR:-/workspace/distributed-agent}
-      - LIGHTRAG_WORK_DIR=${LIGHTRAG_WORK_DIR:-python/RAG/out/lightrag}
+      - LIGHTRAG_WORK_DIR=${LIGHTRAG_WORK_DIR:-/workspace/distributed-agent/python/RAG/out/lightrag}
       - LIGHTRAG_BUILD_FULL_COMMAND=${LIGHTRAG_BUILD_FULL_COMMAND:-make lightrag-s3-full PYTHON=/opt/lightrag-venv/bin/python}
       - LIGHTRAG_BUILD_CONTINUE_COMMAND=${LIGHTRAG_BUILD_CONTINUE_COMMAND:-make lightrag-s3-continue PYTHON=/opt/lightrag-venv/bin/python}
       - LIGHTRAG_UPLOAD_ENABLED=${LIGHTRAG_UPLOAD_ENABLED:-true}

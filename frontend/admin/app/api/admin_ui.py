@@ -352,6 +352,18 @@ async def continue_lightrag_build(
     return RedirectResponse("/admin-ui/lightrag", status_code=HTTP_302_FOUND)
 
 
+@router.post("/lightrag/stop")
+async def stop_lightrag_build(
+    request: Request,
+    admin_user=Depends(get_current_admin_user),
+):
+    if not admin_user:
+        return RedirectResponse("/admin-ui/login", status_code=HTTP_302_FOUND)
+
+    lightrag_jobs.stop()
+    return RedirectResponse("/admin-ui/lightrag", status_code=HTTP_302_FOUND)
+
+
 @router.post("/grant/{telegram_id}")
 async def grant_user(
     request: Request,

@@ -271,10 +271,10 @@ lightrag-pages:
 		--page-refs-only
 
 lightrag-s3-full:
-	"$(PYTHON)" "$(LIGHTRAG_S3_PIPELINE_SCRIPT)" --mode full
+	"$(PYTHON)" -u "$(LIGHTRAG_S3_PIPELINE_SCRIPT)" --mode full
 
 lightrag-s3-continue:
-	"$(PYTHON)" "$(LIGHTRAG_S3_PIPELINE_SCRIPT)" --mode continue
+	"$(PYTHON)" -u "$(LIGHTRAG_S3_PIPELINE_SCRIPT)" --mode continue
 
 lightrag-view:
 	"$(PYTHON)" "$(LIGHTRAG_VIEWER_SCRIPT)" \

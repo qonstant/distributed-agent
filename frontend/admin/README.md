@@ -77,7 +77,7 @@ The admin panel includes `/admin-ui/lightrag` for starting LightRAG artifact
 generation without interrupting the currently active artifacts. The build flow is:
 
 1. Download source PDFs/docs from `LIGHTRAG_SOURCE_PREFIX` in the vectors bucket.
-2. Convert them to markdown under `python/RAG/markdown/docs_md`.
+2. Convert them to markdown in a temporary build directory.
 3. Upload generated markdowns to `LIGHTRAG_MARKDOWN_S3_PREFIX`.
 4. Generate LightRAG artifacts.
 5. Upload LightRAG artifacts to a staged release and update the LightRAG pointer.

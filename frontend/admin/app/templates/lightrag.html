@@ -19,6 +19,13 @@
                 Generate From Beginning
             </button>
         </form>
+        {% if job.status == 'running' %}
+        <form action="/admin-ui/lightrag/stop" method="post" onsubmit="return confirm('Stop the current LightRAG build?');">
+            <button type="submit" class="btn btn-app btn-app-secondary">
+                Stop Build
+            </button>
+        </form>
+        {% endif %}
     </div>
 </section>
 

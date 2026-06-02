@@ -1,4 +1,4 @@
-fastapi>=0.95.0
+fastapi>=0.95.0,<0.120.0
 uvicorn[standard]
 SQLAlchemy>=2.0
 asyncpg

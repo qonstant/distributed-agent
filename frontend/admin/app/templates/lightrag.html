@@ -79,6 +79,18 @@
             <strong>{{ job.config.source_prefix }}</strong>
         </div>
         <div class="info-item">
+            <span>S3 endpoint</span>
+            <strong>{{ job.config.s3_endpoint or '-' }}</strong>
+        </div>
+        <div class="info-item">
+            <span>Source docs bucket</span>
+            <strong>{{ job.config.s3_docs_bucket or '-' }}</strong>
+        </div>
+        <div class="info-item">
+            <span>Artifacts bucket</span>
+            <strong>{{ job.config.s3_vectors_bucket or '-' }}</strong>
+        </div>
+        <div class="info-item">
             <span>Markdown S3 prefix</span>
             <strong>{{ job.config.markdown_prefix }}</strong>
         </div>

@@ -42,7 +42,10 @@ def build_s3_client() -> tuple[Any, str, str]:
     verify = False if verify_raw in {"0", "false", "no"} else use_ssl
 
     if not endpoint or not vectors_bucket or not docs_bucket or not access_key or not secret_key:
-        raise RuntimeError("S3_ENDPOINT, S3_BUCKET_VECTORS, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required")
+        raise RuntimeError(
+            "S3_ENDPOINT, S3_BUCKET, S3_BUCKET_VECTORS, "
+            "S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY are required"
+        )
 
     if not endpoint.startswith(("http://", "https://")):
         endpoint = f"{'https' if use_ssl else 'http'}://{endpoint}"

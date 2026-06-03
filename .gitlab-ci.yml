@@ -642,6 +642,7 @@ deploy-admin-prod:
     - docker-compose up -d --no-build web
     - sleep 3
     - 'docker logs "${ADMIN_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${ADMIN_CONTAINER_NAME}" sh -lc ''echo "[admin] S3_ENDPOINT=$S3_ENDPOINT S3_BUCKET=$S3_BUCKET S3_BUCKET_VECTORS=$S3_BUCKET_VECTORS"'' || true'
     - 'docker exec "${ADMIN_CONTAINER_NAME}" python -c "import urllib.request; print(urllib.request.urlopen(''http://127.0.0.1:8000/health'', timeout=3).read().decode())" || true'
     - docker image prune -a -f --filter "label=app=admin-panel" --filter "until=168h" || true
     - 'shred -u .env || rm -f .env || true'
@@ -697,6 +698,7 @@ deploy-admin-test:
     - docker-compose up -d --no-build web
     - sleep 3
     - 'docker logs "${ADMIN_CONTAINER_NAME}" --tail 30 || true'
+    - 'docker exec "${ADMIN_CONTAINER_NAME}" sh -lc ''echo "[admin] S3_ENDPOINT=$S3_ENDPOINT S3_BUCKET=$S3_BUCKET S3_BUCKET_VECTORS=$S3_BUCKET_VECTORS"'' || true'
     - 'docker exec "${ADMIN_CONTAINER_NAME}" python -c "import urllib.request; print(urllib.request.urlopen(''http://127.0.0.1:8000/health'', timeout=3).read().decode())" || true'
     - docker image prune -a -f --filter "label=app=admin-panel" --filter "until=168h" || true
     - 'shred -u .env || rm -f .env || true'

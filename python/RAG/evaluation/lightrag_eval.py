@@ -1050,19 +1050,6 @@ async def run(args: argparse.Namespace) -> None:
         print(f"[lightrag] index limit active: {len(docs)} document(s)", flush=True)
     source_files = sorted({doc.source_file for doc in docs})
     source_metadata = source_metadata_by_file(docs)
-    sibling_by_canonical_language = sibling_files_by_canonical_language(source_metadata)
-    loaded_cases, skipped_no_file = load_cases(Path(args.csv))
-    corpus_files = set(source_files)
-    cases: List[Dict[str, Any]] = []
-    skipped: List[Dict[str, Any]] = list(skipped_no_file)
-    for case in loaded_cases:
-        expected_files = [source_file for source_file in case["expected_files"] if source_file in corpus_files]
-        if expected_files:
-            cases.append({**case, "expected_files": expected_files})
-        else:
-            skipped.append({"query": case["query"], "reason": "expected file missing from markdown corpus"})
-    if args.limit and args.limit > 0:
-        cases = cases[: args.limit]
 
     working_dir = Path(args.working_dir)
     if args.page_refs_only:
@@ -1089,6 +1076,20 @@ async def run(args: argparse.Namespace) -> None:
         if args.index_only:
             print("[lightrag] index-only mode: skipping retrieval evaluation")
             return
+
+        sibling_by_canonical_language = sibling_files_by_canonical_language(source_metadata)
+        loaded_cases, skipped_no_file = load_cases(Path(args.csv))
+        corpus_files = set(source_files)
+        cases: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = list(skipped_no_file)
+        for case in loaded_cases:
+            expected_files = [source_file for source_file in case["expected_files"] if source_file in corpus_files]
+            if expected_files:
+                cases.append({**case, "expected_files": expected_files})
+            else:
+                skipped.append({"query": case["query"], "reason": "expected file missing from markdown corpus"})
+        if args.limit and args.limit > 0:
+            cases = cases[: args.limit]
 
         rows_by_mode: Dict[str, List[Dict[str, Any]]] = {}
         summaries: Dict[str, Dict[str, Any]] = {}

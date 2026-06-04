@@ -142,6 +142,10 @@ deploy-rag-prod:
     - 'printf "S3_USE_SSL=%s\n" "${S3_USE_SSL}" >> .env'
     - 'printf "S3_VERIFY=%s\n" "${S3_VERIFY}" >> .env'
     - 'printf "RELEASE_PREFIX=%s\n" "${RELEASE_PREFIX}" >> .env'
+    - 'printf "RAG_RETRIEVAL_BACKEND=%s\n" "${RAG_RETRIEVAL_BACKEND:-lightrag}" >> .env'
+    - 'printf "RAG_RETRIEVAL_FALLBACK=%s\n" "${RAG_RETRIEVAL_FALLBACK:-faiss}" >> .env'
+    - 'printf "LIGHTRAG_S3_PREFIX=%s\n" "${LIGHTRAG_S3_PREFIX:-lightrag}" >> .env'
+    - 'printf "LIGHTRAG_QUERY_MODE=%s\n" "${LIGHTRAG_QUERY_MODE:-naive}" >> .env'
     - chmod 600 .env
     - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build
@@ -196,6 +200,10 @@ deploy-rag-test:
     - 'printf "S3_USE_SSL=%s\n" "${S3_USE_SSL_TEST}" >> .env'
     - 'printf "S3_VERIFY=%s\n" "${S3_VERIFY_TEST}" >> .env'
     - 'printf "RELEASE_PREFIX=%s\n" "${RELEASE_PREFIX_TEST}" >> .env'
+    - 'printf "RAG_RETRIEVAL_BACKEND=%s\n" "${RAG_RETRIEVAL_BACKEND_TEST:-lightrag}" >> .env'
+    - 'printf "RAG_RETRIEVAL_FALLBACK=%s\n" "${RAG_RETRIEVAL_FALLBACK_TEST:-faiss}" >> .env'
+    - 'printf "LIGHTRAG_S3_PREFIX=%s\n" "${LIGHTRAG_S3_PREFIX_TEST:-lightrag}" >> .env'
+    - 'printf "LIGHTRAG_QUERY_MODE=%s\n" "${LIGHTRAG_QUERY_MODE_TEST:-naive}" >> .env'
     - chmod 600 .env
     - docker-compose down -v --remove-orphans || true
     - docker-compose up -d --build

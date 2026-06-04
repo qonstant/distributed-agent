@@ -22,6 +22,14 @@ class Settings:
     out_dir: Path
     meta_json_path: Path
     faiss_index_path: Path
+    retrieval_backend: str = "faiss"
+    retrieval_fallback: str = "faiss"
+    lightrag_dir: Path = Path("out/lightrag")
+    lightrag_s3_prefix: str = "lightrag"
+    lightrag_query_mode: str = "naive"
+    lightrag_llm_model: str = "gpt-4o-mini"
+    lightrag_embed_model: str = "text-embedding-3-small"
+    lightrag_embed_dim: int = 1536
     optional_artifacts: List[str] = field(default_factory=list)
     embed_model: str = "text-embedding-3-small"
     llm_model: str = "gpt-4o-mini"
@@ -46,9 +54,15 @@ def load_settings() -> Settings:
 
     out_dir = Path(os.getenv("OUT_DIR", "out"))
     out_dir.mkdir(parents=True, exist_ok=True)
+    lightrag_dir = Path(os.getenv("LIGHTRAG_DIR", str(out_dir / "lightrag")))
 
     llm_model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     class_model = os.getenv("CLASS_MODEL", llm_model)
+    lightrag_embed_dim_raw = os.getenv("LIGHTRAG_EMBED_DIM", "1536")
+    try:
+        lightrag_embed_dim = max(1, int(lightrag_embed_dim_raw))
+    except ValueError:
+        lightrag_embed_dim = 1536
     conversation_max_items_raw = os.getenv("CONVERSATION_MEMORY_MAX_ITEMS", "8")
     try:
         conversation_max_items = max(1, int(conversation_max_items_raw))
@@ -84,6 +98,14 @@ def load_settings() -> Settings:
         out_dir=out_dir,
         meta_json_path=out_dir / "meta.json",
         faiss_index_path=out_dir / "index.faiss",
+        retrieval_backend=os.getenv("RAG_RETRIEVAL_BACKEND", "faiss").strip().lower(),
+        retrieval_fallback=os.getenv("RAG_RETRIEVAL_FALLBACK", "faiss").strip().lower(),
+        lightrag_dir=lightrag_dir,
+        lightrag_s3_prefix=os.getenv("LIGHTRAG_S3_PREFIX", "lightrag").strip().strip("/") or "lightrag",
+        lightrag_query_mode=os.getenv("LIGHTRAG_QUERY_MODE", "naive").strip().lower() or "naive",
+        lightrag_llm_model=os.getenv("LIGHTRAG_LLM_MODEL", llm_model),
+        lightrag_embed_model=os.getenv("LIGHTRAG_EMBED_MODEL", os.getenv("EMBED_MODEL", "text-embedding-3-small")),
+        lightrag_embed_dim=lightrag_embed_dim,
         optional_artifacts=["embeddings.npy", "ids.npy", "chunks.jsonl", "manifest.json", "faq.jsonl"],
         llm_model=llm_model,
         class_model=class_model,

@@ -779,10 +779,13 @@ class QueryService:
                 top_for_llm=top_for_llm or 8,
             )
 
-            try:
-                query_embedding, embedding_usage = self._gateway.embed_text(retrieval_query)
-            except Exception as exc:  # pragma: no cover - exercised through API behavior
-                raise RuntimeError(f"embedding failed: {exc}") from exc
+            query_embedding = None
+            embedding_usage = None
+            if getattr(self._store, "requires_query_embedding", True):
+                try:
+                    query_embedding, embedding_usage = self._gateway.embed_text(retrieval_query)
+                except Exception as exc:  # pragma: no cover - exercised through API behavior
+                    raise RuntimeError(f"embedding failed: {exc}") from exc
 
             try:
                 results = self._store.search(

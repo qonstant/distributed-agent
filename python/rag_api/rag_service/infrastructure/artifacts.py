@@ -6,6 +6,12 @@ from typing import Any, Optional
 from rag_service.infrastructure.config import Settings
 
 REQUIRED_ARTIFACTS = ("meta.json", "index.faiss")
+LIGHTRAG_REQUIRED_ARTIFACTS = (
+    "graph_chunk_entity_relation.graphml",
+    "kv_store_doc_status.json",
+    "kv_store_text_chunks.json",
+    "vdb_chunks.json",
+)
 
 
 def _create_s3_client(settings: Settings) -> Optional[Any]:
@@ -124,8 +130,76 @@ def _download_required_artifacts(s3: Any, settings: Settings, prefix: Optional[s
     return True
 
 
+def _get_lightrag_release_prefix_from_s3(s3: Any, settings: Settings) -> Optional[str]:
+    root_prefix = settings.lightrag_s3_prefix.strip().strip("/")
+    key = f"{root_prefix}/releases/current" if root_prefix else "releases/current"
+    try:
+        response = s3.get_object(Bucket=settings.s3_bucket_vectors, Key=key)
+        body = response["Body"].read().decode("utf-8")
+        prefix = body.strip().strip("/")
+        if prefix:
+            print(f"[s3] resolved LightRAG release prefix from {key}: {prefix}")
+        return prefix or None
+    except Exception as exc:
+        if _is_not_found_error(exc):
+            print(f"[s3] LightRAG release pointer {key} not found")
+        else:
+            print(f"[s3] failed to resolve LightRAG release prefix from {key}: {exc}")
+        return None
+
+
+def _download_lightrag_artifacts(s3: Any, settings: Settings, prefix: str) -> bool:
+    manifest_key = f"{prefix.rstrip('/')}/manifest.json"
+    try:
+        response = s3.get_object(Bucket=settings.s3_bucket_vectors, Key=manifest_key)
+        manifest = response["Body"].read().decode("utf-8")
+        import json
+
+        parsed = json.loads(manifest)
+        files = [str(name) for name in parsed.get("files") or [] if str(name).strip()]
+    except Exception as exc:
+        print(f"[s3] failed to load LightRAG manifest from {manifest_key}: {exc}")
+        return False
+
+    required_missing = [name for name in LIGHTRAG_REQUIRED_ARTIFACTS if name not in files]
+    if required_missing:
+        print(f"[s3] LightRAG manifest is missing required files: {', '.join(required_missing)}")
+        return False
+
+    tmp_dir = settings.lightrag_dir.with_name(f".{settings.lightrag_dir.name}.download")
+    if tmp_dir.exists():
+        import shutil
+
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        for filename in files:
+            key = f"{prefix.rstrip('/')}/{filename}"
+            target_path = tmp_dir / filename
+            s3.download_file(settings.s3_bucket_vectors, key, str(target_path))
+    except Exception as exc:
+        import shutil
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        print(f"[s3] failed to download LightRAG artifacts from prefix {prefix}: {exc}")
+        return False
+
+    import shutil
+
+    if settings.lightrag_dir.exists():
+        shutil.rmtree(settings.lightrag_dir)
+    tmp_dir.replace(settings.lightrag_dir)
+    print(f"[s3] downloaded LightRAG artifacts from prefix {prefix}")
+    return True
+
+
 def _have_local_required_artifacts(settings: Settings) -> bool:
     return all((settings.out_dir / filename).exists() for filename in REQUIRED_ARTIFACTS)
+
+
+def _have_local_lightrag_artifacts(settings: Settings) -> bool:
+    return all((settings.lightrag_dir / filename).exists() for filename in LIGHTRAG_REQUIRED_ARTIFACTS)
 
 
 def ensure_local_artifacts(settings: Settings) -> None:
@@ -149,3 +223,23 @@ def ensure_local_artifacts(settings: Settings) -> None:
         return
 
     print("[startup] required artifacts are missing locally and could not be downloaded from S3")
+
+
+def ensure_local_lightrag_artifacts(settings: Settings) -> None:
+    s3 = _create_s3_client(settings)
+    if s3 is None:
+        if _have_local_lightrag_artifacts(settings):
+            print("[startup] S3 client not available; using existing local LightRAG artifacts")
+            return
+        print("[s3] S3 client not available; expecting local LightRAG artifacts.")
+        return
+
+    prefix = _get_lightrag_release_prefix_from_s3(s3, settings)
+    if prefix and _download_lightrag_artifacts(s3, settings, prefix):
+        return
+
+    if _have_local_lightrag_artifacts(settings):
+        print("[startup] LightRAG refresh failed; using existing local artifacts")
+        return
+
+    print("[startup] LightRAG artifacts are missing locally and could not be downloaded from S3")

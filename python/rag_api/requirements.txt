@@ -8,3 +8,4 @@ pydantic
 PyYAML
 boto3
 redis
+lightrag-hku>=1.4.16

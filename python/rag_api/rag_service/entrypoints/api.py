@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from rag_service.application.query_service import QueryService
 from rag_service.infrastructure.config import load_settings
 from rag_service.infrastructure.faiss_store import FaissMetadataStore
+from rag_service.infrastructure.lightrag_store import LightRAGMetadataStore
 from rag_service.infrastructure.openai_gateway import OpenAIGateway
 
 
@@ -59,7 +60,20 @@ def create_app() -> FastAPI:
     logging.getLogger("openai").setLevel(logging.WARNING)
     settings = load_settings()
     gateway = OpenAIGateway(settings)
-    store = FaissMetadataStore.load(settings)
+    if settings.retrieval_backend == "lightrag":
+        try:
+            store = LightRAGMetadataStore.load(settings)
+            print("[startup] retrieval backend: lightrag")
+        except Exception as exc:
+            if settings.retrieval_fallback == "faiss":
+                print(f"[startup] LightRAG backend unavailable; falling back to FAISS: {exc}")
+                store = FaissMetadataStore.load(settings)
+                print("[startup] retrieval backend: faiss fallback")
+            else:
+                raise
+    else:
+        store = FaissMetadataStore.load(settings)
+        print("[startup] retrieval backend: faiss")
     conversation_memory = None
     if settings.redis_url:
         from rag_service.infrastructure.conversation_memory import RedisConversationMemory

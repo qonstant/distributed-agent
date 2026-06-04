@@ -27,6 +27,7 @@ services:
       - ${LIGHTRAG_REPO_MOUNT:-../..}:/workspace/distributed-agent
     environment:
       - APP_ENV=${APP_ENV:-development}
+      - PYTHONDONTWRITEBYTECODE=1
       - DATABASE_URL=${DATABASE_URL}
       - SECRET_KEY=${SECRET_KEY}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}

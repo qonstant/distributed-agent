@@ -131,6 +131,7 @@ class LightRAGJobManager:
             self._append_log(f"[admin] command={command}")
             env = os.environ.copy()
             env.setdefault("PYTHONUNBUFFERED", "1")
+            env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
             process = subprocess.Popen(
                 command,
                 cwd=cwd if Path(cwd).exists() else None,

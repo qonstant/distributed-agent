@@ -774,6 +774,34 @@ def enrich_graphml_with_page_refs(
     print(f"[lightrag] wrote page ref report -> {report_path}")
 
 
+def graph_stats(working_dir: Path) -> Dict[str, Any]:
+    graph_path = working_dir / "graph_chunk_entity_relation.graphml"
+    if not graph_path.exists():
+        return {
+            "graph_path": str(graph_path),
+            "exists": False,
+            "nodes": 0,
+            "edges": 0,
+        }
+
+    try:
+        import networkx as nx
+
+        graph = nx.read_graphml(graph_path)
+        return {
+            "graph_path": str(graph_path),
+            "exists": True,
+            "nodes": graph.number_of_nodes(),
+            "edges": graph.number_of_edges(),
+        }
+    except Exception as exc:
+        return {
+            "graph_path": str(graph_path),
+            "exists": True,
+            "error": str(exc),
+        }
+
+
 def dcg_at_k(binary_relevance: List[int], top_k: int) -> float:
     dcg = 0.0
     for rank, rel in enumerate(binary_relevance[:top_k], start=1):
@@ -992,9 +1020,20 @@ def print_report(
     skipped: Sequence[Dict[str, Any]],
     max_examples: int,
     color_enabled: bool,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
     print("\n" + "=" * 80)
     print("LightRAG retrieval-context evaluation")
+    if metadata:
+        graph = metadata.get("graph") or {}
+        print(
+            "Model        : "
+            f"{metadata.get('llm_model') or '-'} "
+            f"(provider={metadata.get('provider') or '-'})"
+        )
+        print(f"Embedding    : {metadata.get('embed_model') or '-'}")
+        if graph.get("exists"):
+            print(f"Graph        : nodes={graph.get('nodes', 0)} edges={graph.get('edges', 0)}")
     for mode, summary in summaries.items():
         top_k = int(summary["top_k"])
         print(f"\n[{mode}] queries={summary['queries']} top_k={top_k}")
@@ -1027,9 +1066,11 @@ def save_report(
     summaries: Dict[str, Dict[str, Any]],
     rows_by_mode: Dict[str, List[Dict[str, Any]]],
     skipped: Sequence[Dict[str, Any]],
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "metadata": metadata or {},
         "summary": summaries,
         "rows_by_mode": rows_by_mode,
         "skipped": list(skipped),
@@ -1045,6 +1086,14 @@ async def run(args: argparse.Namespace) -> None:
 
     color_enabled = should_colorize(args.color)
     modes = split_modes(args.modes)
+    resolved_llm_model = args.llm_model or os.getenv(
+        "LIGHTRAG_LLM_MODEL",
+        "gpt-4o-mini" if args.provider == "openai" else "qwen2.5:14b",
+    )
+    resolved_embed_model = args.embed_model or os.getenv(
+        "LIGHTRAG_EMBED_MODEL",
+        "text-embedding-3-small" if args.provider == "openai" else "nomic-embed-text",
+    )
     docs = load_markdown_documents(Path(args.docs_dir), args.doc_prefix)
     if args.index_limit and args.index_limit > 0:
         docs = docs[: args.index_limit]
@@ -1074,8 +1123,24 @@ async def run(args: argparse.Namespace) -> None:
             index_limit=max(0, args.index_limit),
             rebuild=args.rebuild,
         )
+        if args.page_refs:
+            enrich_graphml_with_page_refs(working_dir, source_metadata)
+            args.page_refs = False
+
+        report_metadata = {
+            "provider": args.provider,
+            "llm_model": resolved_llm_model,
+            "embed_model": resolved_embed_model,
+            "embed_dim": args.embed_dim,
+            "working_dir": str(working_dir),
+            "docs_dir": str(Path(args.docs_dir)),
+            "document_count": len(docs),
+            "source_file_count": len(source_files),
+            "graph": graph_stats(working_dir),
+        }
         if args.index_only:
             print("[lightrag] index-only mode: skipping retrieval evaluation")
+            save_report(Path(args.output), {}, {}, [], report_metadata)
             return
 
         sibling_by_canonical_language = sibling_files_by_canonical_language(source_metadata)
@@ -1112,8 +1177,8 @@ async def run(args: argparse.Namespace) -> None:
                 rows_by_mode[result_mode] = mode_rows
                 summaries[result_mode] = summarize(mode_rows, top_k=max(1, args.top_k))
 
-        print_report(summaries, rows_by_mode, skipped, args.max_examples, color_enabled)
-        save_report(Path(args.output), summaries, rows_by_mode, skipped)
+        print_report(summaries, rows_by_mode, skipped, args.max_examples, color_enabled, report_metadata)
+        save_report(Path(args.output), summaries, rows_by_mode, skipped, report_metadata)
     finally:
         await rag.finalize_storages()
         if args.page_refs:

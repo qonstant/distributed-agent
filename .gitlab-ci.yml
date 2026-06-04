@@ -25,6 +25,9 @@ variables:
   ADMIN_CONTAINER_NAME: "admin-panel"
   LANDING_IMAGE_NAME: "landing-page:latest"
   LANDING_CONTAINER_NAME: "landing-page"
+  # Generated RAG/LightRAG outputs can be written by containers on the VPS.
+  # Do not let git clean fail the whole pipeline on root-owned generated files.
+  GIT_CLEAN_FLAGS: "-ffdx -e python/RAG/out/ -e python/rag_api/**/__pycache__/"
 
 test-landing-prod:
   stage: test
@@ -74,12 +77,7 @@ test-golang-prod:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
-    - make coverage-docker
-  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
-  artifacts:
-    when: always
-    paths:
-      - golang/coverage.out
+    - make test-docker
 
 test-golang-test:
   stage: test
@@ -89,12 +87,7 @@ test-golang-test:
   rules:
     - if: '$CI_COMMIT_BRANCH == "test"'
   script:
-    - make coverage-docker
-  coverage: '/total:\s+\(statements\)\s+(\d+\.\d+)%/'
-  artifacts:
-    when: always
-    paths:
-      - golang/coverage.out
+    - make test-docker
 
 ################################################################################
 # RAG (python/rag_api)

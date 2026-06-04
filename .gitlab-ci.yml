@@ -627,6 +627,7 @@ deploy-admin-prod:
     - 'printf "ADMIN_TELEGRAM_ID=%s\n" "${ADMIN_TELEGRAM_ID}" >> .env'
     - 'printf "ADMIN_COOKIE_SECURE=%s\n" "${ADMIN_COOKIE_SECURE:-true}" >> .env'
     - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS:-*}" >> .env'
+    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY}" >> .env'
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" >> .env'
     - 'printf "S3_BUCKET=%s\n" "${S3_BUCKET}" >> .env'
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS}" >> .env'
@@ -642,7 +643,7 @@ deploy-admin-prod:
     - docker-compose up -d --no-build web
     - sleep 3
     - 'docker logs "${ADMIN_CONTAINER_NAME}" --tail 30 || true'
-    - 'docker exec "${ADMIN_CONTAINER_NAME}" sh -lc ''echo "[admin] S3_ENDPOINT=$S3_ENDPOINT S3_BUCKET=$S3_BUCKET S3_BUCKET_VECTORS=$S3_BUCKET_VECTORS"'' || true'
+    - 'docker exec "${ADMIN_CONTAINER_NAME}" sh -lc ''echo "[admin] OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"; echo "[admin] S3_ENDPOINT=$S3_ENDPOINT S3_BUCKET=$S3_BUCKET S3_BUCKET_VECTORS=$S3_BUCKET_VECTORS"'' || true'
     - 'docker exec "${ADMIN_CONTAINER_NAME}" python -c "import urllib.request; print(urllib.request.urlopen(''http://127.0.0.1:8000/health'', timeout=3).read().decode())" || true'
     - docker image prune -a -f --filter "label=app=admin-panel" --filter "until=168h" || true
     - 'shred -u .env || rm -f .env || true'
@@ -683,6 +684,7 @@ deploy-admin-test:
     - 'printf "ADMIN_TELEGRAM_ID=%s\n" "${ADMIN_TELEGRAM_ID_TEST}" >> .env'
     - 'printf "ADMIN_COOKIE_SECURE=%s\n" "${ADMIN_COOKIE_SECURE_TEST:-true}" >> .env'
     - 'printf "CORS_ALLOW_ORIGINS=%s\n" "${ADMIN_CORS_ORIGINS_TEST:-*}" >> .env'
+    - 'printf "OPENAI_API_KEY=%s\n" "${OPENAI_API_KEY_TEST}" >> .env'
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT_TEST}" >> .env'
     - 'printf "S3_BUCKET=%s\n" "${S3_BUCKET_TEST}" >> .env'
     - 'printf "S3_BUCKET_VECTORS=%s\n" "${S3_BUCKET_VECTORS_TEST}" >> .env'
@@ -698,7 +700,7 @@ deploy-admin-test:
     - docker-compose up -d --no-build web
     - sleep 3
     - 'docker logs "${ADMIN_CONTAINER_NAME}" --tail 30 || true'
-    - 'docker exec "${ADMIN_CONTAINER_NAME}" sh -lc ''echo "[admin] S3_ENDPOINT=$S3_ENDPOINT S3_BUCKET=$S3_BUCKET S3_BUCKET_VECTORS=$S3_BUCKET_VECTORS"'' || true'
+    - 'docker exec "${ADMIN_CONTAINER_NAME}" sh -lc ''echo "[admin] OPENAI_API_KEY set? ${OPENAI_API_KEY:+yes}"; echo "[admin] S3_ENDPOINT=$S3_ENDPOINT S3_BUCKET=$S3_BUCKET S3_BUCKET_VECTORS=$S3_BUCKET_VECTORS"'' || true'
     - 'docker exec "${ADMIN_CONTAINER_NAME}" python -c "import urllib.request; print(urllib.request.urlopen(''http://127.0.0.1:8000/health'', timeout=3).read().decode())" || true'
     - docker image prune -a -f --filter "label=app=admin-panel" --filter "until=168h" || true
     - 'shred -u .env || rm -f .env || true'

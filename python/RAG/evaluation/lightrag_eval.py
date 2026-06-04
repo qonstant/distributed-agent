@@ -874,6 +874,7 @@ async def build_or_load_index(
     modes: Sequence[str],
     index_limit: int,
     rebuild: bool,
+    strict_status_check: bool = True,
 ) -> None:
     await rag.initialize_storages()
 
@@ -919,6 +920,14 @@ async def build_or_load_index(
         preview = ", ".join(still_missing[:5])
         if len(still_missing) > 5:
             preview += f", +{len(still_missing) - 5} more"
+        if not strict_status_check:
+            print(
+                "[lightrag] warning: doc status not fully flushed yet; "
+                f"continuing index-only build with generated artifacts: {preview}",
+                flush=True,
+            )
+            save_index_meta(working_dir, fingerprint, provider, modes, docs, index_limit)
+            return
         raise RuntimeError(f"LightRAG index is still incomplete after resume: {preview}")
     save_index_meta(working_dir, fingerprint, provider, modes, docs, index_limit)
 
@@ -1140,6 +1149,7 @@ async def run(args: argparse.Namespace) -> None:
             modes=modes,
             index_limit=max(0, args.index_limit),
             rebuild=args.rebuild,
+            strict_status_check=not args.index_only,
         )
         if args.page_refs:
             enrich_graphml_with_page_refs(working_dir, source_metadata)

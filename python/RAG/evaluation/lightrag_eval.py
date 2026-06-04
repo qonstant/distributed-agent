@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import csv
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -368,6 +369,23 @@ def lightrag_runtime_kwargs(args: argparse.Namespace) -> Dict[str, Any]:
     }
 
 
+def filter_lightrag_kwargs(lightrag_cls: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        signature = inspect.signature(lightrag_cls.__init__)
+    except (TypeError, ValueError):
+        return kwargs
+
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+        return kwargs
+
+    supported = set(signature.parameters)
+    filtered = {key: value for key, value in kwargs.items() if key in supported}
+    skipped = sorted(set(kwargs) - set(filtered))
+    if skipped:
+        print(f"[lightrag] skipping unsupported constructor option(s): {', '.join(skipped)}", flush=True)
+    return filtered
+
+
 def configure_openai_rag(
     working_dir: Path,
     llm_model: str,
@@ -435,7 +453,7 @@ def configure_openai_rag(
         llm_model_func=llm_model_func,
         embedding_func=embedding_func,
         tokenizer=SimpleCharTokenizer(),
-        **runtime_kwargs,
+        **filter_lightrag_kwargs(LightRAG, runtime_kwargs),
     )
 
 
@@ -472,7 +490,7 @@ def configure_ollama_rag(
         llm_model_kwargs={"options": {"num_ctx": num_ctx}},
         embedding_func=embedding_func,
         tokenizer=SimpleCharTokenizer(),
-        **runtime_kwargs,
+        **filter_lightrag_kwargs(LightRAG, runtime_kwargs),
     )
 
 

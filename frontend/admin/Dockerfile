@@ -21,6 +21,7 @@ RUN python -m venv /opt/lightrag-venv && \
         boto3 \
         mammoth \
         markdownify \
+        openai \
         pdfplumber \
         python-dotenv
 

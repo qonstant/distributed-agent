@@ -380,8 +380,9 @@ def configure_openai_rag(
         from lightrag.utils import wrap_embedding_func_with_attrs
         from rag_service.infrastructure.openai_gateway import OpenAIGateway
     except ImportError as exc:
+        missing = getattr(exc, "name", "") or str(exc)
         raise RuntimeError(
-            "LightRAG is not installed. Run `make lightrag-install` or "
+            f"LightRAG/OpenAI dependency missing ({missing}). Run `make lightrag-install` or "
             "`python -m pip install -r python/RAG/evaluation/lightrag_requirements.txt`."
         ) from exc
 

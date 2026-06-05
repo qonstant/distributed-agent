@@ -907,8 +907,18 @@ class QueryService:
 
             file_chosen = llm_file_choice or supporting_file
             if file_chosen:
-                trace("answer.file_selected", file=file_chosen)
                 page_hit = _best_hit_for_file(results, file_chosen) or best_chunk
+                trace(
+                    "answer.file_selected",
+                    file=file_chosen,
+                    page=(page_hit.meta.get("page") if page_hit is not None else ""),
+                    score=(round(float(page_hit.score), 6) if page_hit is not None else ""),
+                    preview=(
+                        (page_hit.meta.get("text") or page_hit.meta.get("md") or "")[:220]
+                        if page_hit is not None
+                        else ""
+                    ),
+                )
                 answer = _append_page_reference(answer, page_hit, response_language)
             response_file = file_chosen
             if retrieval_intent == "FACTUAL_QUESTION":
@@ -1160,7 +1170,17 @@ class QueryService:
             )
 
         if stage == "answer.file_selected":
-            return f"{prefix} {self._trace_field('file', payload.get('file'))}".rstrip()
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("file", payload.get("file")),
+                    self._trace_field("page", payload.get("page")),
+                    self._trace_field("score", payload.get("score")),
+                    self._trace_field("preview", payload.get("preview"), quoted=True),
+                ]
+                if part
+            )
 
         if stage == "response.final":
             usage = self._format_usage_events(payload.get("usage_events"))

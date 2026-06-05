@@ -493,6 +493,7 @@ class OpenAIGateway:
             " - \"visa\", \"How to apply for visa\", \"How do I get visa?\", \"visa application\", \"visa docs\", \"visa documents\", and \"visa requirements\" are clear Italian student visa queries by default. Do NOT ask whether the user means student visa, tourist visa, or residence permit unless a non-study visa type is explicitly mentioned.\n"
             " - \"How do I get residence permit\", \"How to apply for residence permit…\", \"residence permit\", \"residence permit documents\", \"residence permit in Italy\", \"student residence permit\", \"студ ВНЖ\", \"как подать на студ ВНЖ\", \"Как получить ВНЖ\", \"тұруға рұқсат\", \"тұруға ықтиярхат\", and \"permesso di soggiorno\" are clear Italian student residence permit queries. For broad versions, use a standalone query covering process and required documents instead of asking process-vs-documents.\n"
             " - If the user says \"How to apply\" for an identified topic like residence permit, student visa, DSU, admission, housing, CV, motivation letter, or recommendation letter, it is a process query. NEVER ask whether they want process or documents.\n"
+            " - CV, curriculum vitae, resume/резюме, motivation letter, and recommendation letter questions are clear when they mention preparing, writing, structure, examples, university admission, or Italy. NEVER ask general-vs-specific or tips-vs-requirements for these; produce a broad standalone query that covers available guidance, structure, examples, and requirements for the identified document.\n"
             " - If a comparison has two clear targets, such as Italy and Germany, it is clear even when criteria are missing. NEVER ask which criteria to compare. Use default criteria: admission requirements, tuition/cost, scholarships, visa/residence permit, language requirements, housing, and career opportunities.\n"
             " - If history shows DSU and the user asks \"what documents do I need\", produce a query for all DSU scholarship required documents. NEVER ask which DSU document, form, income paper, declaration, or subtype.\n"
             "Do NOT ask sub-aspect clarifications inside an already identified topic. If the user asks about a detail such as visa photo format, photo size, background, funds, appointment, CV structure, scholarship documents, or recommendation-letter requirements, treat it as clear and search that detail. "
@@ -555,6 +556,8 @@ class OpenAIGateway:
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"Can international students travel while studying in Italy?","clarifying_question":"","target_language":"","reason":"The Kazakh question is about study-related travel in Italy."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"Compare Italy and Germany for international master students by admission requirements, tuition, scholarships, visa, residence permit, language requirements, housing, and career opportunities.","clarifying_question":"","target_language":"","reason":"The comparison targets are clear."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"All available photo format requirements for an Italian student visa, including size, background, and ICAO standards if present in the documents.","clarifying_question":"","target_language":"","reason":"The visa photo detail is specific enough to search."}\n'
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to prepare a CV for Italian university admission, including available structure, content, examples, and requirements.","clarifying_question":"","target_language":"","reason":"CV preparation for Italian university admission is a clear supported topic."}\n'
+            '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"What to include in an academic CV for Italian university admission, including available structure, content, examples, and requirements.","clarifying_question":"","target_language":"","reason":"Academic CV content for Italian university admission is specific enough to search."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"Required documents for the Italian DSU scholarship application.","clarifying_question":"","target_language":"","reason":"The latest short document question continues the previous DSU topic."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"All required documents for the Italian DSU scholarship application, including income papers, application forms, declarations, and supporting family documents.","clarifying_question":"","target_language":"","reason":"The previous topic is DSU, so the broad document question should search all DSU document requirements."}\n'
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"Next steps after submitting an Italian university application as an international student.","clarifying_question":"","target_language":"","reason":"The latest short continuation follows the previous university application topic."}\n'
@@ -595,6 +598,12 @@ class OpenAIGateway:
             )
             if not clarity.is_retrieval_related:
                 return clarity, self._extract_usage(response, self._settings.class_model)
+            clarity = self._override_clear_supported_document_query(
+                clarity,
+                query=query,
+                language_hint=language_hint,
+                intent=intent,
+            )
             if clarity.is_clear and not clarity.standalone_query:
                 clarity = RetrievalClarity(
                     is_clear=True,
@@ -624,6 +633,90 @@ class OpenAIGateway:
                 ),
                 None,
             )
+
+    def _override_clear_supported_document_query(
+        self,
+        clarity: RetrievalClarity,
+        *,
+        query: str,
+        language_hint: str,
+        intent: str,
+    ) -> RetrievalClarity:
+        if clarity.is_clear or not clarity.is_retrieval_related:
+            return clarity
+
+        query_lc = (query or "").strip().lower()
+        if not query_lc:
+            return clarity
+
+        document_terms = (
+            "cv",
+            "curriculum vitae",
+            "resume",
+            "резюме",
+            "мотивацион",
+            "motivation letter",
+            "recommendation letter",
+            "рекомендатель",
+            "ұсыныс хат",
+            "мотивациялық хат",
+        )
+        action_terms = (
+            "prepare",
+            "write",
+            "include",
+            "structure",
+            "example",
+            "requirement",
+            "admission",
+            "university",
+            "italy",
+            "italian",
+            "подготов",
+            "писать",
+            "включ",
+            "структур",
+            "пример",
+            "университет",
+            "итал",
+            "дайында",
+            "жаз",
+            "қосу",
+            "құрылым",
+            "үлгі",
+        )
+        if not any(term in query_lc for term in document_terms):
+            return clarity
+        if not any(term in query_lc for term in action_terms):
+            return clarity
+
+        if "motivation" in query_lc or "мотивацион" in query_lc or "мотивациялық хат" in query_lc:
+            standalone_query = (
+                "How to write a motivation letter for Italian university admission, "
+                "including available structure, content, examples, and requirements."
+            )
+        elif "recommendation" in query_lc or "рекомендатель" in query_lc or "ұсыныс хат" in query_lc:
+            standalone_query = (
+                "Recommendation letter guidance for Italian university admission, "
+                "including who can write it, structure, examples, and requirements."
+            )
+        else:
+            standalone_query = (
+                "How to prepare a CV for Italian university admission, including "
+                "available structure, content, examples, and requirements."
+            )
+
+        return RetrievalClarity(
+            is_clear=True,
+            standalone_query=standalone_query,
+            clarifying_question="",
+            reason=(
+                "Supported document-preparation topic is clear enough to search; "
+                "general-vs-specific clarification is unnecessary."
+            ),
+            is_retrieval_related=True,
+            target_language=clarity.target_language,
+        )
 
     def assess_retrieval_sufficiency(
         self,

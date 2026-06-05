@@ -2,7 +2,8 @@ SHELL := /bin/bash
 
 .PHONY: help \
 	rag-build rag-up rag-down rag-clean rag-chunks-md rag-chunks-manual \
-	class guard clarity suff ret eval lightrag lightrag-pages lightrag-view lightrag-install rag-compare \
+	class guard clarity suff ret eval lightrag lightrag-expanded lightrag-best-expanded lightrag-pages lightrag-view lightrag-install rag-compare \
+	rag-debug-query \
 	lightrag-s3-full lightrag-s3-continue \
 	landing-build landing-up landing-down \
 	rabbitmq-up rabbitmq-down rabbitmq-logs \
@@ -36,7 +37,9 @@ SUFF_EVAL_SCRIPT := $(RAG_EVAL_DIR)/sufficiency_eval.py
 SUFF_EVAL_CSV := $(RAG_EVAL_DIR)/sufficiency_mappings.csv
 RET_EVAL_SCRIPT := $(RAG_EVAL_DIR)/retrieval_eval.py
 RET_EVAL_CSV := $(RAG_EVAL_DIR)/query_mappings.csv
+RAG_DEBUG_QUERY_SCRIPT = $(PYTHON_RAG_DIR)/rag_debug_query.py
 LIGHTRAG_EVAL_SCRIPT := $(RAG_EVAL_DIR)/lightrag_eval.py
+LIGHTRAG_EXPANDED_REPORT_SCRIPT := $(RAG_EVAL_DIR)/lightrag_expanded_report.py
 LIGHTRAG_VIEWER_SCRIPT := $(RAG_EVAL_DIR)/lightrag_viewer.py
 LIGHTRAG_REQUIREMENTS := $(RAG_EVAL_DIR)/lightrag_requirements.txt
 LIGHTRAG_S3_PIPELINE_SCRIPT := $(RAG_LEGACY_DIR)/lightrag_s3_pipeline.py
@@ -48,6 +51,7 @@ LIGHTRAG_REBUILD ?=
 LIGHTRAG_RESET ?=
 LIGHTRAG_INDEX_ONLY ?=
 LIGHTRAG_INDEX_LIMIT ?=
+LIGHTRAG_CANDIDATE_K ?= 64
 LIGHTRAG_LLM_MODEL ?=
 LIGHTRAG_EMBED_MODEL ?=
 LIGHTRAG_EMBED_DIM ?=
@@ -59,7 +63,27 @@ LIGHTRAG_MAX_EXTRACT_INPUT_TOKENS ?=
 LIGHTRAG_LLM_TIMEOUT ?=
 LIGHTRAG_LLM_MAX_ASYNC ?=
 LIGHTRAG_MAX_PARALLEL_INSERT ?=
-LIGHTRAG_METADATA_RERANK ?= append
+LIGHTRAG_METADATA_RERANK ?= filter
+LIGHTRAG_EXPANDED_INPUT ?= $(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)/lightrag_gpt41_nano_naive_meta_top5_pages.json
+LIGHTRAG_EXPANDED_OUTPUT ?=
+LIGHTRAG_EXPANDED_MODE ?= naive+meta
+LIGHTRAG_EXPANDED_QUERY ?=
+LIGHTRAG_EXPANDED_LIMIT ?=
+LIGHTRAG_EXPANDED_MAX_PAGES ?= 8
+LIGHTRAG_EXPANDED_SHOW_RAW ?=
+LIGHTRAG_EXPANDED_SHOW_CHUNKS ?=
+LIGHTRAG_BEST_WORK_DIR ?= $(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)/lightrag_gpt41_nano
+LIGHTRAG_BEST_JSON ?= $(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)/lightrag_gpt41_nano_naive_meta_top5_pages.json
+LIGHTRAG_BEST_TEXT ?= $(RAG_LEGACY_DIR)/$(RAG_OUT_DIR)/lightrag_gpt41_nano_naive_meta_top5_pages.txt
+RAG_DEBUG_QUERY ?= How should I prepare a CV for university admission in Italy?
+RAG_DEBUG_RAW_K ?= 128
+RAG_DEBUG_TOP_FOR_LLM ?= 5
+RAG_DEBUG_BACKEND ?= lightrag
+RAG_DEBUG_LIGHTRAG_DIR ?= $(LIGHTRAG_BEST_WORK_DIR)
+RAG_DEBUG_LIGHTRAG_MODE ?= naive
+RAG_DEBUG_TRACE_FORMAT ?= pretty
+RAG_DEBUG_ENV_FILE ?= $(PYTHON_RAG_DIR)/.env
+RAG_DEBUG_SKIP_S3 ?= 1
 COMPARE_LIMIT ?= 25
 COMPARE_TOP_K ?=
 COMPARE_REFRESH ?=
@@ -111,9 +135,12 @@ help:
 	@echo "  make lightrag-pages # enrich existing LightRAG graph with PDF page refs"
 	@echo "  make lightrag-s3-full # download S3 docs, regenerate markdown, rebuild LightRAG"
 	@echo "  make lightrag-s3-continue # download S3 docs, resume markdown/LightRAG build"
+	@echo "  make lightrag-expanded # render top files + page refs from a LightRAG JSON report"
+	@echo "  make lightrag-best-expanded # run gpt-4.1-nano naive+meta top-5 eval and render page refs"
 	@echo "  make lightrag-view # open official LightRAG 3D GraphML viewer"
 	@echo "  make lightrag-install # install optional LightRAG eval dependency"
 	@echo "  make rag-compare # compare FAISS retrieval vs LightRAG on first 25 labeled rows"
+	@echo "  make rag-debug-query # run one full guard/classify/retrieve/answer pipeline with trace logs"
 	@echo "  make rag-compare COMPARE_REFRESH=1 # refresh FAISS classifier/clarity cache"
 	@echo "  make rag-compare COMPARE_TOP_K=10 # compare with larger retrieval K"
 	@echo "  make lightrag LIGHTRAG_METADATA_RERANK=off # raw LightRAG only, no metadata rerank"
@@ -248,6 +275,7 @@ lightrag:
 		--modes "$(LIGHTRAG_MODES)" \
 		$(if $(EVAL_LIMIT),--limit "$(EVAL_LIMIT)",) \
 		$(if $(LIGHTRAG_INDEX_LIMIT),--index-limit "$(LIGHTRAG_INDEX_LIMIT)",) \
+		--candidate-k "$(LIGHTRAG_CANDIDATE_K)" \
 		$(if $(LIGHTRAG_LLM_MODEL),--llm-model "$(LIGHTRAG_LLM_MODEL)",) \
 		$(if $(LIGHTRAG_EMBED_MODEL),--embed-model "$(LIGHTRAG_EMBED_MODEL)",) \
 		$(if $(LIGHTRAG_EMBED_DIM),--embed-dim "$(LIGHTRAG_EMBED_DIM)",) \
@@ -270,6 +298,31 @@ lightrag-pages:
 		--working-dir "$(LIGHTRAG_WORK_DIR)" \
 		--page-refs-only
 
+lightrag-expanded:
+	"$(PYTHON)" "$(LIGHTRAG_EXPANDED_REPORT_SCRIPT)" \
+		--input "$(LIGHTRAG_EXPANDED_INPUT)" \
+		--mode "$(LIGHTRAG_EXPANDED_MODE)" \
+		--max-pages "$(LIGHTRAG_EXPANDED_MAX_PAGES)" \
+		$(if $(LIGHTRAG_EXPANDED_OUTPUT),--output "$(LIGHTRAG_EXPANDED_OUTPUT)",) \
+		$(if $(LIGHTRAG_EXPANDED_QUERY),--query "$(LIGHTRAG_EXPANDED_QUERY)",) \
+		$(if $(LIGHTRAG_EXPANDED_LIMIT),--limit "$(LIGHTRAG_EXPANDED_LIMIT)",) \
+		$(if $(LIGHTRAG_EXPANDED_SHOW_RAW),--show-raw,) \
+		$(if $(LIGHTRAG_EXPANDED_SHOW_CHUNKS),--show-chunks,)
+
+lightrag-best-expanded:
+	@$(MAKE) --no-print-directory lightrag \
+		PYTHON="$(PYTHON)" \
+		LIGHTRAG_WORK_DIR="$(LIGHTRAG_BEST_WORK_DIR)" \
+		LIGHTRAG_LLM_MODEL="gpt-4.1-nano" \
+		LIGHTRAG_MODES="naive" \
+		LIGHTRAG_CANDIDATE_K="$(LIGHTRAG_CANDIDATE_K)" \
+		EVAL_EXTRA='--top-k 5 --output "$(LIGHTRAG_BEST_JSON)"'
+	@$(MAKE) --no-print-directory lightrag-expanded \
+		PYTHON="$(PYTHON)" \
+		LIGHTRAG_EXPANDED_INPUT="$(LIGHTRAG_BEST_JSON)" \
+		LIGHTRAG_EXPANDED_OUTPUT="$(LIGHTRAG_BEST_TEXT)" \
+		LIGHTRAG_EXPANDED_MODE="naive+meta"
+
 lightrag-s3-full:
 	"$(PYTHON)" -u "$(LIGHTRAG_S3_PIPELINE_SCRIPT)" --mode full
 
@@ -286,6 +339,26 @@ rag-compare:
 	@"$(PYTHON)" "$(RETRIEVAL_COMPARE_SCRIPT)" \
 		--retrieval-report "$(COMPARE_RET_REPORT)" \
 		--lightrag-report "$(COMPARE_LIGHTRAG_REPORT)"
+
+rag-debug-query:
+	@set -a; [ -f "$(RAG_DEBUG_ENV_FILE)" ] && source "$(RAG_DEBUG_ENV_FILE)" || true; set +a; \
+	if [ -n "$$S3_ENDPOINT_TEST" ]; then export S3_ENDPOINT="$$S3_ENDPOINT_TEST"; fi; \
+	if [ -n "$$S3_BUCKET_VECTORS_TEST" ]; then export S3_BUCKET_VECTORS="$$S3_BUCKET_VECTORS_TEST"; fi; \
+	if [ -n "$$S3_ACCESS_KEY_ID_TEST" ]; then export S3_ACCESS_KEY_ID="$$S3_ACCESS_KEY_ID_TEST"; fi; \
+	if [ -n "$$S3_SECRET_ACCESS_KEY_TEST" ]; then export S3_SECRET_ACCESS_KEY="$$S3_SECRET_ACCESS_KEY_TEST"; fi; \
+	if [ "$(RAG_DEBUG_SKIP_S3)" = "1" ]; then export S3_ENDPOINT=""; export S3_BUCKET_VECTORS=""; fi; \
+	RAG_RETRIEVAL_BACKEND="$(RAG_DEBUG_BACKEND)" \
+	RAG_RETRIEVAL_FALLBACK="faiss" \
+	LIGHTRAG_DIR="$(RAG_DEBUG_LIGHTRAG_DIR)" \
+	LIGHTRAG_QUERY_MODE="$(RAG_DEBUG_LIGHTRAG_MODE)" \
+	RAG_TRACE_LOGS="true" \
+	RAG_TRACE_LOG_FORMAT="$(RAG_DEBUG_TRACE_FORMAT)" \
+	PYTHONPATH="$(PYTHON_RAG_DIR)" \
+	"$(PYTHON)" "$(RAG_DEBUG_QUERY_SCRIPT)" \
+		--query "$(RAG_DEBUG_QUERY)" \
+		--raw-k "$(RAG_DEBUG_RAW_K)" \
+		--top-for-llm "$(RAG_DEBUG_TOP_FOR_LLM)" \
+		--trace-format "$(RAG_DEBUG_TRACE_FORMAT)"
 
 # ----------------------------
 # Landing page

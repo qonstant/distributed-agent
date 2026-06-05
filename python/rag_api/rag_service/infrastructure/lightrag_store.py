@@ -273,6 +273,7 @@ class LightRAGMetadataStore:
         target_language = "" if target_language == "other" else target_language
         chunks = _chunk_contents_from_context(context)
         hits: List[RetrievedHit] = []
+        filtered_hits: List[RetrievedHit] = []
         seen = set()
         for index, content in enumerate(chunks, start=1):
             source_file = _source_from_text(content)
@@ -298,7 +299,11 @@ class LightRAGMetadataStore:
                 "retrieval_backend": "lightrag",
                 "lightrag_mode": self._mode,
             }
-            hits.append(RetrievedHit(score=score, nid=-index, meta=meta))
+            hit = RetrievedHit(score=score, nid=-index, meta=meta)
+            hits.append(hit)
+            if target_language and language_hint == target_language:
+                filtered_hits.append(hit)
 
-        hits.sort(key=lambda hit: hit.score, reverse=True)
-        return hits[:k]
+        selected_hits = filtered_hits if target_language else hits
+        selected_hits.sort(key=lambda hit: hit.score, reverse=True)
+        return selected_hits[:k]

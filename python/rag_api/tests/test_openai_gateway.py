@@ -345,6 +345,8 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("Treat short/lazy queries as clear", prompt)
         self.assertIn("Default no-clarification rules", prompt)
         self.assertIn('"visa", "How to apply for visa", "How do I get visa?"', prompt)
+        self.assertIn("CV, curriculum vitae, resume/резюме", prompt)
+        self.assertIn("NEVER ask general-vs-specific or tips-vs-requirements", prompt)
         self.assertIn('"How do I get residence permit"', prompt)
         self.assertIn('"How to apply for residence permit', prompt)
         self.assertIn('"residence permit documents"', prompt)
@@ -369,6 +371,23 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn('"target_language": string', prompt)
         self.assertIn("все вообще", prompt)
         self.assertIn('"is_retrieval_related": boolean', prompt)
+
+    def test_clarify_or_rewrite_query_does_not_ask_general_vs_specific_for_cv(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Are you looking for general CV preparation tips or specific requirements for Italian university admission?","target_language":"","reason":"The user asks about CV preparation but needs clarification."}'
+        )
+
+        clarity, _ = gateway.clarify_or_rewrite_query(
+            "How should I prepare a CV for university admission in Italy?",
+            "en",
+            "PROCEDURE",
+        )
+
+        self.assertTrue(clarity.is_retrieval_related)
+        self.assertTrue(clarity.is_clear)
+        self.assertEqual(clarity.clarifying_question, "")
+        self.assertIn("CV", clarity.standalone_query)
+        self.assertIn("Italian university admission", clarity.standalone_query)
 
     def test_clarify_or_rewrite_query_returns_target_language_for_language_switch(self) -> None:
         gateway, _ = self._gateway_with_output(

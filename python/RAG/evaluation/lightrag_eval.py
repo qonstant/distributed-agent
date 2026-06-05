@@ -590,6 +590,7 @@ def metadata_language_rerank(
     source_metadata: Dict[str, Dict[str, str]],
     sibling_by_canonical_language: Dict[Tuple[str, str], str],
     top_k: int,
+    hard_filter: bool = False,
 ) -> List[str]:
     if not target_language:
         return list(ranked_files[:top_k])
@@ -617,7 +618,14 @@ def metadata_language_rerank(
         promoted_match = 1 if promoted else 0
         return (-language_match, -lexical_match, -promoted_match, original_rank, source_file)
 
-    return [source_file for source_file, _rank, _promoted in sorted(expanded, key=sort_key)[:top_k]]
+    sorted_items = sorted(expanded, key=sort_key)
+    if hard_filter:
+        sorted_items = [
+            item
+            for item in sorted_items
+            if (source_metadata.get(item[0]) or {}).get("language") == target_language
+        ]
+    return [source_file for source_file, _rank, _promoted in sorted_items[:top_k]]
 
 
 def split_lightrag_source_ids(value: str) -> List[str]:
@@ -692,6 +700,104 @@ def source_file_from_page_ref(page_ref: str) -> str:
     if ":p" not in page_ref:
         return page_ref
     return page_ref.rsplit(":p", 1)[0]
+
+
+def lightrag_context_contents(context: str) -> List[str]:
+    decoder = json.JSONDecoder()
+    contents: List[str] = []
+    index = 0
+    while index < len(context or ""):
+        start = context.find("{", index)
+        if start < 0:
+            break
+        try:
+            parsed, end = decoder.raw_decode(context[start:])
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        if isinstance(parsed, dict):
+            content = str(parsed.get("content") or "").strip()
+            if content:
+                contents.append(content)
+        index = start + max(end, 1)
+    return contents
+
+
+def source_file_from_chunk_content(content: str) -> str:
+    match = re.search(r"SOURCE_FILE:\s*([^\s`]+)", content or "", re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def page_refs_by_source_file_from_context(context: str) -> Dict[str, List[str]]:
+    refs_by_file: Dict[str, List[str]] = {}
+    refs = page_refs_from_chunk_content(context)
+    for content in lightrag_context_contents(context):
+        refs.extend(page_refs_from_chunk_content(content))
+    for page_ref in dedupe_preserve_order(refs):
+        source_file = source_file_from_page_ref(page_ref)
+        refs_by_file.setdefault(source_file, []).append(page_ref)
+    return {
+        source_file: dedupe_preserve_order(refs)
+        for source_file, refs in refs_by_file.items()
+    }
+
+
+def ranked_file_page_refs(
+    ranked_files: Sequence[str],
+    context: str,
+) -> List[Dict[str, Any]]:
+    refs_by_file = page_refs_by_source_file_from_context(context)
+    return [
+        {
+            "source_file": source_file,
+            "page_refs": refs_by_file.get(source_file, []),
+        }
+        for source_file in ranked_files
+    ]
+
+
+def context_chunk_candidates(
+    context: str,
+    source_metadata: Dict[str, Dict[str, str]],
+    limit: int,
+) -> List[Dict[str, Any]]:
+    chunks: List[Dict[str, Any]] = []
+    for index, content in enumerate(lightrag_context_contents(context), start=1):
+        refs = page_refs_from_chunk_content(content)
+        source_file = source_file_from_page_ref(refs[0]) if refs else source_file_from_chunk_content(content)
+        if not source_file:
+            continue
+        meta = source_metadata.get(source_file) or {}
+        chunks.append(
+            {
+                "rank": index,
+                "source_file": source_file,
+                "page_refs": refs,
+                "language": meta.get("language") or language_from_source_file(source_file),
+                "preview": re.sub(r"\s+", " ", content).strip()[:240],
+            }
+        )
+        if len(chunks) >= limit:
+            break
+    return chunks
+
+
+def chunk_files(chunks: Sequence[Dict[str, Any]], top_k: int) -> List[str]:
+    return dedupe_preserve_order(str(chunk.get("source_file") or "") for chunk in chunks)[:top_k]
+
+
+def metadata_filter_chunks(
+    chunks: Sequence[Dict[str, Any]],
+    target_language: str,
+    top_k: int,
+) -> List[Dict[str, Any]]:
+    if not target_language:
+        return list(chunks[:top_k])
+    return [
+        chunk
+        for chunk in chunks
+        if str(chunk.get("language") or "") == target_language
+    ][:top_k]
 
 
 def metadata_values_for_refs(
@@ -842,6 +948,8 @@ def score_row(
     top_k: int,
     context: str,
     raw_ranked_files: Optional[List[str]] = None,
+    retrieved_chunks: Optional[List[Dict[str, Any]]] = None,
+    raw_retrieved_chunks: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     expected_files = set(case["expected_files"])
     binary_relevance = [1 if source_file in expected_files else 0 for source_file in ranked_files]
@@ -852,6 +960,9 @@ def score_row(
         "mode": mode,
         "retrieved_files": ranked_files,
         "raw_retrieved_files": raw_ranked_files or ranked_files,
+        "retrieved_file_page_refs": ranked_file_page_refs(ranked_files, context),
+        "retrieved_chunks": retrieved_chunks or [],
+        "raw_retrieved_chunks": raw_retrieved_chunks or [],
         "target_language": case.get("expected_language") or "",
         "hit": relevant_retrieved > 0,
         "top1_correct": first_relevant_rank == 1,
@@ -940,6 +1051,7 @@ async def evaluate_mode(
     sibling_by_canonical_language: Dict[Tuple[str, str], str],
     mode: str,
     top_k: int,
+    candidate_k: int,
     metadata_rerank: str,
     allow_no_context: bool,
     color_enabled: bool,
@@ -954,12 +1066,19 @@ async def evaluate_mode(
             param=QueryParam(
                 mode=mode,
                 only_need_context=True,
-                top_k=max(top_k, 10),
+                top_k=max(top_k, candidate_k),
                 enable_rerank=False,
             ),
         )
         context_text = str(context or "")
-        raw_ranked_files = extract_ranked_files(context_text, source_files, top_k=max(top_k * 4, 20))
+        raw_chunks = context_chunk_candidates(
+            context_text,
+            source_metadata,
+            limit=max(candidate_k, top_k * 4, 20),
+        )
+        raw_ranked_files = chunk_files(raw_chunks, top_k=max(candidate_k, top_k * 4, 20))
+        if not raw_ranked_files:
+            raw_ranked_files = extract_ranked_files(context_text, source_files, top_k=max(candidate_k, top_k * 4, 20))
         ranked_files = raw_ranked_files[:top_k]
         if not raw_ranked_files and not allow_no_context and "[no-context]" in context_text:
             raise RuntimeError(
@@ -967,7 +1086,15 @@ async def evaluate_mode(
                 "or the index is unusable; rerun with provider access or pass --allow-no-context "
                 "if you intentionally want to score empty-context misses."
             )
-        row = score_row(case, mode, ranked_files, top_k, context_text)
+        row = score_row(
+            case,
+            mode,
+            ranked_files,
+            top_k,
+            context_text,
+            retrieved_chunks=raw_chunks[:top_k],
+            raw_retrieved_chunks=raw_chunks,
+        )
         rows.append(row)
 
         status = "ok" if row["hit"] else "MISS"
@@ -981,6 +1108,7 @@ async def evaluate_mode(
         print(colorize(line, "green" if row["hit"] else "red", color_enabled))
 
         if metadata_rerank != "off":
+            hard_metadata_filter = metadata_rerank in {"filter", "filter-verbose"}
             metadata_ranked_files = metadata_language_rerank(
                 query=case["query"],
                 ranked_files=raw_ranked_files,
@@ -988,6 +1116,16 @@ async def evaluate_mode(
                 source_metadata=source_metadata,
                 sibling_by_canonical_language=sibling_by_canonical_language,
                 top_k=top_k,
+                hard_filter=hard_metadata_filter,
+            )
+            metadata_chunks = (
+                metadata_filter_chunks(
+                    raw_chunks,
+                    case.get("expected_language") or "",
+                    top_k=top_k,
+                )
+                if hard_metadata_filter
+                else raw_chunks[:top_k]
             )
             metadata_row = score_row(
                 case,
@@ -995,10 +1133,12 @@ async def evaluate_mode(
                 metadata_ranked_files,
                 top_k,
                 context_text,
-                raw_ranked_files=ranked_files,
+                raw_ranked_files=raw_ranked_files,
+                retrieved_chunks=metadata_chunks,
+                raw_retrieved_chunks=raw_chunks,
             )
             metadata_rows.append(metadata_row)
-            if metadata_rerank == "verbose":
+            if metadata_rerank in {"verbose", "filter-verbose"}:
                 meta_status = "ok" if metadata_row["hit"] else "MISS"
                 meta_top = metadata_ranked_files[0] if metadata_ranked_files else "-"
                 meta_line = (
@@ -1197,13 +1337,17 @@ async def run(args: argparse.Namespace) -> None:
                 sibling_by_canonical_language=sibling_by_canonical_language,
                 mode=mode,
                 top_k=max(1, args.top_k),
+                candidate_k=max(max(1, args.top_k), args.candidate_k),
                 metadata_rerank=args.metadata_rerank,
                 allow_no_context=args.allow_no_context,
                 color_enabled=color_enabled,
             )
             for result_mode, mode_rows in rows.items():
                 rows_by_mode[result_mode] = mode_rows
-                summaries[result_mode] = summarize(mode_rows, top_k=max(1, args.top_k))
+                summaries[result_mode] = {
+                    **summarize(mode_rows, top_k=max(1, args.top_k)),
+                    "candidate_k": max(max(1, args.top_k), args.candidate_k),
+                }
 
         print_report(summaries, rows_by_mode, skipped, args.max_examples, color_enabled, report_metadata)
         save_report(Path(args.output), summaries, rows_by_mode, skipped, report_metadata)
@@ -1241,6 +1385,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-parallel-insert", type=int, default=int(os.getenv("LIGHTRAG_MAX_PARALLEL_INSERT", "1")))
     parser.add_argument("--modes", default=os.getenv("LIGHTRAG_MODES", ",".join(DEFAULT_MODES)))
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument(
+        "--candidate-k",
+        type=int,
+        default=int(os.getenv("LIGHTRAG_CANDIDATE_K", "64")),
+        help="Retrieve this many LightRAG candidates before metadata filtering/reranking.",
+    )
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument(
         "--index-limit",
@@ -1272,11 +1422,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--metadata-rerank",
-        choices=("off", "append", "verbose"),
+        choices=("off", "append", "verbose", "filter", "filter-verbose"),
         default=os.getenv("LIGHTRAG_METADATA_RERANK", "append"),
         help=(
             "Add language/canonical-doc metadata reranked results as mode+meta. "
-            "Use off for raw LightRAG only, verbose to print per-row metadata rerank lines."
+            "Use filter to hard-exclude non-target languages, off for raw LightRAG only, "
+            "verbose/filter-verbose to print per-row metadata lines."
         ),
     )
     parser.add_argument(

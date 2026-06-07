@@ -273,7 +273,6 @@ class LightRAGMetadataStore:
         target_language = "" if target_language == "other" else target_language
         chunks = _chunk_contents_from_context(context)
         hits: List[RetrievedHit] = []
-        filtered_hits: List[RetrievedHit] = []
         seen = set()
         for index, content in enumerate(chunks, start=1):
             source_file = _source_from_text(content)
@@ -287,7 +286,7 @@ class LightRAGMetadataStore:
             language_hint = normalize_language(_first_match(LANGUAGE_RE, content) or _language_from_source_file(source_file))
             score = 1.0 / float(index)
             if target_language and language_hint == target_language:
-                score += 0.25
+                score += 0.75
             meta: Dict[str, Any] = {
                 "source_file": source_file,
                 "filename": source_file,
@@ -301,9 +300,9 @@ class LightRAGMetadataStore:
             }
             hit = RetrievedHit(score=score, nid=-index, meta=meta)
             hits.append(hit)
-            if target_language and language_hint == target_language:
-                filtered_hits.append(hit)
 
-        selected_hits = filtered_hits if target_language else hits
-        selected_hits.sort(key=lambda hit: hit.score, reverse=True)
-        return selected_hits[:k]
+        # Prefer same-language chunks via score boost, but do not hard-drop other
+        # languages. Some topics may exist only in one language, and returning a
+        # useful cross-language chunk is better than returning nothing.
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return hits[:k]

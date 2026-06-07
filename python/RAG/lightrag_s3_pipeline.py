@@ -109,6 +109,50 @@ def source_signature(source_objects: list[dict[str, Any]]) -> list[dict[str, Any
     return signature
 
 
+def source_signature_index(signature: list[dict[str, Any]]) -> dict[str, tuple[str, int]]:
+    return {
+        str(item.get("key") or ""): (
+            str(item.get("etag") or ""),
+            int(item.get("size") or 0),
+        )
+        for item in signature
+        if str(item.get("key") or "")
+    }
+
+
+def classify_source_signature_change(
+    base_signature: list[dict[str, Any]] | None,
+    current_signature: list[dict[str, Any]],
+) -> str:
+    if not base_signature:
+        return "missing"
+
+    base_index = source_signature_index(base_signature)
+    current_index = source_signature_index(current_signature)
+    if not base_index:
+        return "missing"
+
+    for key, payload in base_index.items():
+        if current_index.get(key) != payload:
+            return "incompatible"
+
+    if len(current_index) == len(base_index):
+        return "same"
+    return "additive"
+
+
+def source_signature_added_keys(
+    base_signature: list[dict[str, Any]] | None,
+    current_signature: list[dict[str, Any]],
+) -> list[str]:
+    base_keys = set(source_signature_index(base_signature or []).keys())
+    return [
+        str(item.get("key") or "")
+        for item in current_signature
+        if str(item.get("key") or "") and str(item.get("key") or "") not in base_keys
+    ]
+
+
 def s3_json_or_none(s3: Any, bucket: str, key: str) -> dict[str, Any] | None:
     try:
         response = s3.get_object(Bucket=bucket, Key=key)
@@ -246,6 +290,12 @@ def build_context_matches(working_dir: Path, source_sig: list[dict[str, Any]]) -
     return bool(context and context.get("source_signature") == source_sig)
 
 
+def load_build_context_source_signature(working_dir: Path) -> list[dict[str, Any]] | None:
+    context = load_local_build_context(working_dir)
+    source_sig = context.get("source_signature") if context else None
+    return source_sig if isinstance(source_sig, list) else None
+
+
 def download_current_lightrag_release(
     s3: Any,
     bucket: str,
@@ -282,8 +332,10 @@ def download_current_lightrag_release(
         print(f"[lightrag-s3] hydrate LightRAG artifact s3://{bucket}/{key} -> {target}", flush=True)
         s3.download_file(bucket, key, str(target))
 
-    if not build_context_matches(tmp_dir, source_sig):
-        print("[lightrag-s3] current LightRAG release does not match source documents; rebuilding graph", flush=True)
+    release_source_sig = load_build_context_source_signature(tmp_dir)
+    release_change = classify_source_signature_change(release_source_sig, source_sig)
+    if release_change not in {"same", "additive"}:
+        print("[lightrag-s3] current LightRAG release is incompatible with current source documents; rebuilding graph", flush=True)
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return False
     if not working_dir_has_required_files(tmp_dir):
@@ -294,6 +346,13 @@ def download_current_lightrag_release(
     if working_dir.exists():
         shutil.rmtree(working_dir)
     tmp_dir.replace(working_dir)
+    if release_change == "additive":
+        added = source_signature_added_keys(release_source_sig, source_sig)
+        print(
+            "[lightrag-s3] reused current LightRAG release as additive base; "
+            f"{len(added)} new source document(s) will be inserted",
+            flush=True,
+        )
     print(f"[lightrag-s3] reused current LightRAG release {release_prefix}", flush=True)
     return True
 
@@ -361,18 +420,41 @@ def main() -> None:
         markdown_manifest_key = _join_key(args.markdown_prefix, "manifest.json")
         markdown_manifest = s3_json_or_none(s3, vectors_bucket, markdown_manifest_key)
         markdowns_reused = False
+        markdowns_additive_base = False
+        markdown_source_sig = (
+            markdown_manifest.get("source_signature")
+            if isinstance(markdown_manifest, dict)
+            else None
+        )
+        markdown_change = classify_source_signature_change(markdown_source_sig, current_source_signature)
         if args.mode == "continue" and markdown_manifest and markdown_manifest.get("source_signature") == current_source_signature:
             markdowns_reused = download_markdowns_from_manifest(s3, vectors_bucket, markdown_dir, markdown_manifest)
+        elif args.mode == "continue" and markdown_manifest and markdown_change == "additive":
+            markdowns_reused = download_markdowns_from_manifest(s3, vectors_bucket, markdown_dir, markdown_manifest)
+            if markdowns_reused:
+                markdowns_additive_base = True
+                added_keys = source_signature_added_keys(markdown_source_sig, current_source_signature)
+                print(
+                    "[lightrag-s3] reusing markdowns for unchanged source documents; "
+                    f"generating markdown only for {len(added_keys)} new source document(s)",
+                    flush=True,
+                )
 
-        if markdowns_reused:
+        if markdowns_reused and not markdowns_additive_base:
             print("[lightrag-s3] source documents unchanged; skipped markdown regeneration", flush=True)
         else:
             if args.mode == "continue":
-                print("[lightrag-s3] markdown manifest missing or source documents changed; regenerating markdowns", flush=True)
+                if markdowns_additive_base:
+                    print("[lightrag-s3] markdown base reused; generating markdown for newly added source documents", flush=True)
+                else:
+                    print("[lightrag-s3] markdown manifest missing or source documents changed; regenerating markdowns", flush=True)
+            keys_to_download = source_keys
+            if args.mode == "continue" and markdown_change == "additive":
+                keys_to_download = source_signature_added_keys(markdown_source_sig, current_source_signature)
             download_sources(
                 s3,
                 docs_bucket,
-                source_keys,
+                keys_to_download,
                 source_prefix=args.source_prefix,
                 source_dir=source_dir,
                 strip_prefix=args.strip_source_prefix,
@@ -394,8 +476,17 @@ def main() -> None:
             upload_markdowns(s3, vectors_bucket, markdown_dir, args.markdown_prefix, current_source_signature)
 
         if args.mode == "continue":
-            if build_context_matches(working_dir, current_source_signature):
+            local_source_sig = load_build_context_source_signature(working_dir)
+            local_change = classify_source_signature_change(local_source_sig, current_source_signature)
+            if local_change == "same":
                 print("[lightrag-s3] local LightRAG scratch matches source documents; continuing existing graph state", flush=True)
+            elif local_change == "additive":
+                added = source_signature_added_keys(local_source_sig, current_source_signature)
+                print(
+                    "[lightrag-s3] local LightRAG scratch is an additive-compatible base; "
+                    f"{len(added)} new source document(s) will be inserted",
+                    flush=True,
+                )
             elif download_current_lightrag_release(
                 s3,
                 vectors_bucket,
@@ -403,7 +494,7 @@ def main() -> None:
                 root_prefix=os.getenv("LIGHTRAG_S3_PREFIX", "lightrag"),
                 source_sig=current_source_signature,
             ):
-                print("[lightrag-s3] source documents unchanged; reused LightRAG graph artifacts", flush=True)
+                print("[lightrag-s3] reused compatible LightRAG graph artifacts from S3 release", flush=True)
             elif working_dir.exists():
                 print("[lightrag-s3] local LightRAG scratch does not match source documents; resetting graph scratch", flush=True)
                 shutil.rmtree(working_dir)

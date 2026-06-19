@@ -18,9 +18,6 @@
     <div class="hero-actions">
         <a href="/admin-ui/reports/usage-events" class="btn btn-app btn-app-primary">Usage Report</a>
         <a href="/admin-ui/reports/admin-actions" class="btn btn-app btn-app-secondary">Audit Report</a>
-        <button class="btn btn-tonal ink" type="button" data-bs-toggle="collapse" data-bs-target="#add-user-panel" aria-expanded="false" aria-controls="add-user-panel">
-            <i class="bi bi-plus-lg"></i> Add User
-        </button>
     </div>
 </section>
 
@@ -191,6 +188,11 @@
                                 <form action="/admin-ui/block/{{ user.telegram_id }}" method="post" class="d-inline">
                                     <input type="hidden" name="notes" value="">
                                     <button type="submit" class="btn btn-tonal ink">Block</button>
+                                </form>
+                                {% endif %}
+                                {% if user.id != admin_user.id %}
+                                <form action="/admin-ui/users/{{ user.telegram_id }}/delete" method="post" class="d-inline" onsubmit="return confirm('Delete this user from User Directory?');">
+                                    <button type="submit" class="btn btn-tonal danger">Delete</button>
                                 </form>
                                 {% endif %}
                             </div>

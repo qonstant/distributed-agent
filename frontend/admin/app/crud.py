@@ -1,7 +1,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional
 
-from sqlalchemy import String, cast, or_, select
+from sqlalchemy import String, cast, delete, or_, select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -177,6 +177,44 @@ async def update_user_identity(
             notes=notes or "update_user_profile",
         )
 
+    return user
+
+
+async def delete_user_by_telegram_id(db: AsyncSession, telegram_id: int):
+    user = await get_user_by_telegram_id(db, telegram_id)
+    if not user:
+        return None
+
+    user_id = user.id
+    conversation_ids = select(Conversation.id).where(Conversation.user_id == user_id)
+    message_ids = select(Message.id).where(Message.conversation_id.in_(conversation_ids))
+
+    await db.execute(
+        delete(AdminAction).where(
+            or_(
+                AdminAction.admin_user_id == user_id,
+                AdminAction.target_user_id == user_id,
+            )
+        )
+    )
+    await db.execute(delete(MessageClassification).where(MessageClassification.message_id.in_(message_ids)))
+    await db.execute(delete(UsageEvent).where(UsageEvent.user_id == user_id))
+    await db.execute(delete(Message).where(Message.conversation_id.in_(conversation_ids)))
+    await db.execute(delete(Conversation).where(Conversation.user_id == user_id))
+
+    for table_name in (
+        "monthly_usage",
+        "password_reset_tokens",
+        "user_sessions",
+        "user_auth_providers",
+    ):
+        await db.execute(
+            sa_text(f'DELETE FROM "{table_name}" WHERE user_id = :user_id'),
+            {"user_id": user_id},
+        )
+
+    await db.delete(user)
+    await db.commit()
     return user
 
 

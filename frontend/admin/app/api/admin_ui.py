@@ -12,6 +12,7 @@ from ..auth import authenticate_admin, create_access_token, decode_access_token
 from ..crud import (
     classify_message_by_admin,
     create_or_update_user,
+    delete_user_by_telegram_id,
     extend_user_access,
     get_all_admin_actions,
     get_all_users,
@@ -362,6 +363,26 @@ async def stop_lightrag_build(
 
     lightrag_jobs.stop()
     return RedirectResponse("/admin-ui/lightrag", status_code=HTTP_302_FOUND)
+
+
+@router.post("/users/{telegram_id}/delete")
+async def delete_user_ui(
+    request: Request,
+    telegram_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin_user=Depends(get_current_admin_user),
+):
+    if not admin_user:
+        return RedirectResponse("/admin-ui/login", status_code=HTTP_302_FOUND)
+
+    user = await get_user_by_telegram_id(db, telegram_id)
+    if not user:
+        return HTMLResponse("User not found", status_code=404)
+    if user.id == admin_user.id:
+        return HTMLResponse("You cannot delete the current admin user", status_code=400)
+
+    await delete_user_by_telegram_id(db, telegram_id)
+    return RedirectResponse("/admin-ui/dashboard", status_code=HTTP_302_FOUND)
 
 
 @router.post("/grant/{telegram_id}")

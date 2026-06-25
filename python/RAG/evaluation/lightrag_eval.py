@@ -131,6 +131,11 @@ def language_from_source_file(source_file: str) -> str:
     if "_" not in stem:
         return ""
     suffix = stem.rsplit("_", 1)[-1]
+    aliases = {
+        "eng": "en",
+        "kz": "kk",
+    }
+    suffix = aliases.get(suffix, suffix)
     return suffix if suffix in LANGUAGE_SUFFIXES else ""
 
 

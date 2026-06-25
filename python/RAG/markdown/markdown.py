@@ -43,7 +43,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_DOCX2PDF_OUTPUT_DIR = SCRIPT_DIR.parent / "docx2pdf" / "output"
 DEFAULT_DOCS_MD_DIR = SCRIPT_DIR / "docs_md"
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".markdown"}
-LANGUAGE_SUFFIX_RE = re.compile(r"_(kk|ru|en)$", flags=re.IGNORECASE)
+LANGUAGE_SUFFIX_RE = re.compile(r"_(kk|kz|ru|en|eng)$", flags=re.IGNORECASE)
 DOC_TYPE_ALIASES = {
     "application": "application",
     "apply": "application",
@@ -73,7 +73,12 @@ def split_language_suffix(stem: str) -> Tuple[str, str]:
     match = LANGUAGE_SUFFIX_RE.search(normalized)
     if not match:
         return normalized, ""
-    return normalized[: -len(match.group(0))], match.group(1).lower()
+    suffix = match.group(1).lower()
+    aliases = {
+        "eng": "en",
+        "kz": "kk",
+    }
+    return normalized[: -len(match.group(0))], aliases.get(suffix, suffix)
 
 def normalize_doc_type(value: str) -> str:
     normalized = normalize_slug(value)

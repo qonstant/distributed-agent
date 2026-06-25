@@ -8,11 +8,19 @@ stages:
   - echo "Running on $(hostname)"
   - docker --version || true
   - docker-compose --version || true
+  - export DOCKER_MAINTENANCE_LOCK="${DOCKER_MAINTENANCE_LOCK:-/var/lock/docker-maintenance.lock}"
+  - exec 9>"${DOCKER_MAINTENANCE_LOCK}"
+  - flock 9
+  - echo "Acquired Docker maintenance lock: ${DOCKER_MAINTENANCE_LOCK}"
 
 .before-vps2: &before-vps2
   - echo "Running on $(hostname) (golang runner)"
   - docker --version || true
   - docker-compose --version || true
+  - export DOCKER_MAINTENANCE_LOCK="${DOCKER_MAINTENANCE_LOCK:-/var/lock/docker-maintenance.lock}"
+  - exec 9>"${DOCKER_MAINTENANCE_LOCK}"
+  - flock 9
+  - echo "Acquired Docker maintenance lock: ${DOCKER_MAINTENANCE_LOCK}"
 
 variables:
   IMAGE_NAME: "rag:latest"

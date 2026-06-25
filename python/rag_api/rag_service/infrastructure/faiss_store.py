@@ -97,8 +97,15 @@ def _meta_language(meta: Dict[str, Any]) -> str:
 
     source_file = _source_file(meta)
     stem = Path(source_file).stem.lower() if source_file else ""
-    match = re.search(r"_(kk|ru|en)$", stem)
-    return match.group(1) if match else ""
+    match = re.search(r"_(kk|kz|ru|en|eng)$", stem)
+    if not match:
+        return ""
+    suffix = match.group(1)
+    aliases = {
+        "eng": "en",
+        "kz": "kk",
+    }
+    return aliases.get(suffix, suffix)
 
 
 def _chunk_key(hit: RetrievedHit) -> str:

@@ -55,8 +55,15 @@ def _first_match(pattern: re.Pattern[str], text: str) -> str:
 
 
 def _language_from_source_file(source_file: str) -> str:
-    match = re.search(r"_(kk|ru|en)\.pdf$", source_file.strip(), flags=re.IGNORECASE)
-    return match.group(1).lower() if match else ""
+    match = re.search(r"_(kk|kz|ru|en|eng)\.pdf$", source_file.strip(), flags=re.IGNORECASE)
+    if not match:
+        return ""
+    suffix = match.group(1).lower()
+    aliases = {
+        "eng": "en",
+        "kz": "kk",
+    }
+    return aliases.get(suffix, suffix)
 
 
 def _page_from_text(text: str) -> str:
@@ -128,6 +135,43 @@ def _source_files_from_chunks(chunks_path: Path) -> List[str]:
             files.append(source_file)
             seen.add(source_file)
     return files
+
+
+def _diversify_hits_by_file(hits: List[RetrievedHit], limit: int) -> List[RetrievedHit]:
+    if limit <= 0:
+        return []
+
+    ordered = sorted(hits, key=lambda item: item.score, reverse=True)
+    selected: List[RetrievedHit] = []
+    seen_chunks = set()
+    seen_files = set()
+
+    for hit in ordered:
+        source_file = str(hit.meta.get("source_file") or hit.meta.get("filename") or "").strip()
+        page = str(hit.meta.get("page") or "").strip()
+        text = str(hit.meta.get("text") or hit.meta.get("md") or "").strip()
+        chunk_key = (source_file, page, text[:160])
+        if not source_file or source_file in seen_files or chunk_key in seen_chunks:
+            continue
+        selected.append(hit)
+        seen_files.add(source_file)
+        seen_chunks.add(chunk_key)
+        if len(selected) >= limit:
+            return selected
+
+    for hit in ordered:
+        source_file = str(hit.meta.get("source_file") or hit.meta.get("filename") or "").strip()
+        page = str(hit.meta.get("page") or "").strip()
+        text = str(hit.meta.get("text") or hit.meta.get("md") or "").strip()
+        chunk_key = (source_file, page, text[:160])
+        if chunk_key in seen_chunks:
+            continue
+        selected.append(hit)
+        seen_chunks.add(chunk_key)
+        if len(selected) >= limit:
+            break
+
+    return selected
 
 
 class LightRAGMetadataStore:
@@ -304,5 +348,8 @@ class LightRAGMetadataStore:
         # Prefer same-language chunks via score boost, but do not hard-drop other
         # languages. Some topics may exist only in one language, and returning a
         # useful cross-language chunk is better than returning nothing.
-        hits.sort(key=lambda hit: hit.score, reverse=True)
-        return hits[:k]
+        #
+        # Also diversify by file before trimming so several pages from one file
+        # do not crowd out other relevant documents in the top-k passed onward
+        # to sufficiency and answer generation.
+        return _diversify_hits_by_file(hits, k)

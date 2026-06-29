@@ -157,6 +157,45 @@ class LightRAGMetadataStoreTests(unittest.TestCase):
         self.assertEqual(refined_hits[0].meta["source_file"], "italy/Residence_Permit_ru.pdf")
         self.assertIn(refined_hits[0].meta["page"], {"1", "7"})
 
+    def test_refine_results_keeps_multiple_focus_files_in_second_pass(self) -> None:
+        store = LightRAGMetadataStore(
+            rag=None,
+            working_dir=Path("."),
+            mode="naive",
+            source_files=[],
+            runner=None,
+            chunks_by_source_file={
+                "italy/Residence_Permit_eng.pdf": [
+                    {"source_file": "italy/Residence_Permit_eng.pdf", "page": "1", "text": "Apply for residence permit within 8 days after arrival.", "language": "en", "doc_type": "residence_permit", "country": "italy"},
+                ],
+                "italy/Visa_en.pdf": [
+                    {"source_file": "italy/Visa_en.pdf", "page": "2", "text": "Student visa application form and required documents.", "language": "en", "doc_type": "visa", "country": "italy"},
+                    {"source_file": "italy/Visa_en.pdf", "page": "3", "text": "How to apply for an Italian student visa step by step.", "language": "en", "doc_type": "visa", "country": "italy"},
+                ],
+            },
+            file_catalog={
+                "italy/Residence_Permit_eng.pdf": {"source_file": "italy/Residence_Permit_eng.pdf", "summary": "Student residence permit in Italy, Questura, Poste Italiane, fingerprints.", "language": "en", "doc_type": "residence_permit"},
+                "italy/Visa_en.pdf": {"source_file": "italy/Visa_en.pdf", "summary": "Italian student visa application process, form, documents, photos.", "language": "en", "doc_type": "visa"},
+            },
+        )
+        initial_hits = [
+            RetrievedHit(score=1.75, nid=1, meta={"source_file": "italy/Visa_en.pdf", "filename": "italy/Visa_en.pdf", "page": "3", "text": "How to apply for a visa."}),
+            RetrievedHit(score=0.81, nid=2, meta={"source_file": "italy/Residence_Permit_eng.pdf", "filename": "italy/Residence_Permit_eng.pdf", "page": "1", "text": "Residence permit process."}),
+        ]
+
+        refined_hits, refine_meta = store.refine_results(
+            query_text="How to apply for an Italian student visa?",
+            initial_hits=initial_hits,
+            k=5,
+            language="en",
+            preferred_source="italy/Residence_Permit_eng.pdf",
+        )
+
+        self.assertTrue(refine_meta["focused"])
+        top_files = {hit.meta["source_file"] for hit in refined_hits[:2]}
+        self.assertIn("italy/Residence_Permit_eng.pdf", top_files)
+        self.assertIn("italy/Visa_en.pdf", top_files)
+
     def test_load_file_catalog_prefers_generated_file_summaries_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             working_dir = Path(tmpdir)

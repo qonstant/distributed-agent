@@ -4,7 +4,12 @@ import unittest
 
 import numpy as np
 
-from rag_service.application.query_service import QueryService, _choose_retrieval_query, _infer_text_language
+from rag_service.application.query_service import (
+    QueryService,
+    _choose_retrieval_query,
+    _infer_text_language,
+    _query_explicitly_references_attachment,
+)
 from rag_service.application.usage_estimation import (
     usage_event_from_model_usage,
 )
@@ -173,6 +178,32 @@ class FakeConversationMemory:
 
 
 class QueryServiceTests(unittest.TestCase):
+    def test_attachment_reference_detection_uses_plain_phrase_and_page_checks(self) -> None:
+        self.assertTrue(
+            _query_explicitly_references_attachment(
+                "What does this file say about photos?",
+                "italy/Residence_Permit_eng.pdf",
+            )
+        )
+        self.assertTrue(
+            _query_explicitly_references_attachment(
+                "Что написано на странице 7?",
+                "italy/Residence_Permit_ru.pdf",
+            )
+        )
+        self.assertTrue(
+            _query_explicitly_references_attachment(
+                "Осы құжатта photo туралы не айтылған?",
+                "italy/Residence_Permit_kz.pdf",
+            )
+        )
+        self.assertFalse(
+            _query_explicitly_references_attachment(
+                "How to apply for a visa?",
+                "italy/Residence_Permit_eng.pdf",
+            )
+        )
+
     def test_language_aware_retrieval_query_prefers_search_language(self) -> None:
         self.assertEqual(_infer_text_language("Как подать на ВНЖ в Италии?"), "ru")
         self.assertEqual(_infer_text_language("How to apply for residence permit?"), "en")
@@ -732,6 +763,96 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIn("Preferred user name: Test User", gateway.generated_prompts[0])
         self.assertIn("Recent conversation context", gateway.generated_prompts[0])
         self.assertIn("user: Send me the sample onboarding guide", gateway.generated_prompts[0])
+
+    def test_unrelated_query_does_not_anchor_refinement_to_stale_attachment(self) -> None:
+        standalone_query = "How to apply for an Italian student visa?"
+        gateway = FakeGateway(
+            Classification(intent="PROCEDURE", explain="visa process", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query=standalone_query,
+                reason="clear visa question",
+            ),
+            json_response={"answer": "Use the student visa application steps.", "file": "italy/Visa_en.pdf"},
+        )
+        store = FakeStore(
+            results=[
+                RetrievedHit(
+                    score=1.75,
+                    nid=1,
+                    meta={"source_file": "italy/Visa_en.pdf", "page": "3", "text": "Visa application steps."},
+                )
+            ],
+            refined_results=None,
+        )
+        memory = FakeConversationMemory(
+            [
+                ConversationMessage(
+                    role="assistant",
+                    text="Earlier residence permit answer.",
+                    ts=1,
+                    attachments=[
+                        ConversationAttachment(
+                            name="Residence_Permit_eng.pdf",
+                            kind="document",
+                            source="italy/Residence_Permit_eng.pdf",
+                        )
+                    ],
+                )
+            ],
+            pending_attachment="italy/Residence_Permit_eng.pdf",
+        )
+        service = QueryService(gateway, store, conversation_memory=memory)
+
+        result = service.handle_query("How to apply for a visa", conversation_id="conv-1")
+
+        self.assertEqual(store.refine_calls[0]["preferred_source"], None)
+        self.assertEqual(result.file, "italy/Visa_en.pdf")
+        self.assertIn("page 3", result.answer)
+
+    def test_explicit_file_reference_can_anchor_refinement_to_attachment(self) -> None:
+        standalone_query = "What does this file say about residence permit photos?"
+        gateway = FakeGateway(
+            Classification(intent="FACTUAL_QUESTION", explain="attachment follow-up", language="en"),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query=standalone_query,
+                reason="clear file-specific follow-up",
+            ),
+            json_response={"answer": "It says to bring passport photos.", "file": "italy/Residence_Permit_eng.pdf"},
+        )
+        store = FakeStore(
+            results=[
+                RetrievedHit(
+                    score=0.8,
+                    nid=1,
+                    meta={"source_file": "italy/Residence_Permit_eng.pdf", "page": "9", "text": "Bring 4 passport photos."},
+                )
+            ],
+            refined_results=None,
+        )
+        memory = FakeConversationMemory(
+            [
+                ConversationMessage(
+                    role="assistant",
+                    text="Here is the residence permit guide.",
+                    ts=1,
+                    attachments=[
+                        ConversationAttachment(
+                            name="Residence_Permit_eng.pdf",
+                            kind="document",
+                            source="italy/Residence_Permit_eng.pdf",
+                        )
+                    ],
+                )
+            ],
+            pending_attachment="italy/Residence_Permit_eng.pdf",
+        )
+        service = QueryService(gateway, store, conversation_memory=memory)
+
+        service.handle_query("What does this file say about photos?", conversation_id="conv-1")
+
+        self.assertEqual(store.refine_calls[0]["preferred_source"], "italy/Residence_Permit_eng.pdf")
 
     def test_guidance_falls_back_to_best_source_file_when_llm_omits_file(self) -> None:
         gateway = FakeGateway(

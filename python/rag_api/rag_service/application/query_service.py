@@ -132,6 +132,103 @@ def _send_pending_attachment_answer(file_source: str, language: str) -> str:
     return f"Sure, here is the file: {file_label}."
 
 
+_ATTACHMENT_REFERENCE_PHRASES = (
+    "this file",
+    "that file",
+    "the file",
+    "this document",
+    "that document",
+    "the document",
+    "this pdf",
+    "that pdf",
+    "this attachment",
+    "that attachment",
+    "this guide",
+    "that guide",
+    "этот файл",
+    "этом файле",
+    "этого файла",
+    "тот файл",
+    "том файле",
+    "этот документ",
+    "этом документе",
+    "этого документа",
+    "тот документ",
+    "том документе",
+    "это вложение",
+    "этом вложении",
+    "мына файл",
+    "осы файл",
+    "сол файл",
+    "мына құжат",
+    "осы құжат",
+    "сол құжат",
+    "мына pdf",
+    "осы pdf",
+    "сол pdf",
+)
+_ATTACHMENT_PAGE_WORDS = {
+    "page",
+    "pages",
+    "страница",
+    "странице",
+    "страницу",
+    "страницы",
+    "бет",
+    "бетте",
+    "бетті",
+    "беттің",
+}
+_ATTACHMENT_PUNCT_TRANSLATION = str.maketrans({
+    ".": " ",
+    ",": " ",
+    ":": " ",
+    ";": " ",
+    "!": " ",
+    "?": " ",
+    "(": " ",
+    ")": " ",
+    "[": " ",
+    "]": " ",
+    "{": " ",
+    "}": " ",
+    "\"": " ",
+    "'": " ",
+    "/": " ",
+    "\\": " ",
+    "-": " ",
+    "_": " ",
+})
+
+
+def _query_explicitly_references_attachment(query: str, attachment_source: str = "") -> bool:
+    normalized_query = " ".join(
+        str(query or "").strip().lower().translate(_ATTACHMENT_PUNCT_TRANSLATION).split()
+    )
+    if not normalized_query:
+        return False
+
+    attachment_name = " ".join(
+        _basename(attachment_source).lower().translate(_ATTACHMENT_PUNCT_TRANSLATION).split()
+    )
+    if attachment_name and attachment_name in normalized_query:
+        return True
+
+    if any(phrase in normalized_query for phrase in _ATTACHMENT_REFERENCE_PHRASES):
+        return True
+
+    tokens = normalized_query.split()
+    for index, token in enumerate(tokens):
+        if token not in _ATTACHMENT_PAGE_WORDS:
+            continue
+        if index + 1 < len(tokens) and tokens[index + 1].isdigit():
+            return True
+        if index > 0 and tokens[index - 1].isdigit():
+            return True
+
+    return False
+
+
 def _find_previously_sent_attachment(
     history: List[ConversationMessage],
     file_chosen: Optional[str],
@@ -637,6 +734,7 @@ class QueryService:
                     else ""
                 ),
             )
+        resend_source = _resend_attachment_source(latest_attachment) if latest_attachment is not None else None
         if latest_attachment is not None or pending_file:
             attachment_action, attachment_action_usage = self._gateway.classify_attachment_follow_up(
                 normalized_query,
@@ -656,7 +754,6 @@ class QueryService:
                     usage_events=usage_events,
                 ), "send_pending_attachment")
 
-            resend_source = _resend_attachment_source(latest_attachment) if latest_attachment is not None else None
             if attachment_action == "resend_last_attachment" and resend_source is not None:
                 return finish(QueryResult(
                     answer=_resend_attachment_answer(latest_attachment, language),
@@ -837,9 +934,10 @@ class QueryService:
                 top_hits=self._hits_preview(results[: max(1, min(8, len(results)))]),
             )
 
-            retrieval_anchor_source = pending_file or (
-                _resend_attachment_source(latest_attachment) if latest_attachment is not None else None
-            )
+            retrieval_anchor_source = None
+            anchor_candidate = pending_file or resend_source
+            if anchor_candidate and _query_explicitly_references_attachment(normalized_query, anchor_candidate):
+                retrieval_anchor_source = anchor_candidate
             if hasattr(self._store, "refine_results"):
                 refined_results, refine_meta = self._store.refine_results(
                     query_text=retrieval_query,

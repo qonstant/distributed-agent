@@ -703,7 +703,6 @@ class LightRAGMetadataStore:
 
         focused_hits: List[RetrievedHit] = []
         for rank, source_file in enumerate(focus_files, start=1):
-            before_count = len(focused_hits)
             candidate = next((item for item in candidates if item.get("source_file") == source_file), {})
             initial_pages = set(candidate.get("pages") or [])
             summary_match = _text_match_score(query_text, str(candidate.get("summary") or ""))
@@ -739,8 +738,6 @@ class LightRAGMetadataStore:
                         },
                     )
                 )
-            if len(focused_hits) > before_count:
-                break
 
         if not focused_hits:
             return initial_hits, {

@@ -37,7 +37,8 @@ variables:
   LANDING_CONTAINER_NAME: "landing-page"
   # Generated RAG/LightRAG outputs can be written by containers on the VPS.
   # Do not let git clean fail the whole pipeline on root-owned generated files.
-  GIT_CLEAN_FLAGS: "-ffdx -e python/RAG/out/ -e python/rag_api/**/__pycache__/"
+  GIT_CLEAN_FLAGS: "-ffdx -e python/RAG/out/ -e python/rag_api/**/__pycache__/ -e .ci-cache/"
+  PNPM_STORE_DIR: "$CI_PROJECT_DIR/.ci-cache/pnpm-store"
 
 test-landing-prod:
   stage: test
@@ -50,14 +51,16 @@ test-landing-prod:
         - frontend/landing-page/package.json
   script:
     - |
+      mkdir -p "${PNPM_STORE_DIR}"
       docker run --rm \
         -v "$PWD:/workspace" \
+        -v "${PNPM_STORE_DIR}:/pnpm-store" \
         -w /workspace/frontend/landing-page \
         --user "$(id -u):$(id -g)" \
         -e HOME=/tmp \
         -e PNPM_HOME=/tmp/pnpm \
         node:22-alpine \
-        sh -lc 'corepack pnpm config set store-dir /tmp/.pnpm-store && corepack pnpm install --frozen-lockfile && corepack pnpm exec tsc --noEmit && corepack pnpm build'
+        sh -lc 'corepack pnpm config set store-dir /pnpm-store && corepack pnpm install --frozen-lockfile --prefer-offline && corepack pnpm exec tsc --noEmit && corepack pnpm build'
 
 test-landing-test:
   stage: test
@@ -70,14 +73,16 @@ test-landing-test:
         - frontend/landing-page/package.json
   script:
     - |
+      mkdir -p "${PNPM_STORE_DIR}"
       docker run --rm \
         -v "$PWD:/workspace" \
+        -v "${PNPM_STORE_DIR}:/pnpm-store" \
         -w /workspace/frontend/landing-page \
         --user "$(id -u):$(id -g)" \
         -e HOME=/tmp \
         -e PNPM_HOME=/tmp/pnpm \
         node:22-alpine \
-        sh -lc 'corepack pnpm config set store-dir /tmp/.pnpm-store && corepack pnpm install --frozen-lockfile && corepack pnpm exec tsc --noEmit && corepack pnpm build'
+        sh -lc 'corepack pnpm config set store-dir /pnpm-store && corepack pnpm install --frozen-lockfile --prefer-offline && corepack pnpm exec tsc --noEmit && corepack pnpm build'
 
 test-golang-prod:
   stage: test
@@ -111,7 +116,7 @@ build-rag-image-prod:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - cd python/rag_api
-    - docker build --no-cache -t "${IMAGE_NAME}" .
+    - docker build -t "${IMAGE_NAME}" .
 
 build-rag-image-test:
   stage: build
@@ -122,13 +127,16 @@ build-rag-image-test:
     - if: '$CI_COMMIT_BRANCH == "test"'
   script:
     - cd python/rag_api
-    - docker build --no-cache -t "${IMAGE_NAME}" .
+    - docker build -t "${IMAGE_NAME}" .
 
 deploy-rag-prod:
   stage: deploy
   tags:
     - vps1
   before_script: *before-vps1
+  needs:
+    - job: build-rag-image-prod
+      optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
@@ -150,8 +158,9 @@ deploy-rag-prod:
     - 'printf "LIGHTRAG_S3_PREFIX=%s\n" "${LIGHTRAG_S3_PREFIX:-lightrag}" >> .env'
     - 'printf "LIGHTRAG_QUERY_MODE=%s\n" "${LIGHTRAG_QUERY_MODE:-naive}" >> .env'
     - chmod 600 .env
+    - 'docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${IMAGE_NAME}" && exit 1)'
     - docker-compose down -v --remove-orphans || true
-    - docker-compose up -d --build
+    - docker-compose up -d --no-build
     - sleep 3
     - 'docker logs "${CONTAINER_NAME}" --tail 30 || true'
     - |
@@ -187,6 +196,9 @@ deploy-rag-test:
   tags:
     - vps1-test
   before_script: *before-vps1
+  needs:
+    - job: build-rag-image-test
+      optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "test"'
   script:
@@ -208,8 +220,9 @@ deploy-rag-test:
     - 'printf "LIGHTRAG_S3_PREFIX=%s\n" "${LIGHTRAG_S3_PREFIX_TEST:-lightrag}" >> .env'
     - 'printf "LIGHTRAG_QUERY_MODE=%s\n" "${LIGHTRAG_QUERY_MODE_TEST:-naive}" >> .env'
     - chmod 600 .env
+    - 'docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${IMAGE_NAME}" && exit 1)'
     - docker-compose down -v --remove-orphans || true
-    - docker-compose up -d --build
+    - docker-compose up -d --no-build
     - sleep 3
     - 'docker logs "${CONTAINER_NAME}" --tail 30 || true'
     - |
@@ -256,7 +269,7 @@ build-landing-image-prod:
   script:
     - cd frontend/landing-page
     - 'LANDING_DEPLOY_IMAGE="landing-page:${CI_COMMIT_SHORT_SHA}"'
-    - 'docker build --no-cache --build-arg NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL:-}" --label app=landing-page --label git_sha="${CI_COMMIT_SHA}" -t "${LANDING_DEPLOY_IMAGE}" .'
+    - 'docker build --build-arg NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL:-}" --label app=landing-page --label git_sha="${CI_COMMIT_SHA}" -t "${LANDING_DEPLOY_IMAGE}" .'
 
 build-landing-image-test:
   stage: build
@@ -271,13 +284,16 @@ build-landing-image-test:
   script:
     - cd frontend/landing-page
     - 'LANDING_DEPLOY_IMAGE="landing-page:test-${CI_COMMIT_SHORT_SHA}"'
-    - 'docker build --no-cache --build-arg NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL_TEST:-}" --label app=landing-page --label git_sha="${CI_COMMIT_SHA}" -t "${LANDING_DEPLOY_IMAGE}" .'
+    - 'docker build --build-arg NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL_TEST:-}" --label app=landing-page --label git_sha="${CI_COMMIT_SHA}" -t "${LANDING_DEPLOY_IMAGE}" .'
 
 deploy-landing-prod:
   stage: deploy
   tags:
     - vps1
   before_script: *before-vps1
+  needs:
+    - job: build-landing-image-prod
+      optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       exists:
@@ -311,6 +327,9 @@ deploy-landing-test:
   tags:
     - vps1-test
   before_script: *before-vps1
+  needs:
+    - job: build-landing-image-test
+      optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "test"'
       exists:
@@ -381,7 +400,7 @@ build-bot-image-prod:
         - Dockerfile
         - docker-compose.yml
   script:
-    - docker build --no-cache -t "${BOT_IMAGE_NAME}" .
+    - docker build -t "${BOT_IMAGE_NAME}" .
 
 build-bot-image-test:
   stage: build
@@ -394,13 +413,16 @@ build-bot-image-test:
         - Dockerfile
         - docker-compose.yml
   script:
-    - docker build --no-cache -t "${BOT_IMAGE_NAME}" .
+    - docker build -t "${BOT_IMAGE_NAME}" .
 
 deploy-bot-prod:
   stage: deploy
   tags:
     - vps1
   before_script: *before-vps1
+  needs:
+    - job: build-bot-image-prod
+      optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       exists:
@@ -415,8 +437,9 @@ deploy-bot-prod:
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY}" >> .env'
     - chmod 600 .env
+    - 'docker image inspect "${BOT_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${BOT_IMAGE_NAME}" && exit 1)'
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker-compose up -d --build
+    - docker-compose up -d --no-build
     - 'shred -u .env || rm -f .env || true'
 
 deploy-bot-test:
@@ -424,6 +447,9 @@ deploy-bot-test:
   tags:
     - vps1-test
   before_script: *before-vps1
+  needs:
+    - job: build-bot-image-test
+      optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "test"'
       exists:
@@ -438,8 +464,9 @@ deploy-bot-test:
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
     - 'printf "S3_SECRET_ACCESS_KEY=%s\n" "${S3_SECRET_ACCESS_KEY_TEST}" >> .env'
     - chmod 600 .env
+    - 'docker image inspect "${BOT_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${BOT_IMAGE_NAME}" && exit 1)'
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker-compose up -d --build
+    - docker-compose up -d --no-build
     - 'shred -u .env || rm -f .env || true'
 
 ################################################################################
@@ -454,7 +481,7 @@ build-golang-image-prod:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - cd golang
-    - docker build --no-cache -t "${GOLANG_IMAGE_NAME}" .
+    - docker build -t "${GOLANG_IMAGE_NAME}" .
 
 build-golang-image-test:
   stage: build
@@ -465,7 +492,7 @@ build-golang-image-test:
     - if: '$CI_COMMIT_BRANCH == "test"'
   script:
     - cd golang
-    - docker build --no-cache -t "${GOLANG_IMAGE_NAME}" .
+    - docker build -t "${GOLANG_IMAGE_NAME}" .
 
 deploy-golang-prod:
   stage: deploy
@@ -475,6 +502,8 @@ deploy-golang-prod:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   needs:
+    - job: build-golang-image-prod
+      optional: false
     - job: deploy-rag-prod
       optional: false
   script:
@@ -493,8 +522,9 @@ deploy-golang-prod:
     - 'printf "RABBITMQ_URL=%s\n" "${RABBITMQ_URL}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN}" >> .env'
     - chmod 600 .env
+    - 'docker image inspect "${GOLANG_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${GOLANG_IMAGE_NAME}" && exit 1)'
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker-compose up -d --build
+    - docker-compose up -d --no-build
     - 'shred -u .env || rm -f .env || true'
 
 deploy-golang-test:
@@ -505,6 +535,8 @@ deploy-golang-test:
   rules:
     - if: '$CI_COMMIT_BRANCH == "test"'
   needs:
+    - job: build-golang-image-test
+      optional: false
     - job: deploy-rag-test
       optional: false
   script:
@@ -523,8 +555,9 @@ deploy-golang-test:
     - 'printf "RABBITMQ_URL=%s\n" "${RABBITMQ_URL_TEST}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN_TEST}" >> .env'
     - chmod 600 .env
+    - 'docker image inspect "${GOLANG_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${GOLANG_IMAGE_NAME}" && exit 1)'
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
-    - docker-compose up -d --build
+    - docker-compose up -d --no-build
     - 'shred -u .env || rm -f .env || true'
 
 prepare-golang-db-files-prod:
@@ -585,7 +618,7 @@ build-admin-image-prod:
   script:
     - cd frontend/admin
     - 'ADMIN_DEPLOY_IMAGE="admin-panel:${CI_COMMIT_SHORT_SHA}"'
-    - docker build --no-cache --label app=admin-panel --label git_sha="${CI_COMMIT_SHA}" -t "${ADMIN_DEPLOY_IMAGE}" .
+    - docker build --label app=admin-panel --label git_sha="${CI_COMMIT_SHA}" -t "${ADMIN_DEPLOY_IMAGE}" .
 
 build-admin-image-test:
   stage: build
@@ -600,13 +633,16 @@ build-admin-image-test:
   script:
     - cd frontend/admin
     - 'ADMIN_DEPLOY_IMAGE="admin-panel:test-${CI_COMMIT_SHORT_SHA}"'
-    - docker build --no-cache --label app=admin-panel --label git_sha="${CI_COMMIT_SHA}" -t "${ADMIN_DEPLOY_IMAGE}" .
+    - docker build --label app=admin-panel --label git_sha="${CI_COMMIT_SHA}" -t "${ADMIN_DEPLOY_IMAGE}" .
 
 deploy-admin-prod:
   stage: deploy
   tags:
     - vps2
   before_script: *before-vps2
+  needs:
+    - job: build-admin-image-prod
+      optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       exists:
@@ -664,6 +700,9 @@ deploy-admin-test:
   tags:
     - vps2-test
   before_script: *before-vps2
+  needs:
+    - job: build-admin-image-test
+      optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "test"'
       exists:

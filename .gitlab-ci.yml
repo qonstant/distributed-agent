@@ -9,7 +9,7 @@ stages:
   - 'docker --version || true'
   - 'docker-compose --version || true'
   - |
-    export DOCKER_MAINTENANCE_LOCK="${DOCKER_MAINTENANCE_LOCK:-/var/lock/docker-maintenance.lock}"
+    export DOCKER_MAINTENANCE_LOCK="${DOCKER_MAINTENANCE_LOCK:-/tmp/docker-maintenance.lock}"
     exec 9>"${DOCKER_MAINTENANCE_LOCK}"
     flock 9
     echo "Acquired Docker maintenance lock: ${DOCKER_MAINTENANCE_LOCK}"
@@ -19,7 +19,7 @@ stages:
   - 'docker --version || true'
   - 'docker-compose --version || true'
   - |
-    export DOCKER_MAINTENANCE_LOCK="${DOCKER_MAINTENANCE_LOCK:-/var/lock/docker-maintenance.lock}"
+    export DOCKER_MAINTENANCE_LOCK="${DOCKER_MAINTENANCE_LOCK:-/tmp/docker-maintenance.lock}"
     exec 9>"${DOCKER_MAINTENANCE_LOCK}"
     flock 9
     echo "Acquired Docker maintenance lock: ${DOCKER_MAINTENANCE_LOCK}"

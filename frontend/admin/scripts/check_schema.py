@@ -35,6 +35,7 @@ REQUIRED_COLUMNS = {
     "messages": {
         "id",
         "conversation_id",
+        "is_assistant",
         "message_text",
         "created_at",
     },

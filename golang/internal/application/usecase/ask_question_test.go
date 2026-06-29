@@ -573,6 +573,12 @@ func TestAskQuestionExecute(t *testing.T) {
 		if got, want := published.UserMessage.Text, "hello"; got != want {
 			t.Fatalf("published.UserMessage.Text = %q, want %q", got, want)
 		}
+		if published.AssistantMessage == nil {
+			t.Fatal("published.AssistantMessage = nil, want assistant message")
+		}
+		if got, want := published.AssistantMessage.Text, "new answer"; got != want {
+			t.Fatalf("published.AssistantMessage.Text = %q, want %q", got, want)
+		}
 		if got, want := published.User.Username, "Stored Name"; got != want {
 			t.Fatalf("published.User.Username = %q, want %q", got, want)
 		}

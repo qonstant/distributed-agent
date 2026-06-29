@@ -183,6 +183,7 @@ class Message(Base):
         ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
     )
+    is_assistant = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     message_text = Column(Text, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
@@ -202,6 +203,7 @@ class Message(Base):
 
     __table_args__ = (
         Index("idx_messages_conversation_id", "conversation_id"),
+        Index("idx_messages_is_assistant", "is_assistant"),
         Index("idx_messages_created_at", "created_at"),
         Index("idx_messages_conversation_created_at", "conversation_id", "created_at"),
     )

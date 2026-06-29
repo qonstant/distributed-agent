@@ -190,8 +190,14 @@ func buildTurnEvent(
 			UpdatedAt: now,
 		},
 		UserMessage: persistence.Message{
-			Text:      question.Text,
-			CreatedAt: now,
+			IsAssistant: false,
+			Text:        question.Text,
+			CreatedAt:   now,
+		},
+		AssistantMessage: &persistence.Message{
+			IsAssistant: true,
+			Text:        draft.Text,
+			CreatedAt:   now,
 		},
 	}
 

@@ -462,10 +462,12 @@ async def get_user_usage_events(
 async def create_message(
     db: AsyncSession,
     conversation_id: int,
+    is_assistant: bool = False,
     message_text: str = "",
 ):
     message = Message(
         conversation_id=conversation_id,
+        is_assistant=is_assistant,
         message_text=message_text,
     )
     db.add(message)

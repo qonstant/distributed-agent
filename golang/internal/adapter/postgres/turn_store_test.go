@@ -36,8 +36,14 @@ func TestTurnStoreSaveTurn(t *testing.T) {
 			UpdatedAt: now,
 		},
 		UserMessage: persistence.Message{
-			Text:      "What is the test code?",
-			CreatedAt: now,
+			IsAssistant: false,
+			Text:        "What is the test code?",
+			CreatedAt:   now,
+		},
+		AssistantMessage: &persistence.Message{
+			IsAssistant: true,
+			Text:        "The test code is 1234.",
+			CreatedAt:   now,
 		},
 		Classification: &persistence.MessageClassification{
 			Intent:            "FACTUAL_QUESTION",
@@ -76,11 +82,11 @@ func TestTurnStoreSaveTurn(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(11)))
 
 	mock.ExpectQuery(regexp.QuoteMeta(`
-		INSERT INTO "messages" ("conversation_id", "message_text", "created_at")
-		VALUES ($1, $2, $3)
+		INSERT INTO "messages" ("conversation_id", "is_assistant", "message_text", "created_at")
+		VALUES ($1, $2, $3, $4)
 		RETURNING "id"
 	`)).
-		WithArgs(int64(11), "What is the test code?", now).
+		WithArgs(int64(11), false, "What is the test code?", now).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(101)))
 
 	mock.ExpectExec(regexp.QuoteMeta(`
@@ -103,6 +109,14 @@ func TestTurnStoreSaveTurn(t *testing.T) {
 	`)).
 		WithArgs(int64(101), "FACTUAL_QUESTION", "user asks about prior context", "en", "gpt-4o-mini", "v1", now).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	mock.ExpectQuery(regexp.QuoteMeta(`
+		INSERT INTO "messages" ("conversation_id", "is_assistant", "message_text", "created_at")
+		VALUES ($1, $2, $3, $4)
+		RETURNING "id"
+	`)).
+		WithArgs(int64(11), true, "The test code is 1234.", now).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(102)))
 
 	mock.ExpectExec(regexp.QuoteMeta(`
 		INSERT INTO "usage_events" (

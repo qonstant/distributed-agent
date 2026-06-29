@@ -122,6 +122,7 @@ class UsageEventOut(UsageEventBase):
 
 class MessageBase(BaseModel):
     conversation_id: int
+    is_assistant: bool = False
     message_text: str
 
 

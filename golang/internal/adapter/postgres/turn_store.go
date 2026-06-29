@@ -71,6 +71,12 @@ func (s *TurnStore) SaveTurn(ctx context.Context, event persistence.TurnEvent) e
 		}
 	}
 
+	if event.AssistantMessage != nil {
+		if _, err := insertMessage(ctx, tx, conversationID, *event.AssistantMessage); err != nil {
+			return err
+		}
+	}
+
 	for _, usage := range event.UsageEvents {
 		if err := insertUsageEvent(ctx, tx, userID, conversationID, userMessageID, usage); err != nil {
 			return err
@@ -159,15 +165,16 @@ func insertMessage(
 	if err := tx.QueryRowContext(
 		ctx,
 		`
-		INSERT INTO "messages" ("conversation_id", "message_text", "created_at")
-		VALUES ($1, $2, $3)
+		INSERT INTO "messages" ("conversation_id", "is_assistant", "message_text", "created_at")
+		VALUES ($1, $2, $3, $4)
 		RETURNING "id"
 		`,
 		conversationID,
+		message.IsAssistant,
 		message.Text,
 		createdAt,
 	).Scan(&id); err != nil {
-		return 0, fmt.Errorf("insert user message: %w", err)
+		return 0, fmt.Errorf("insert message: %w", err)
 	}
 
 	return id, nil

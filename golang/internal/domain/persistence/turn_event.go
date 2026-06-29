@@ -5,12 +5,13 @@ import "time"
 const TurnEventsQueueName = "agent.turn_persistence"
 
 type TurnEvent struct {
-	Version        int                    `json:"version"`
-	User           User                   `json:"user"`
-	Conversation   Conversation           `json:"conversation"`
-	UserMessage    Message                `json:"user_message"`
-	Classification *MessageClassification `json:"classification,omitempty"`
-	UsageEvents    []UsageEvent           `json:"usage_events,omitempty"`
+	Version          int                    `json:"version"`
+	User             User                   `json:"user"`
+	Conversation     Conversation           `json:"conversation"`
+	UserMessage      Message                `json:"user_message"`
+	AssistantMessage *Message               `json:"assistant_message,omitempty"`
+	Classification   *MessageClassification `json:"classification,omitempty"`
+	UsageEvents      []UsageEvent           `json:"usage_events,omitempty"`
 }
 
 type User struct {
@@ -26,8 +27,9 @@ type Conversation struct {
 }
 
 type Message struct {
-	Text      string    `json:"text"`
-	CreatedAt time.Time `json:"created_at"`
+	IsAssistant bool      `json:"is_assistant"`
+	Text        string    `json:"text"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type MessageClassification struct {

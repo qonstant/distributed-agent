@@ -199,6 +199,29 @@ _ATTACHMENT_PUNCT_TRANSLATION = str.maketrans({
     "-": " ",
     "_": " ",
 })
+_LANGUAGE_SWITCH_PREFIXES = {
+    "en": ("english", "англ", "engl", "eng"),
+    "ru": ("russian", "рус", "russ", "rus"),
+    "kk": ("kazakh", "qazaq", "қазақ", "қаз", "казах", "каз"),
+}
+_LANGUAGE_SWITCH_MARKERS = {
+    "can",
+    "could",
+    "please",
+    "pls",
+    "say",
+    "write",
+    "answer",
+    "reply",
+    "version",
+    "translate",
+    "можно",
+    "переведи",
+    "перевести",
+    "бола",
+    "бола ма",
+    "жауап",
+}
 
 
 def _query_explicitly_references_attachment(query: str, attachment_source: str = "") -> bool:
@@ -227,6 +250,36 @@ def _query_explicitly_references_attachment(query: str, attachment_source: str =
             return True
 
     return False
+
+
+def _detect_language_switch_follow_up(query: str) -> str:
+    normalized_query = " ".join(
+        str(query or "").strip().lower().translate(_ATTACHMENT_PUNCT_TRANSLATION).split()
+    )
+    if not normalized_query:
+        return ""
+
+    tokens = normalized_query.split()
+    if not tokens or len(tokens) > 8:
+        return ""
+
+    detected_target = ""
+    for target_language, prefixes in _LANGUAGE_SWITCH_PREFIXES.items():
+        if any(token == prefix or token.startswith(prefix) for token in tokens for prefix in prefixes):
+            if detected_target and detected_target != target_language:
+                return ""
+            detected_target = target_language
+
+    if not detected_target:
+        return ""
+
+    if len(tokens) <= 3:
+        return detected_target
+
+    if any(token in _LANGUAGE_SWITCH_MARKERS for token in tokens):
+        return detected_target
+
+    return ""
 
 
 def _find_previously_sent_attachment(
@@ -545,6 +598,7 @@ class QueryService:
         normalized_preferred_name = (preferred_name or "").strip()
         trace_id = uuid.uuid4().hex[:12]
         started_at = time.perf_counter()
+        language_switch_target = _detect_language_switch_follow_up(normalized_query)
 
         def trace(stage: str, **fields: Any) -> None:
             self._trace(
@@ -600,6 +654,14 @@ class QueryService:
                 )
             return history
 
+        if language_switch_target:
+            history = ensure_history_loaded()
+            trace(
+                "language_switch_follow_up",
+                target_language=language_switch_target,
+                history_count=len(history),
+            )
+
         guardrail, guardrail_usage = self._gateway.guard_query(normalized_query, history=None)
         trace("guard.first", **self._guardrail_trace(guardrail))
         usage_events = [
@@ -648,12 +710,19 @@ class QueryService:
         trace("guard.final", **self._guardrail_trace(guardrail))
 
         if not guardrail.allowed:
-            return finish(QueryResult(
-                answer=_guardrail_blocked_answer(guardrail_language, guardrail.violation),
-                file=None,
-                classification=None,
-                usage_events=usage_events,
-            ), "guard_blocked")
+            if language_switch_target and history:
+                trace(
+                    "guard.language_switch_bypass",
+                    target_language=language_switch_target,
+                    reason=guardrail.reason,
+                )
+            else:
+                return finish(QueryResult(
+                    answer=_guardrail_blocked_answer(guardrail_language, guardrail.violation),
+                    file=None,
+                    classification=None,
+                    usage_events=usage_events,
+                ), "guard_blocked")
 
         history = ensure_history_loaded()
         classification, classification_usage = self._gateway.classify_query(normalized_query, history=history)
@@ -672,6 +741,42 @@ class QueryService:
         trace("classifier", **self._classification_trace(classification, normalized_intent=intent))
 
         forced_clarity: Optional[RetrievalClarity] = None
+        skip_classifier_clarify = False
+
+        if language_switch_target and history:
+            switch_clarity, switch_clarity_usage = self._retrieval_clarity(
+                normalized_query,
+                language_switch_target,
+                clarity_intent or "OTHER",
+                history,
+                trace_id=trace_id,
+                conversation_id=conversation_id,
+            )
+            trace(
+                "language_switch_follow_up.resolved",
+                target_language=language_switch_target,
+                related=switch_clarity.is_retrieval_related,
+                clear=switch_clarity.is_clear,
+                query=switch_clarity.standalone_query,
+                reason=switch_clarity.reason,
+            )
+            if switch_clarity_usage is not None:
+                usage_events.append(usage_event_from_model_usage("classification", switch_clarity_usage))
+            if switch_clarity.is_retrieval_related and switch_clarity.is_clear:
+                if not switch_clarity.target_language:
+                    switch_clarity = RetrievalClarity(
+                        is_retrieval_related=switch_clarity.is_retrieval_related,
+                        is_clear=switch_clarity.is_clear,
+                        standalone_query=switch_clarity.standalone_query,
+                        clarifying_question=switch_clarity.clarifying_question,
+                        reason=switch_clarity.reason,
+                        target_language=language_switch_target,
+                    )
+                forced_clarity = switch_clarity
+                language = _effective_language(language or language_switch_target, switch_clarity.target_language)
+                if intent not in RETRIEVAL_INTENTS:
+                    intent = "PROCEDURE"
+                skip_classifier_clarify = True
 
         if classification.profile_action == "set_preferred_name" and (classification.preferred_name or "").strip():
             return finish(QueryResult(
@@ -681,7 +786,7 @@ class QueryService:
                 usage_events=usage_events,
             ), "profile_update")
 
-        if classification.route == "CLARIFY" or _below_confidence_threshold(intent, classification.confidence):
+        if not skip_classifier_clarify and (classification.route == "CLARIFY" or _below_confidence_threshold(intent, classification.confidence)):
             if history:
                 clarity, clarity_usage = self._retrieval_clarity(
                     normalized_query,

@@ -7,6 +7,7 @@ import numpy as np
 from rag_service.application.query_service import (
     QueryService,
     _choose_retrieval_query,
+    _detect_language_switch_follow_up,
     _infer_text_language,
     _query_explicitly_references_attachment,
 )
@@ -203,6 +204,12 @@ class QueryServiceTests(unittest.TestCase):
                 "italy/Residence_Permit_eng.pdf",
             )
         )
+
+    def test_detect_language_switch_follow_up_for_supported_languages(self) -> None:
+        self.assertEqual(_detect_language_switch_follow_up("На русском можно"), "ru")
+        self.assertEqual(_detect_language_switch_follow_up("А можно на Английском?"), "en")
+        self.assertEqual(_detect_language_switch_follow_up("qazaqsha bola ma"), "kk")
+        self.assertEqual(_detect_language_switch_follow_up("scholarship in russian language"), "")
 
     def test_language_aware_retrieval_query_prefers_search_language(self) -> None:
         self.assertEqual(_infer_text_language("Как подать на ВНЖ в Италии?"), "ru")
@@ -1259,6 +1266,53 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(store.search_calls[0]["language"], "en")
         self.assertEqual(store.search_calls[0]["query_text"], "How to apply for an Italian student visa?")
         self.assertIn("Answer in the same language as detected/requested: English", gateway.generated_prompts[0])
+
+    def test_language_switch_follow_up_can_bypass_guardrail_block_and_continue_topic(self) -> None:
+        history = [
+            ConversationMessage(
+                role="assistant",
+                text="To apply for the DSU scholarship, prepare the required family income documents.",
+                ts=1,
+                attachments=[ConversationAttachment(name="DSU_Scholarship_en.pdf", kind="document", source="italy/DSU_Scholarship_en.pdf")],
+            )
+        ]
+        gateway = FakeGateway(
+            Classification(intent="OTHER", explain="language switch follow-up", language="ru"),
+            guardrail=GuardrailResult(
+                allowed=False,
+                reason="The latest message alone is not a standalone study-abroad request.",
+                language="ru",
+            ),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query="How to apply for the Italian DSU student scholarship?",
+                reason="The user asks to continue the previous DSU topic in Russian.",
+                target_language="ru",
+            ),
+            json_response={
+                "answer": "Для подачи на стипендию DSU подготовьте документы о доходах семьи.",
+                "file": "italy/DSU_Scholarship_ru.pdf",
+            },
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/DSU_Scholarship_ru.pdf", "page": 1, "text": "Документы для подачи на стипендию DSU."},
+            )
+        ]
+        store = FakeStore(results)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory(history))
+
+        result = service.handle_query("На русском можно", conversation_id="conv-1")
+
+        self.assertEqual(
+            result.answer,
+            "Для подачи на стипендию DSU подготовьте документы о доходах семьи."
+            f"\n\n{RU_PAGE_1_REFERENCE}",
+        )
+        self.assertEqual(result.file, "italy/DSU_Scholarship_ru.pdf")
+        self.assertEqual(store.search_calls[0]["language"], "ru")
 
     def test_chit_chat_with_history_still_greets_when_not_retrieval_related(self) -> None:
         history = [

@@ -2,6 +2,8 @@ import type React from "react"
 import type { Metadata } from "next"
 import Script from "next/script"
 import { Analytics } from "@vercel/analytics/next"
+import { LanguageProvider } from "@/components/language-provider"
+import { SiteHeader } from "@/components/site-header"
 import "./globals.css"
 
 export const metadata: Metadata = {
@@ -85,8 +87,13 @@ export default function RootLayout({
       </head>
 
       <body className="font-sans antialiased">
-        {children}
-        <Analytics />
+        <LanguageProvider>
+          <div className="min-h-screen">
+            <SiteHeader />
+            {children}
+          </div>
+          <Analytics />
+        </LanguageProvider>
       </body>
     </html>
   )

@@ -209,34 +209,28 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage: handleSetLanguage, t }}>
-      <div className="fixed top-4 right-4 z-50 flex gap-2">
-        <Button
-          variant={language === "en" ? "default" : "outline"}
-          size="sm"
-          onClick={() => handleSetLanguage("en")}
-          className="font-medium"
-        >
-          EN
-        </Button>
-        <Button
-          variant={language === "ru" ? "default" : "outline"}
-          size="sm"
-          onClick={() => handleSetLanguage("ru")}
-          className="font-medium"
-        >
-          RU
-        </Button>
-        <Button
-          variant={language === "kk" ? "default" : "outline"}
-          size="sm"
-          onClick={() => handleSetLanguage("kk")}
-          className="font-medium"
-        >
-          KK
-        </Button>
-      </div>
       {children}
     </LanguageContext.Provider>
+  )
+}
+
+export function LanguageSwitcher() {
+  const { language, setLanguage } = useLanguage()
+
+  return (
+    <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 p-1">
+      {(["en", "ru", "kk"] as const).map((lang) => (
+        <Button
+          key={lang}
+          variant={language === lang ? "default" : "ghost"}
+          size="sm"
+          onClick={() => setLanguage(lang)}
+          className="h-8 rounded-full px-3 text-xs font-semibold uppercase tracking-[0.24em]"
+        >
+          {lang}
+        </Button>
+      ))}
+    </div>
   )
 }
 

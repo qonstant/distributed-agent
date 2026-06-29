@@ -15,7 +15,7 @@ export function FAQSection() {
   ]
 
   return (
-    <section className="py-20 px-4 bg-card">
+    <section id="faq" className="py-20 px-4 bg-card">
       <div className="max-w-3xl mx-auto space-y-8">
         <h2 className="text-3xl md:text-4xl font-bold text-center">{t("faq_title")}</h2>
 

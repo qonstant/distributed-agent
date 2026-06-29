@@ -12,7 +12,7 @@ export function HeroSection() {
   }
 
   return (
-    <section className="relative min-h-screen flex items-center justify-center px-4 py-20">
+    <section className="relative flex min-h-screen items-center justify-center px-4 pb-20 pt-36 md:pt-40">
       <div className="max-w-5xl mx-auto text-center space-y-8">
         <div className="space-y-4">
           <h1 className="text-5xl md:text-7xl font-bold tracking-tight text-balance">

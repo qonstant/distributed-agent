@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
-from rag_service.infrastructure.lightrag_store import LightRAGMetadataStore, _language_from_source_file
+from rag_service.domain.models import RetrievedHit
+from rag_service.infrastructure.lightrag_store import LightRAGMetadataStore, _language_from_source_file, _load_file_catalog
 
 
 class LightRAGMetadataStoreTests(unittest.TestCase):
@@ -70,6 +73,147 @@ class LightRAGMetadataStoreTests(unittest.TestCase):
         self.assertEqual(hits[0].meta["source_file"], "italy/Visa_ru.pdf")
         self.assertEqual(hits[1].meta["source_file"], "italy/Application_ru.pdf")
         self.assertEqual(hits[2].meta["source_file"], "italy/Residence_Permit_eng.pdf")
+
+    def test_refine_results_focuses_on_best_matching_file_then_pages(self) -> None:
+        store = LightRAGMetadataStore(
+            rag=None,
+            working_dir=Path("."),
+            mode="naive",
+            source_files=[],
+            runner=None,
+            chunks_by_source_file={
+                "italy/Visa_ru.pdf": [
+                    {"source_file": "italy/Visa_ru.pdf", "page": "2", "text": "Документы на визу и анкета.", "language": "ru", "doc_type": "visa", "country": "italy"},
+                    {"source_file": "italy/Visa_ru.pdf", "page": "3", "text": "Подача на визу и фото.", "language": "ru", "doc_type": "visa", "country": "italy"},
+                ],
+                "italy/Residence_Permit_ru.pdf": [
+                    {"source_file": "italy/Residence_Permit_ru.pdf", "page": "1", "text": "Подача на ВНЖ в Италии. Вы должны подать заявление в течение 8 дней после прибытия.", "language": "ru", "doc_type": "residence_permit", "country": "italy"},
+                    {"source_file": "italy/Residence_Permit_ru.pdf", "page": "7", "text": "В конверт для ВНЖ нужно положить копию паспорта, копию визы, страховку и приглашение.", "language": "ru", "doc_type": "residence_permit", "country": "italy"},
+                ],
+            },
+            file_catalog={
+                "italy/Visa_ru.pdf": {"source_file": "italy/Visa_ru.pdf", "summary": "Подача на студенческую визу в Италию, анкета и фото.", "language": "ru", "doc_type": "visa"},
+                "italy/Residence_Permit_ru.pdf": {"source_file": "italy/Residence_Permit_ru.pdf", "summary": "Подача на студенческий ВНЖ в Италии, сроки, этапы и документы.", "language": "ru", "doc_type": "residence_permit"},
+            },
+        )
+        initial_hits = [
+            RetrievedHit(score=1.75, nid=1, meta={"source_file": "italy/Visa_ru.pdf", "filename": "italy/Visa_ru.pdf", "page": "3", "text": "Подача на визу."}),
+            RetrievedHit(score=0.81, nid=2, meta={"source_file": "italy/Residence_Permit_ru.pdf", "filename": "italy/Residence_Permit_ru.pdf", "page": "10", "text": "Получение ВНЖ."}),
+        ]
+
+        refined_hits, refine_meta = store.refine_results(
+            query_text="Как подать на студенческий ВНЖ в Италии: процесс и документы.",
+            initial_hits=initial_hits,
+            k=5,
+            language="ru",
+        )
+
+        self.assertTrue(refine_meta["focused"])
+        self.assertIn("italy/Residence_Permit_ru.pdf", refine_meta["selected_files"])
+        self.assertEqual(refined_hits[0].meta["source_file"], "italy/Residence_Permit_ru.pdf")
+        self.assertIn(refined_hits[0].meta["page"], {"1", "7"})
+
+    def test_refine_results_can_pull_best_file_from_catalog_even_if_missing_in_initial_hits(self) -> None:
+        store = LightRAGMetadataStore(
+            rag=None,
+            working_dir=Path("."),
+            mode="naive",
+            source_files=[],
+            runner=None,
+            chunks_by_source_file={
+                "italy/Visa_ru.pdf": [
+                    {"source_file": "italy/Visa_ru.pdf", "page": "2", "text": "Документы на студенческую визу и анкета.", "language": "ru", "doc_type": "visa", "country": "italy"},
+                    {"source_file": "italy/Visa_ru.pdf", "page": "3", "text": "Подача на визу через консульство.", "language": "ru", "doc_type": "visa", "country": "italy"},
+                ],
+                "italy/Application_ru.pdf": [
+                    {"source_file": "italy/Application_ru.pdf", "page": "1", "text": "Подача документов в университет и pre-enrollment.", "language": "ru", "doc_type": "application", "country": "italy"},
+                ],
+                "italy/Residence_Permit_ru.pdf": [
+                    {"source_file": "italy/Residence_Permit_ru.pdf", "page": "1", "text": "Подача на ВНЖ в Италии. Вы должны подать заявление в течение 8 дней после прибытия.", "language": "ru", "doc_type": "residence_permit", "country": "italy"},
+                    {"source_file": "italy/Residence_Permit_ru.pdf", "page": "7", "text": "В конверт для ВНЖ нужно положить копию паспорта, визы, страховку и приглашение от университета.", "language": "ru", "doc_type": "residence_permit", "country": "italy"},
+                ],
+            },
+            file_catalog={
+                "italy/Visa_ru.pdf": {"source_file": "italy/Visa_ru.pdf", "summary": "Студенческая виза в Италию: анкета, фото, подача в консульство.", "language": "ru", "doc_type": "visa"},
+                "italy/Application_ru.pdf": {"source_file": "italy/Application_ru.pdf", "summary": "Поступление в университет Италии: pre-enrollment, admission, документы в вуз.", "language": "ru", "doc_type": "application"},
+                "italy/Residence_Permit_ru.pdf": {"source_file": "italy/Residence_Permit_ru.pdf", "summary": "Студенческий ВНЖ в Италии: сроки, этапы подачи, документы, Poste Italiane, Questura.", "language": "ru", "doc_type": "residence_permit"},
+            },
+        )
+        initial_hits = [
+            RetrievedHit(score=1.75, nid=1, meta={"source_file": "italy/Visa_ru.pdf", "filename": "italy/Visa_ru.pdf", "page": "3", "text": "Подача на визу."}),
+            RetrievedHit(score=1.08, nid=2, meta={"source_file": "italy/Visa_ru.pdf", "filename": "italy/Visa_ru.pdf", "page": "2", "text": "Документы на визу."}),
+            RetrievedHit(score=0.87, nid=3, meta={"source_file": "italy/Application_ru.pdf", "filename": "italy/Application_ru.pdf", "page": "1", "text": "Документы для поступления."}),
+        ]
+
+        refined_hits, refine_meta = store.refine_results(
+            query_text="Как подать на студенческий ВНЖ в Италии: процесс и документы.",
+            initial_hits=initial_hits,
+            k=5,
+            language="ru",
+        )
+
+        self.assertTrue(refine_meta["focused"])
+        self.assertIn("italy/Residence_Permit_ru.pdf", refine_meta["selected_files"])
+        self.assertEqual(refined_hits[0].meta["source_file"], "italy/Residence_Permit_ru.pdf")
+        self.assertIn(refined_hits[0].meta["page"], {"1", "7"})
+
+    def test_load_file_catalog_prefers_generated_file_summaries_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            working_dir = Path(tmpdir)
+            (working_dir / "file_summaries.json").write_text(
+                json.dumps(
+                    {
+                        "files": {
+                            "italy/Residence_Permit_ru.pdf": {
+                                "source_file": "italy/Residence_Permit_ru.pdf",
+                                "title": "Residence_Permit_ru.pdf",
+                                "language": "ru",
+                                "doc_type": "residence_permit",
+                                "country": "italy",
+                                "summary": "Студенческий ВНЖ в Италии: сроки, этапы подачи, документы, Poste Italiane и Questura.",
+                                "page_snippets": [{"page": "1", "excerpt": "Подача на ВНЖ в течение 8 дней."}],
+                            }
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (working_dir / "kv_store_doc_status.json").write_text(
+                json.dumps(
+                    {
+                        "doc-1": {
+                            "file_path": "italy/Residence_Permit_ru.pdf",
+                            "status": "processed",
+                            "content_summary": "SOURCE_FILE: italy/Residence_Permit_ru.pdf\n...\n",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            catalog = _load_file_catalog(
+                working_dir,
+                {
+                    "italy/Residence_Permit_ru.pdf": [
+                        {
+                            "source_file": "italy/Residence_Permit_ru.pdf",
+                            "page": "1",
+                            "text": "Подача на ВНЖ в течение 8 дней после приезда.",
+                            "language": "ru",
+                            "doc_type": "residence_permit",
+                            "country": "italy",
+                        }
+                    ]
+                },
+            )
+
+            self.assertEqual(
+                catalog["italy/Residence_Permit_ru.pdf"]["summary"],
+                "Студенческий ВНЖ в Италии: сроки, этапы подачи, документы, Poste Italiane и Questura.",
+            )
+            self.assertEqual(catalog["italy/Residence_Permit_ru.pdf"]["pages"], ["1"])
 
 
 if __name__ == "__main__":

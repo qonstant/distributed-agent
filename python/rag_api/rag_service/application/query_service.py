@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import asdict, is_dataclass
@@ -60,6 +61,10 @@ INTENT_CONFIDENCE_THRESHOLDS = {
     "COMPARISON": 0.75,
     "OUT_OF_DOMAIN": 0.80,
 }
+
+KAZAKH_SPECIFIC_RE = re.compile(r"[әғқңөұүһі]", flags=re.IGNORECASE)
+CYRILLIC_RE = re.compile(r"[а-яё]", flags=re.IGNORECASE)
+LATIN_RE = re.compile(r"[a-z]", flags=re.IGNORECASE)
 
 
 def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Optional[RetrievedHit]]:
@@ -288,6 +293,34 @@ def _effective_language(language: str, target_language: str = "") -> str:
     if normalized_target in {"en", "ru", "kk"}:
         return normalized_target
     return language
+
+
+def _infer_text_language(text: str) -> str:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return "other"
+    if KAZAKH_SPECIFIC_RE.search(normalized):
+        return "kk"
+    if CYRILLIC_RE.search(normalized):
+        return "ru"
+    if LATIN_RE.search(normalized):
+        return "en"
+    return "other"
+
+
+def _choose_retrieval_query(response_language: str, *candidates: str) -> str:
+    non_empty = [str(candidate or "").strip() for candidate in candidates if str(candidate or "").strip()]
+    if not non_empty:
+        return ""
+
+    target_language = normalize_language(response_language)
+    if target_language not in {"en", "ru", "kk"}:
+        return non_empty[0]
+
+    for candidate in non_empty:
+        if _infer_text_language(candidate) == target_language:
+            return candidate
+    return non_empty[-1]
 
 
 def _should_run_retrieval_clarity(intent: str, history: List[ConversationMessage]) -> bool:
@@ -756,11 +789,6 @@ class QueryService:
                     usage_events=usage_events,
                 ), "clarity_question")
 
-            retrieval_query = (
-                (clarity.standalone_query or "").strip()
-                or (classification.rewritten_query or "").strip()
-                or normalized_query
-            )
             if raw_intent == "DOCUMENT_REQUEST":
                 retrieval_intent = "DOCUMENT_REQUEST"
             elif raw_intent == "GUIDANCE":
@@ -768,6 +796,12 @@ class QueryService:
             else:
                 retrieval_intent = intent if intent in RETRIEVAL_INTENTS else "PROCEDURE"
             response_language = _effective_language(language, clarity.target_language)
+            retrieval_query = _choose_retrieval_query(
+                response_language,
+                (clarity.standalone_query or "").strip(),
+                (classification.rewritten_query or "").strip(),
+                normalized_query,
+            )
             response_language_label = _language_label(response_language)
             rewrite_usage = None
             trace(
@@ -796,6 +830,46 @@ class QueryService:
                 )
             except Exception as exc:  # pragma: no cover - exercised through API behavior
                 raise RuntimeError(f"search failed: {exc}") from exc
+
+            trace(
+                "retrieval.raw",
+                count=len(results),
+                top_hits=self._hits_preview(results[: max(1, min(8, len(results)))]),
+            )
+
+            retrieval_anchor_source = pending_file or (
+                _resend_attachment_source(latest_attachment) if latest_attachment is not None else None
+            )
+            if hasattr(self._store, "refine_results"):
+                refined_results, refine_meta = self._store.refine_results(
+                    query_text=retrieval_query,
+                    initial_hits=results,
+                    k=max(1, int(raw_k or 64)),
+                    language=response_language,
+                    preferred_source=retrieval_anchor_source,
+                )
+                if refined_results:
+                    results = refined_results
+                    trace(
+                        "retrieval.focus",
+                        selected_files=(
+                            refine_meta.get("selected_files")
+                            if isinstance(refine_meta, dict)
+                            else []
+                        ),
+                        focus_files=(
+                            refine_meta.get("focus_files")
+                            if isinstance(refine_meta, dict)
+                            else []
+                        ),
+                        focused=(
+                            refine_meta.get("focused")
+                            if isinstance(refine_meta, dict)
+                            else None
+                        ),
+                        count=len(results),
+                        top_hits=self._hits_preview(results[: max(1, min(8, len(results)))]),
+                    )
 
             top_n = max(1, int(top_for_llm or 8))
             top_chunks = results[:top_n]
@@ -1131,6 +1205,31 @@ class QueryService:
                 if part
             )
 
+        if stage == "retrieval.raw":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("hits", payload.get("count")),
+                    self._trace_field("files", self._format_top_hits(payload.get("top_hits")), quoted=True),
+                ]
+                if part
+            )
+
+        if stage == "retrieval.focus":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("selected", self._format_file_list(payload.get("selected_files")), quoted=True),
+                    self._trace_field("focus", self._format_file_list(payload.get("focus_files")), quoted=True),
+                    self._trace_field("focused", self._yes_no(payload.get("focused"))),
+                    self._trace_field("count", payload.get("count")),
+                    self._trace_field("files", self._format_top_hits(payload.get("top_hits")), quoted=True),
+                ]
+                if part
+            )
+
         if stage == "retrieval.results":
             return " ".join(
                 part
@@ -1238,6 +1337,17 @@ class QueryService:
             score_part = f"{float(score):.3f}" if isinstance(score, (int, float)) else str(score or "")
             items.append(f"#{index} {score_part} {source}{page_part}".strip())
         return "; ".join(items)
+
+    def _format_file_list(self, files: Any) -> str:
+        if not isinstance(files, list) or not files:
+            return ""
+        items = []
+        for source_file in files[:6]:
+            text = str(source_file or "").strip()
+            if not text:
+                continue
+            items.append(_basename(text))
+        return ", ".join(items)
 
     def _format_usage_events(self, events: Any) -> str:
         if not isinstance(events, list) or not events:

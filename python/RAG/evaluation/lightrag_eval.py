@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+from datetime import datetime, timezone
 import hashlib
 import inspect
 import json
@@ -40,6 +41,9 @@ LANGUAGE_COLUMNS = ("expected_language", "language", "lang", "expected_lang")
 
 DEFAULT_MODES = ("naive", "local", "global", "hybrid", "mix")
 LANGUAGE_SUFFIXES = {"en", "ru", "kk"}
+PAGE_MARKER_RE = re.compile(r"<!-- PAGE\s+(\d+)\s*-->", flags=re.IGNORECASE)
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+FILE_SUMMARIES_FILENAME = "file_summaries.json"
 
 COLOR_CODES = {
     "green": "\033[32m",
@@ -305,6 +309,200 @@ def save_index_meta(
 
 def doc_status_path(working_dir: Path) -> Path:
     return working_dir / "kv_store_doc_status.json"
+
+
+def file_summaries_path(working_dir: Path) -> Path:
+    return working_dir / FILE_SUMMARIES_FILENAME
+
+
+def _clean_summary_text(text: str) -> str:
+    cleaned = re.sub(r"SOURCE_FILE:\s*[^\n]+", " ", str(text or ""), flags=re.IGNORECASE)
+    cleaned = PAGE_MARKER_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\[image\]", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def _first_sentences(text: str, *, limit: int = 2) -> str:
+    cleaned = _clean_summary_text(text)
+    if not cleaned:
+        return ""
+    sentences = [part.strip() for part in SENTENCE_SPLIT_RE.split(cleaned) if part.strip()]
+    if not sentences:
+        return cleaned[:280].strip()
+    return " ".join(sentences[:limit]).strip()
+
+
+def page_snippets_from_markdown_body(body: str, *, sentences_per_page: int = 2) -> List[Dict[str, str]]:
+    text = str(body or "")
+    matches = list(PAGE_MARKER_RE.finditer(text))
+    snippets: List[Dict[str, str]] = []
+    if not matches:
+        excerpt = _first_sentences(text, limit=sentences_per_page)
+        if excerpt:
+            snippets.append({"page": "", "excerpt": excerpt})
+        return snippets
+
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        excerpt = _first_sentences(text[start:end], limit=sentences_per_page)
+        if excerpt:
+            snippets.append({"page": match.group(1), "excerpt": excerpt})
+    return snippets
+
+
+def page_snippets_by_source_file(docs: Sequence[Document], *, sentences_per_page: int = 2) -> Dict[str, List[Dict[str, str]]]:
+    result: Dict[str, List[Dict[str, str]]] = {}
+    for doc in docs:
+        try:
+            raw = doc.path.read_text(encoding="utf-8")
+        except Exception:
+            raw = doc.text
+        _front_matter, body = parse_markdown_front_matter(raw)
+        result[doc.source_file] = page_snippets_from_markdown_body(body, sentences_per_page=sentences_per_page)
+    return result
+
+
+def _heuristic_file_summary(source_file: str, page_snippets: Sequence[Dict[str, str]]) -> str:
+    parts = []
+    for item in page_snippets[:3]:
+        excerpt = str(item.get("excerpt") or "").strip()
+        if excerpt:
+            parts.append(excerpt)
+    if parts:
+        return " ".join(parts)
+    return f"Document summary for {Path(source_file).name}."
+
+
+def _build_file_summary_prompt(
+    *,
+    source_file: str,
+    page_snippets: Sequence[Dict[str, str]],
+    metadata: Dict[str, str],
+) -> str:
+    lines = [
+        "You are generating retrieval metadata for a study-abroad RAG system.",
+        "Write one concise summary paragraph for this single document.",
+        "Rules:",
+        "- Use the same language as the document whenever possible.",
+        "- 3 to 5 sentences maximum.",
+        "- Mention what the document is about, key requirements/steps/documents if present, and what questions this file can answer.",
+        "- Do not mention page numbers.",
+        "- Do not use bullet points or markdown.",
+        "",
+        f"Source file: {source_file}",
+        f"Document type: {metadata.get('doc_type') or ''}",
+        f"Country: {metadata.get('country') or ''}",
+        f"Language: {metadata.get('language') or ''}",
+        "",
+        "Per-page excerpts (up to 2 sentences per page):",
+    ]
+    for item in page_snippets:
+        page = str(item.get("page") or "").strip()
+        excerpt = str(item.get("excerpt") or "").strip()
+        if not excerpt:
+            continue
+        label = f"Page {page}" if page else "Page ?"
+        lines.append(f"{label}: {excerpt}")
+    lines.append("")
+    lines.append("Return only the summary paragraph.")
+    return "\n".join(lines)
+
+
+async def generate_file_summaries(
+    *,
+    docs: Sequence[Document],
+    working_dir: Path,
+    source_metadata: Dict[str, Dict[str, str]],
+    fingerprint: str,
+    provider: str,
+    llm_model: str,
+) -> Optional[Dict[str, Any]]:
+    path = file_summaries_path(working_dir)
+    source_files = [doc.source_file for doc in docs]
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            existing = None
+        if (
+            isinstance(existing, dict)
+            and str(existing.get("fingerprint") or "") == fingerprint
+            and list(existing.get("source_files") or []) == source_files
+            and str(existing.get("provider") or "") == provider
+            and str(existing.get("model") or "") == llm_model
+        ):
+            print(f"[lightrag] reusing existing file summaries: {path}", flush=True)
+            return existing
+
+    page_snippets = page_snippets_by_source_file(docs, sentences_per_page=2)
+    files_payload: Dict[str, Any] = {}
+
+    if provider == "openai":
+        from rag_service.infrastructure.openai_gateway import OpenAIGateway
+
+        gateway = OpenAIGateway(
+            SimpleNamespace(
+                openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
+                class_model=os.getenv("CLASS_MODEL") or llm_model,
+                llm_model=llm_model,
+                embed_model=os.getenv("LIGHTRAG_EMBED_MODEL", "text-embedding-3-small"),
+            )
+        )
+        for doc in docs:
+            metadata = source_metadata.get(doc.source_file) or {}
+            prompt = _build_file_summary_prompt(
+                source_file=doc.source_file,
+                page_snippets=page_snippets.get(doc.source_file) or [],
+                metadata=metadata,
+            )
+            response = await asyncio.to_thread(
+                gateway._client.responses.create,
+                model=llm_model,
+                input=prompt,
+                max_output_tokens=220,
+                temperature=0.1,
+            )
+            summary = (gateway._resp_to_text(response) or "").strip()
+            if not summary:
+                summary = _heuristic_file_summary(doc.source_file, page_snippets.get(doc.source_file) or [])
+            files_payload[doc.source_file] = {
+                "source_file": doc.source_file,
+                "title": Path(doc.source_file).name,
+                "language": metadata.get("language") or "",
+                "doc_type": metadata.get("doc_type") or "",
+                "country": metadata.get("country") or "",
+                "summary": summary,
+                "page_snippets": page_snippets.get(doc.source_file) or [],
+                "summary_source": "llm",
+            }
+    else:
+        print(f"[lightrag] provider {provider} does not support summary generation helper; using heuristic summaries", flush=True)
+        for doc in docs:
+            metadata = source_metadata.get(doc.source_file) or {}
+            files_payload[doc.source_file] = {
+                "source_file": doc.source_file,
+                "title": Path(doc.source_file).name,
+                "language": metadata.get("language") or "",
+                "doc_type": metadata.get("doc_type") or "",
+                "country": metadata.get("country") or "",
+                "summary": _heuristic_file_summary(doc.source_file, page_snippets.get(doc.source_file) or []),
+                "page_snippets": page_snippets.get(doc.source_file) or [],
+                "summary_source": "heuristic",
+            }
+
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "provider": provider,
+        "model": llm_model,
+        "fingerprint": fingerprint,
+        "source_files": source_files,
+        "files": files_payload,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[lightrag] wrote file summaries -> {path}", flush=True)
+    return payload
 
 
 def load_doc_status_by_source_file(working_dir: Path) -> Dict[str, Dict[str, Any]]:
@@ -1299,6 +1497,15 @@ async def run(args: argparse.Namespace) -> None:
         if args.page_refs:
             enrich_graphml_with_page_refs(working_dir, source_metadata)
             args.page_refs = False
+
+        await generate_file_summaries(
+            docs=docs,
+            working_dir=working_dir,
+            source_metadata=source_metadata,
+            fingerprint=fingerprint,
+            provider=args.provider,
+            llm_model=resolved_llm_model,
+        )
 
         report_metadata = {
             "provider": args.provider,

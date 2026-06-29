@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from rag_service.application.query_service import QueryService
+from rag_service.application.query_service import QueryService, _choose_retrieval_query, _infer_text_language
 from rag_service.application.usage_estimation import (
     usage_event_from_model_usage,
 )
@@ -121,13 +121,30 @@ class FakeGateway:
 
 
 class FakeStore:
-    def __init__(self, results=None) -> None:
+    def __init__(self, results=None, refined_results=None, refine_meta=None) -> None:
         self.results = results or []
+        self.refined_results = refined_results
+        self.refine_meta = refine_meta or {}
         self.search_calls = []
+        self.refine_calls = []
 
     def search(self, query_embedding, k: int = 64, **filters):
         self.search_calls.append({"query_embedding": query_embedding, "k": k, **filters})
         return self.results[:k]
+
+    def refine_results(self, *, query_text: str, initial_hits, k: int, language: str, preferred_source: str | None = None):
+        self.refine_calls.append(
+            {
+                "query_text": query_text,
+                "initial_hits": initial_hits,
+                "k": k,
+                "language": language,
+                "preferred_source": preferred_source,
+            }
+        )
+        if self.refined_results is None:
+            return initial_hits, self.refine_meta
+        return self.refined_results[:k], self.refine_meta
 
 
 class FakeConversationMemory:
@@ -156,6 +173,97 @@ class FakeConversationMemory:
 
 
 class QueryServiceTests(unittest.TestCase):
+    def test_language_aware_retrieval_query_prefers_search_language(self) -> None:
+        self.assertEqual(_infer_text_language("Как подать на ВНЖ в Италии?"), "ru")
+        self.assertEqual(_infer_text_language("How to apply for residence permit?"), "en")
+        self.assertEqual(_infer_text_language("Италияда тұруға рұқсатты қалай аламын?"), "kk")
+        self.assertEqual(
+            _choose_retrieval_query(
+                "ru",
+                "How to apply for an Italian student residence permit?",
+                "required documents for Italian student residence permit",
+                "Как подать на студенческий ВНЖ в Италии?",
+            ),
+            "Как подать на студенческий ВНЖ в Италии?",
+        )
+
+    def test_query_service_uses_same_language_query_for_retrieval_when_rewrites_are_cross_language(self) -> None:
+        gateway = FakeGateway(
+            Classification(
+                intent="FACTUAL_QUESTION",
+                explain="supported factual question",
+                language="ru",
+                rewritten_query="required documents for Italian student residence permit",
+                needs_rag=True,
+                route="RAG_SEARCH",
+            ),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query="How to apply for an Italian student residence permit?",
+                reason="clear",
+            ),
+        )
+        store = FakeStore(
+            results=[
+                RetrievedHit(
+                    score=0.9,
+                    nid=1,
+                    meta={
+                        "source_file": "italy/Residence_Permit_ru.pdf",
+                        "filename": "italy/Residence_Permit_ru.pdf",
+                        "page": "1",
+                        "text": "Подача на ВНЖ в Италии.",
+                    },
+                )
+            ]
+        )
+        service = QueryService(gateway, store)
+
+        result = service.handle_query("Как подать на внж")
+
+        self.assertEqual(store.search_calls[0]["query_text"], "Как подать на внж")
+        self.assertEqual(gateway.embedded_queries[0], "Как подать на внж")
+        self.assertIn("страницу 1", result.answer)
+
+    def test_query_service_uses_store_refined_results_before_sufficiency(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="PROCEDURE", explain="supported guidance", language="ru"),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                standalone_query="Как подать на студенческий ВНЖ в Италии: процесс и документы.",
+                reason="clear process question",
+            ),
+            sufficiency=RetrievalSufficiency(is_sufficient=True, reason="enough"),
+            json_response={"answer": "Следуйте шагам подачи на ВНЖ.", "file": "italy/Residence_Permit_ru.pdf"},
+        )
+        raw_results = [
+            RetrievedHit(
+                score=1.75,
+                nid=1,
+                meta={"source_file": "italy/Visa_ru.pdf", "page": "3", "text": "Виза"},
+            )
+        ]
+        refined_results = [
+            RetrievedHit(
+                score=2.1,
+                nid=2,
+                meta={"source_file": "italy/Residence_Permit_ru.pdf", "page": "1", "text": "Подача на ВНЖ в течение 8 дней."},
+            )
+        ]
+        store = FakeStore(
+            results=raw_results,
+            refined_results=refined_results,
+            refine_meta={"selected_files": ["italy/Residence_Permit_ru.pdf"], "focused": True},
+        )
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("Как подать на внж", conversation_id="conv-1")
+
+        self.assertEqual(store.refine_calls[0]["query_text"], "Как подать на студенческий ВНЖ в Италии: процесс и документы.")
+        self.assertEqual(gateway.sufficiency_calls[0][3], refined_results)
+        self.assertEqual(result.file, "italy/Residence_Permit_ru.pdf")
+        self.assertIn("страницу 1", result.answer)
+
     def test_pretty_trace_formats_final_response_without_raw_json_noise(self) -> None:
         service = QueryService(
             FakeGateway(Classification(intent="GREETING", language="en")),
@@ -212,6 +320,55 @@ class QueryServiceTests(unittest.TestCase):
         self.assertIn("hits=64", line)
         self.assertIn('files="#1 0.714 Visa_en.pdf:p1; #2 0.603 DSU_Scholarship_en.pdf:p4"', line)
         self.assertNotIn("top_hits", line)
+
+    def test_pretty_trace_formats_retrieval_raw_and_focus_with_file_names(self) -> None:
+        service = QueryService(
+            FakeGateway(Classification(intent="PROCEDURE", language="ru")),
+            FakeStore(),
+            trace_log_format="pretty",
+        )
+
+        raw_line = service._format_trace_payload(
+            {
+                "event": "rag_trace",
+                "trace_id": "abc123",
+                "stage": "retrieval.raw",
+                "count": 12,
+                "top_hits": [
+                    {"score": 1.75, "source_file": "italy/Visa_ru.pdf", "page": 3},
+                    {"score": 0.917, "source_file": "italy/DSU_Scholarship_ru.pdf", "page": 4},
+                ],
+            }
+        )
+        self.assertIn("hits=12", raw_line)
+        self.assertIn('files="#1 1.750 Visa_ru.pdf:p3; #2 0.917 DSU_Scholarship_ru.pdf:p4"', raw_line)
+
+        focus_line = service._format_trace_payload(
+            {
+                "event": "rag_trace",
+                "trace_id": "abc123",
+                "stage": "retrieval.focus",
+                "selected_files": [
+                    "italy/Visa_ru.pdf",
+                    "italy/Application_ru.pdf",
+                    "italy/Residence_Permit_ru.pdf",
+                ],
+                "focus_files": [
+                    "italy/Residence_Permit_ru.pdf",
+                    "italy/Visa_ru.pdf",
+                ],
+                "focused": True,
+                "count": 9,
+                "top_hits": [
+                    {"score": 1.569, "source_file": "italy/Residence_Permit_ru.pdf", "page": 10},
+                    {"score": 1.469, "source_file": "italy/Residence_Permit_ru.pdf", "page": 1},
+                ],
+            }
+        )
+        self.assertIn('selected="Visa_ru.pdf, Application_ru.pdf, Residence_Permit_ru.pdf"', focus_line)
+        self.assertIn('focus="Residence_Permit_ru.pdf, Visa_ru.pdf"', focus_line)
+        self.assertIn("focused=yes", focus_line)
+        self.assertIn('files="#1 1.569 Residence_Permit_ru.pdf:p10; #2 1.469 Residence_Permit_ru.pdf:p1"', focus_line)
 
     def test_factual_query_uses_history_loaded_from_conversation_id(self) -> None:
         history = [

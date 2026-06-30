@@ -1336,10 +1336,22 @@ class QueryService:
             skip_guardrail_for_obvious_in_scope
             and normalize_intent(classification.intent) == "OUT_OF_DOMAIN"
         ):
+            original_classification = classification
             classification = _forced_in_scope_classification(
                 normalized_query,
                 classification.language or guardrail.language or "",
                 classification,
+            )
+            trace(
+                "classifier.override",
+                original_intent=original_classification.intent,
+                original_route=original_classification.route,
+                original_confidence=original_classification.confidence,
+                forced_intent=classification.intent,
+                forced_route=classification.route,
+                forced_confidence=classification.confidence,
+                rewrite=classification.rewritten_query,
+                reason=classification.explain,
             )
         raw_intent = (classification.intent or "").strip().upper()
         intent = normalize_intent(raw_intent)
@@ -1443,6 +1455,15 @@ class QueryService:
                     if intent not in RETRIEVAL_INTENTS:
                         intent = "PROCEDURE"
                 else:
+                    trace(
+                        "retrieval.skipped",
+                        branch="clarity_not_retrieval_after_classifier",
+                        intent=intent,
+                        route=classification.route,
+                        query=normalized_query,
+                        clarity_reason=clarity.reason,
+                        action="out_of_scope_answer",
+                    )
                     return finish(QueryResult(
                         answer=_out_of_scope_answer(language),
                         file=None,
@@ -1564,6 +1585,15 @@ class QueryService:
                     defer_retrieval_clarification = _should_defer_retrieval_clarification(normalized_query)
                 forced_clarity = clarity
             else:
+                trace(
+                    "retrieval.skipped",
+                    branch="non_retrieval_factual",
+                    intent=intent,
+                    route=classification.route,
+                    query=normalized_query,
+                    clarity_reason=clarity.reason,
+                    action="fallback_factual_answer",
+                )
                 answer, completion_usage = self._gateway.answer_factual(
                     normalized_query,
                     language,
@@ -1600,6 +1630,15 @@ class QueryService:
                     usage_events.append(usage_event_from_model_usage("classification", clarity_usage))
 
             if not clarity.is_retrieval_related:
+                trace(
+                    "retrieval.skipped",
+                    branch="clarity_not_retrieval",
+                    intent=intent,
+                    route=classification.route,
+                    query=normalized_query,
+                    clarity_reason=clarity.reason,
+                    action="out_of_scope_answer",
+                )
                 return finish(QueryResult(
                     answer=_out_of_scope_answer(language),
                     file=None,
@@ -2084,6 +2123,24 @@ class QueryService:
                 if part
             )
 
+        if stage == "classifier.override":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("from", payload.get("original_intent")),
+                    self._trace_field("route", payload.get("original_route")),
+                    self._trace_field("conf", payload.get("original_confidence")),
+                    "->",
+                    self._trace_field("to", payload.get("forced_intent")),
+                    self._trace_field("route", payload.get("forced_route")),
+                    self._trace_field("conf", payload.get("forced_confidence")),
+                    self._trace_field("rewrite", payload.get("rewrite"), quoted=True),
+                    self._trace_field("reason", payload.get("reason"), quoted=True),
+                ]
+                if part
+            )
+
         if stage == "clarity":
             return " ".join(
                 part
@@ -2095,6 +2152,21 @@ class QueryService:
                     self._trace_field("query", payload.get("standalone_query"), quoted=True),
                     self._trace_field("ask", payload.get("clarifying_question"), quoted=True),
                     self._trace_field("reason", payload.get("reason"), quoted=True),
+                ]
+                if part
+            )
+
+        if stage == "retrieval.skipped":
+            return " ".join(
+                part
+                for part in [
+                    prefix,
+                    self._trace_field("branch", payload.get("branch")),
+                    self._trace_field("intent", payload.get("intent")),
+                    self._trace_field("route", payload.get("route")),
+                    self._trace_field("q", payload.get("query"), quoted=True),
+                    self._trace_field("action", payload.get("action")),
+                    self._trace_field("reason", payload.get("clarity_reason"), quoted=True),
                 ]
                 if part
             )

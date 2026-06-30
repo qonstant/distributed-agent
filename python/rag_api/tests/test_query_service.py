@@ -1810,6 +1810,8 @@ class QueryServiceTests(unittest.TestCase):
         self.assertTrue(_looks_like_obvious_in_scope_education_query("What ISEE is needed to study for free?"))
         self.assertTrue(_looks_like_obvious_in_scope_education_query("How to get DSU scholarship"))
         self.assertTrue(_looks_like_obvious_in_scope_education_query("Как заполнить первый модуль"))
+        self.assertTrue(_looks_like_obvious_in_scope_education_query("Первый модуль"))
+        self.assertTrue(_looks_like_obvious_in_scope_education_query("What photo format is needed"))
         self.assertTrue(_looks_like_obvious_in_scope_education_query("Отпечатки когда сдавать"))
         self.assertTrue(_looks_like_obvious_in_scope_education_query("What photo format is needed for visa"))
         self.assertFalse(_looks_like_obvious_in_scope_education_query("How can I fake a bank statement for visa?"))

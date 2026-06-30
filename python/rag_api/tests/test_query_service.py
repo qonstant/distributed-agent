@@ -1805,6 +1805,8 @@ class QueryServiceTests(unittest.TestCase):
 
     def test_detects_obvious_in_scope_education_query_phrases(self) -> None:
         self.assertTrue(_looks_like_obvious_in_scope_education_query("Какой isee нужен для учебы бесплатно"))
+        self.assertTrue(_looks_like_obvious_in_scope_education_query("изее как посчитать"))
+        self.assertTrue(_looks_like_obvious_in_scope_education_query("исее как считать"))
         self.assertTrue(_looks_like_obvious_in_scope_education_query("What ISEE is needed to study for free?"))
         self.assertTrue(_looks_like_obvious_in_scope_education_query("How to get DSU scholarship"))
         self.assertTrue(_looks_like_obvious_in_scope_education_query("Как заполнить первый модуль"))
@@ -1841,6 +1843,45 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(result.classification.intent, "FACTUAL_QUESTION")
         self.assertEqual(gateway.guard_calls, [])
         self.assertEqual(result.usage_events[0].event_type, "classification")
+
+    def test_obvious_in_scope_query_can_override_out_of_domain_classifier(self) -> None:
+        gateway = FakeGateway(
+            Classification(
+                intent="OUT_OF_DOMAIN",
+                explain="wrong classifier result",
+                language="ru",
+                route="REFUSE_OR_REDIRECT",
+                needs_rag=False,
+                confidence=0.92,
+            ),
+            guardrail=GuardrailResult(
+                allowed=False,
+                violation="out_of_scope",
+                reason="blocked by guardrail",
+                language="ru",
+            ),
+        )
+        store = FakeStore(
+            results=[
+                RetrievedHit(
+                    score=0.9,
+                    nid=1,
+                    meta={
+                        "source_file": "italy/DSU_Scholarship_ru.pdf",
+                        "filename": "italy/DSU_Scholarship_ru.pdf",
+                        "page": "1",
+                        "text": "Equivalent ISEE рассчитывается по доходам, недвижимости и движимому имуществу семьи.",
+                    },
+                )
+            ]
+        )
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("isee как посчитать", conversation_id="conv-1")
+
+        self.assertEqual(gateway.guard_calls, [])
+        self.assertEqual(result.classification.intent, "PROCEDURE")
+        self.assertEqual(store.search_calls[0]["query_text"], "как рассчитать equivalent ISEE для учебы и стипендии в Италии")
 
 
 if __name__ == "__main__":

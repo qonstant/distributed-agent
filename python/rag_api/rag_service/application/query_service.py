@@ -123,6 +123,8 @@ _OBVIOUS_IN_SCOPE_EDUCATION_PHRASES = (
 
 _OBVIOUS_IN_SCOPE_EDUCATION_WEIGHTS = {
     "isee": 3.0,
+    "изее": 3.0,
+    "исее": 3.0,
     "equivalent isee": 3.0,
     "dsu": 3.0,
     "scholar": 2.5,
@@ -418,6 +420,73 @@ def _looks_like_obvious_in_scope_education_query(query: str) -> bool:
         if score >= _OBVIOUS_IN_SCOPE_EDUCATION_THRESHOLD:
             return True
     return False
+
+
+def _forced_in_scope_classification(query: str, language: str, classification: Classification) -> Classification:
+    normalized = " ".join((query or "").strip().lower().split())
+    if not normalized:
+        return classification
+
+    is_procedure = any(
+        marker in normalized
+        for marker in (
+            "how",
+            "how to",
+            "apply",
+            "steps",
+            "process",
+            "calculate",
+            "fill out",
+            "как",
+            "как подать",
+            "подать",
+            "процесс",
+            "посчитать",
+            "рассчитать",
+            "заполн",
+            "қалай",
+            "есепте",
+            "есептеу",
+            "толтыру",
+        )
+    )
+
+    rewritten_query = ""
+    if any(marker in normalized for marker in ("isee", "изее", "исее", "equivalent isee")):
+        if normalize_language(language) == "ru":
+            rewritten_query = "как рассчитать equivalent ISEE для учебы и стипендии в Италии"
+        elif normalize_language(language) == "kk":
+            rewritten_query = "Италияда оқу және шәкіртақы үшін equivalent ISEE қалай есептеледі"
+        else:
+            rewritten_query = "how to calculate equivalent ISEE for studying and scholarships in Italy"
+    elif any(marker in normalized for marker in ("внж", "вид на жительство", "residence permit", "permesso", "тұруға рұқсат", "ықтиярхат")):
+        if normalize_language(language) == "ru":
+            rewritten_query = "как подать на студенческий ВНЖ в Италии: процесс и документы"
+        elif normalize_language(language) == "kk":
+            rewritten_query = "Италиядағы студенттік тұруға рұқсатқа қалай тапсырады: процесс және құжаттар"
+        else:
+            rewritten_query = "how to apply for Italian student residence permit process and documents"
+    elif any(marker in normalized for marker in ("visa", "виза", "оқу визасы", "student visa")):
+        if normalize_language(language) == "ru":
+            rewritten_query = "как подать на студенческую визу в Италию: процесс и документы"
+        elif normalize_language(language) == "kk":
+            rewritten_query = "Италия студенттік визасына қалай тапсырады: процесс және құжаттар"
+        else:
+            rewritten_query = "how to apply for Italian student visa process and documents"
+
+    return Classification(
+        intent="PROCEDURE" if is_procedure else "FACTUAL_QUESTION",
+        explain="Obvious education-abroad keyword match overrides out-of-domain classification.",
+        language=classification.language or language or _infer_text_language(query),
+        model=classification.model,
+        version=classification.version,
+        profile_action=classification.profile_action,
+        preferred_name=classification.preferred_name,
+        confidence=max(float(classification.confidence or 0.0), 0.86),
+        needs_rag=True,
+        route="RAG_SEARCH",
+        rewritten_query=rewritten_query,
+    )
 
 
 def _send_pending_attachment_answer(file_source: str, language: str) -> str:
@@ -1256,6 +1325,15 @@ class QueryService:
                 classification_usage,
             )
         )
+        if (
+            skip_guardrail_for_obvious_in_scope
+            and normalize_intent(classification.intent) == "OUT_OF_DOMAIN"
+        ):
+            classification = _forced_in_scope_classification(
+                normalized_query,
+                classification.language or guardrail.language or "",
+                classification,
+            )
         raw_intent = (classification.intent or "").strip().upper()
         intent = normalize_intent(raw_intent)
         clarity_intent = raw_intent if raw_intent in {"CHIT_CHAT", "GUIDANCE", "DOCUMENT_REQUEST", "OTHER"} else intent

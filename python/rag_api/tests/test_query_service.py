@@ -9,6 +9,8 @@ from rag_service.application.query_service import (
     _choose_retrieval_query,
     _detect_language_switch_follow_up,
     _infer_text_language,
+    _looks_like_obvious_in_scope_education_query,
+    _looks_like_preferred_name_update,
     _query_explicitly_references_attachment,
 )
 from rag_service.application.usage_estimation import (
@@ -1587,7 +1589,6 @@ class QueryServiceTests(unittest.TestCase):
                     preferred_name="Heisenberg",
                 ),
                 usage_events=[
-                    usage_event_from_model_usage("guardrail", gateway.guardrail_usage),
                     usage_event_from_model_usage("classification", gateway.classification_usage),
                 ],
             ),
@@ -1595,6 +1596,78 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.answer_factual_calls, [])
         self.assertEqual(gateway.generated_prompts, [])
         self.assertEqual(gateway.attachment_follow_up_calls, [])
+
+    def test_detects_preferred_name_update_phrases(self) -> None:
+        self.assertTrue(_looks_like_preferred_name_update("Call me Alex"))
+        self.assertTrue(_looks_like_preferred_name_update("My name is Rodrigo"))
+        self.assertTrue(_looks_like_preferred_name_update("Зови меня рекстер"))
+        self.assertTrue(_looks_like_preferred_name_update("Меня зовут Азамат"))
+        self.assertTrue(_looks_like_preferred_name_update("Родриго деп ата"))
+        self.assertFalse(_looks_like_preferred_name_update("Как получить визу в Италию?"))
+
+    def test_profile_update_bypasses_guardrail_keyword_path(self) -> None:
+        gateway = FakeGateway(
+            Classification(
+                intent="CHIT_CHAT",
+                explain="user sets a preferred name",
+                language="ru",
+                profile_action="set_preferred_name",
+                preferred_name="Рекстер",
+            ),
+            guardrail=GuardrailResult(
+                allowed=False,
+                violation="out_of_scope",
+                reason="blocked by guardrail",
+                language="ru",
+            ),
+        )
+        service = QueryService(gateway, FakeStore(), conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("Зови меня рекстер", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "")
+        self.assertIsNotNone(result.classification)
+        self.assertEqual(result.classification.profile_action, "set_preferred_name")
+        self.assertEqual(result.classification.preferred_name, "Рекстер")
+        self.assertEqual(gateway.guard_calls, [])
+        self.assertEqual(len(result.usage_events), 1)
+        self.assertEqual(result.usage_events[0].event_type, "classification")
+
+    def test_detects_obvious_in_scope_education_query_phrases(self) -> None:
+        self.assertTrue(_looks_like_obvious_in_scope_education_query("Какой isee нужен для учебы бесплатно"))
+        self.assertTrue(_looks_like_obvious_in_scope_education_query("What ISEE is needed to study for free?"))
+        self.assertTrue(_looks_like_obvious_in_scope_education_query("How to get DSU scholarship"))
+        self.assertFalse(_looks_like_obvious_in_scope_education_query("How can I fake a bank statement for visa?"))
+        self.assertTrue(_looks_like_obvious_in_scope_education_query("Where do I buy marca da bollo for residence permit?"))
+        self.assertFalse(_looks_like_obvious_in_scope_education_query("How can I buy a visa?"))
+        self.assertFalse(_looks_like_obvious_in_scope_education_query("Где купить визу в Италию?"))
+
+    def test_isee_query_bypasses_guardrail_keyword_path(self) -> None:
+        gateway = FakeGateway(
+            Classification(
+                intent="FACTUAL_QUESTION",
+                explain="user asks about ISEE needed for scholarship or tuition waiver",
+                language="ru",
+                route="RAG_SEARCH",
+                needs_rag=True,
+                confidence=0.88,
+                rewritten_query="какой ISEE нужен для бесплатной учебы и стипендии в Италии",
+            ),
+            guardrail=GuardrailResult(
+                allowed=False,
+                violation="out_of_scope",
+                reason="blocked by guardrail",
+                language="ru",
+            ),
+        )
+        service = QueryService(gateway, FakeStore(), conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("Какой isee нужен для учебы бесплатно", conversation_id="conv-1")
+
+        self.assertIsNotNone(result.classification)
+        self.assertEqual(result.classification.intent, "FACTUAL_QUESTION")
+        self.assertEqual(gateway.guard_calls, [])
+        self.assertEqual(result.usage_events[0].event_type, "classification")
 
 
 if __name__ == "__main__":

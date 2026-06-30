@@ -128,3 +128,4 @@ __pycache__
 alembic.ini
 alembic/
 *.graphml
+*.pytest_cache

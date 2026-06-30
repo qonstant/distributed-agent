@@ -66,6 +66,68 @@ KAZAKH_SPECIFIC_RE = re.compile(r"[әғқңөұүһі]", flags=re.IGNORECASE)
 CYRILLIC_RE = re.compile(r"[а-яё]", flags=re.IGNORECASE)
 LATIN_RE = re.compile(r"[a-z]", flags=re.IGNORECASE)
 
+_PREFERRED_NAME_UPDATE_PHRASES = (
+    "call me ",
+    "my name is ",
+    "name is now ",
+    "зови меня ",
+    "назови меня ",
+    "называй меня ",
+    "меня зовут ",
+    "зовут меня ",
+    "зовут меня теперь ",
+    "мені ",
+    "деп ата",
+    "деп аташы",
+    "деп атай бер",
+    "деп атай аласыз",
+    "деп атаңыз",
+)
+
+_OBVIOUS_IN_SCOPE_EDUCATION_PHRASES = (
+    "isee",
+    "equivalent isee",
+    "dsu",
+    "scholarship",
+    "financial aid",
+    "fee waiver",
+    "tuition waiver",
+    "study for free",
+    "free study",
+    "student visa",
+    "residence permit",
+    "permesso di soggiorno",
+    "motivation letter",
+    "recommendation letter",
+    "universitaly",
+    "стипенд",
+    "шәкіртақы",
+    "грант",
+    "виза",
+    "внж",
+    "вид на жительство",
+    "тұруға рұқсат",
+    "ықтиярхат",
+    "мотивацион",
+    "рекомендатель",
+)
+
+_OBVIOUS_UNSAFE_PHRASES = (
+    "fake",
+    "forge",
+    "forged",
+    "falsify",
+    "hack",
+    "bypass",
+    "evade",
+    "lie in",
+    "поддел",
+    "фальш",
+    "взлом",
+    "обойти",
+    "обман",
+)
+
 
 def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Optional[RetrievedHit]]:
     file_sum: dict[str, float] = {}
@@ -119,6 +181,34 @@ def _resend_attachment_answer(attachment: ConversationAttachment, language: str)
     if normalized_language in {"ru", "russian", "русский"}:
         return f"Вот файл еще раз: {file_label}."
     return f"Here is the file again: {file_label}."
+
+
+def _looks_like_preferred_name_update(query: str) -> bool:
+    normalized = " ".join((query or "").strip().lower().split())
+    if not normalized:
+        return False
+
+    for phrase in _PREFERRED_NAME_UPDATE_PHRASES:
+        if phrase not in normalized:
+            continue
+        head, _, tail = normalized.partition(phrase)
+        if phrase.startswith("мені ") and not tail:
+            continue
+        if phrase.startswith("мені ") and " деп ата" not in normalized and " деп аташы" not in normalized:
+            continue
+        candidate = tail.strip() if tail else head.strip()
+        if candidate:
+            return True
+    return False
+
+
+def _looks_like_obvious_in_scope_education_query(query: str) -> bool:
+    normalized = " ".join((query or "").strip().lower().split())
+    if not normalized:
+        return False
+    if any(marker in normalized for marker in _OBVIOUS_UNSAFE_PHRASES):
+        return False
+    return any(marker in normalized for marker in _OBVIOUS_IN_SCOPE_EDUCATION_PHRASES)
 
 
 def _send_pending_attachment_answer(file_source: str, language: str) -> str:
@@ -662,18 +752,36 @@ class QueryService:
                 history_count=len(history),
             )
 
-        guardrail, guardrail_usage = self._gateway.guard_query(normalized_query, history=None)
-        trace("guard.first", **self._guardrail_trace(guardrail))
-        usage_events = [
-            self._guardrail_usage_event(
-                normalized_query,
-                [],
-                guardrail,
-                guardrail_usage,
+        skip_guardrail_for_profile_update = _looks_like_preferred_name_update(normalized_query)
+        skip_guardrail_for_obvious_in_scope = _looks_like_obvious_in_scope_education_query(normalized_query)
+        if skip_guardrail_for_profile_update or skip_guardrail_for_obvious_in_scope:
+            skip_reason = (
+                "explicit preferred-name update phrase"
+                if skip_guardrail_for_profile_update
+                else "obvious in-scope education-abroad phrase"
             )
-        ]
+            guardrail = GuardrailResult(
+                allowed=True,
+                reason=skip_reason,
+                language=_infer_text_language(normalized_query),
+                model="keyword-bypass",
+            )
+            guardrail_usage = None
+            trace("guard.skipped", **self._guardrail_trace(guardrail))
+            usage_events = []
+        else:
+            guardrail, guardrail_usage = self._gateway.guard_query(normalized_query, history=None)
+            trace("guard.first", **self._guardrail_trace(guardrail))
+            usage_events = [
+                self._guardrail_usage_event(
+                    normalized_query,
+                    [],
+                    guardrail,
+                    guardrail_usage,
+                )
+            ]
 
-        if guardrail.needs_context:
+        if not skip_guardrail_for_profile_update and guardrail.needs_context:
             contextual_history = ensure_history_loaded()
             if contextual_history:
                 guardrail, guardrail_usage = self._gateway.guard_query(
@@ -689,7 +797,7 @@ class QueryService:
                         guardrail_usage,
                     )
                 )
-        elif not guardrail.allowed:
+        elif not skip_guardrail_for_profile_update and not guardrail.allowed:
             contextual_history = ensure_history_loaded()
             if contextual_history:
                 guardrail, guardrail_usage = self._gateway.guard_query(

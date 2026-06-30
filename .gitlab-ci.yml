@@ -506,6 +506,8 @@ deploy-golang-prod:
       optional: false
     - job: deploy-rag-prod
       optional: false
+    - job: migrate-db-prod
+      optional: false
   script:
     - cd golang
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" > .env'
@@ -538,6 +540,8 @@ deploy-golang-test:
     - job: build-golang-image-test
       optional: false
     - job: deploy-rag-test
+      optional: false
+    - job: migrate-db-test
       optional: false
   script:
     - cd golang
@@ -602,6 +606,38 @@ prepare-golang-db-files-test:
     - echo "Copied DB files to /opt/golang-db"
     - find /opt/golang-db -maxdepth 3 -type f | sort
 
+migrate-db-prod:
+  stage: deploy
+  tags:
+    - vps2
+  before_script: *before-vps2
+  needs:
+    - job: prepare-golang-db-files-prod
+      optional: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - cd /opt/golang-db
+    - test -f .env || (echo "/opt/golang-db/.env is missing" && exit 1)
+    - test -d migrations || (echo "/opt/golang-db/migrations is missing" && exit 1)
+    - make migrateup
+
+migrate-db-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  needs:
+    - job: prepare-golang-db-files-test
+      optional: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+  script:
+    - cd /opt/golang-db
+    - test -f .env || (echo "/opt/golang-db/.env is missing" && exit 1)
+    - test -d migrations || (echo "/opt/golang-db/migrations is missing" && exit 1)
+    - make migrateup
+
 ################################################################################
 # ADMIN PANEL (frontend/admin)
 ################################################################################
@@ -642,6 +678,8 @@ deploy-admin-prod:
   before_script: *before-vps2
   needs:
     - job: build-admin-image-prod
+      optional: false
+    - job: migrate-db-prod
       optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
@@ -702,6 +740,8 @@ deploy-admin-test:
   before_script: *before-vps2
   needs:
     - job: build-admin-image-test
+      optional: false
+    - job: migrate-db-test
       optional: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "test"'

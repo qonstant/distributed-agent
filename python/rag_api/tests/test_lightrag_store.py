@@ -9,6 +9,15 @@ from rag_service.domain.models import RetrievedHit
 from rag_service.infrastructure.lightrag_store import LightRAGMetadataStore, _language_from_source_file, _load_file_catalog
 
 
+class FakeFocusGateway:
+    def __init__(self, selected_files):
+        self._selected_files = list(selected_files)
+
+    def select_retrieval_focus_files(self, query, language_hint, candidates, *, preferred_source="", max_files=2):
+        del query, language_hint, candidates, preferred_source
+        return self._selected_files[:max_files], "test selector", None
+
+
 class LightRAGMetadataStoreTests(unittest.TestCase):
     def test_language_from_source_file_supports_eng_and_kz_aliases(self) -> None:
         self.assertEqual(_language_from_source_file("italy/Residence_Permit_eng.pdf"), "en")
@@ -81,6 +90,7 @@ class LightRAGMetadataStoreTests(unittest.TestCase):
             mode="naive",
             source_files=[],
             runner=None,
+            gateway=FakeFocusGateway(["italy/Residence_Permit_ru.pdf", "italy/Visa_ru.pdf"]),
             chunks_by_source_file={
                 "italy/Visa_ru.pdf": [
                     {"source_file": "italy/Visa_ru.pdf", "page": "2", "text": "Документы на визу и анкета.", "language": "ru", "doc_type": "visa", "country": "italy"},
@@ -120,6 +130,7 @@ class LightRAGMetadataStoreTests(unittest.TestCase):
             mode="naive",
             source_files=[],
             runner=None,
+            gateway=FakeFocusGateway(["italy/Residence_Permit_ru.pdf", "italy/Visa_ru.pdf"]),
             chunks_by_source_file={
                 "italy/Visa_ru.pdf": [
                     {"source_file": "italy/Visa_ru.pdf", "page": "2", "text": "Документы на студенческую визу и анкета.", "language": "ru", "doc_type": "visa", "country": "italy"},
@@ -157,6 +168,88 @@ class LightRAGMetadataStoreTests(unittest.TestCase):
         self.assertEqual(refined_hits[0].meta["source_file"], "italy/Residence_Permit_ru.pdf")
         self.assertIn(refined_hits[0].meta["page"], {"1", "7"})
 
+    def test_refine_results_boosts_residence_permit_for_vnzh_query(self) -> None:
+        store = LightRAGMetadataStore(
+            rag=None,
+            working_dir=Path("."),
+            mode="naive",
+            source_files=[],
+            runner=None,
+            gateway=FakeFocusGateway(["italy/Residence_Permit_ru.pdf", "italy/Application_ru.pdf"]),
+            chunks_by_source_file={
+                "italy/Visa_ru.pdf": [
+                    {"source_file": "italy/Visa_ru.pdf", "page": "2", "text": "Документы на студенческую визу и анкета.", "language": "ru", "doc_type": "visa", "country": "italy"},
+                ],
+                "italy/Application_ru.pdf": [
+                    {"source_file": "italy/Application_ru.pdf", "page": "1", "text": "Подача документов в университет и pre-enrollment.", "language": "ru", "doc_type": "application", "country": "italy"},
+                ],
+                "italy/Residence_Permit_ru.pdf": [
+                    {"source_file": "italy/Residence_Permit_ru.pdf", "page": "1", "text": "Подать заявление на ВНЖ нужно в течение 8 дней после прибытия.", "language": "ru", "doc_type": "residence_permit", "country": "italy"},
+                ],
+            },
+            file_catalog={
+                "italy/Visa_ru.pdf": {"source_file": "italy/Visa_ru.pdf", "summary": "Студенческая виза в Италию: анкета и документы.", "language": "ru", "doc_type": "visa"},
+                "italy/Application_ru.pdf": {"source_file": "italy/Application_ru.pdf", "summary": "Поступление в университет Италии: admission и pre-enrollment.", "language": "ru", "doc_type": "application"},
+                "italy/Residence_Permit_ru.pdf": {"source_file": "italy/Residence_Permit_ru.pdf", "summary": "Студенческий ВНЖ в Италии: сроки подачи и этапы оформления.", "language": "ru", "doc_type": "residence_permit"},
+            },
+        )
+        initial_hits = [
+            RetrievedHit(score=1.12, nid=1, meta={"source_file": "italy/Application_ru.pdf", "filename": "italy/Application_ru.pdf", "page": "1", "text": "Документы для поступления."}),
+            RetrievedHit(score=1.05, nid=2, meta={"source_file": "italy/Visa_ru.pdf", "filename": "italy/Visa_ru.pdf", "page": "2", "text": "Документы на визу."}),
+        ]
+
+        refined_hits, refine_meta = store.refine_results(
+            query_text="Какой срок подачи на внж",
+            initial_hits=initial_hits,
+            k=5,
+            language="ru",
+        )
+
+        self.assertTrue(refine_meta["focused"])
+        self.assertIn("italy/Residence_Permit_ru.pdf", refine_meta["focus_files"])
+        self.assertEqual(refined_hits[0].meta["source_file"], "italy/Residence_Permit_ru.pdf")
+
+    def test_refine_results_boosts_visa_for_visa_query(self) -> None:
+        store = LightRAGMetadataStore(
+            rag=None,
+            working_dir=Path("."),
+            mode="naive",
+            source_files=[],
+            runner=None,
+            gateway=FakeFocusGateway(["italy/Visa_ru.pdf", "italy/Residence_Permit_ru.pdf"]),
+            chunks_by_source_file={
+                "italy/Visa_ru.pdf": [
+                    {"source_file": "italy/Visa_ru.pdf", "page": "2", "text": "Подать документы на студенческую визу нужно заранее до поездки.", "language": "ru", "doc_type": "visa", "country": "italy"},
+                ],
+                "italy/Application_ru.pdf": [
+                    {"source_file": "italy/Application_ru.pdf", "page": "1", "text": "Подача документов в университет и pre-enrollment.", "language": "ru", "doc_type": "application", "country": "italy"},
+                ],
+                "italy/Residence_Permit_ru.pdf": [
+                    {"source_file": "italy/Residence_Permit_ru.pdf", "page": "1", "text": "Подать заявление на ВНЖ нужно в течение 8 дней после прибытия.", "language": "ru", "doc_type": "residence_permit", "country": "italy"},
+                ],
+            },
+            file_catalog={
+                "italy/Visa_ru.pdf": {"source_file": "italy/Visa_ru.pdf", "summary": "Студенческая виза в Италию: сроки подачи и пакет документов.", "language": "ru", "doc_type": "visa"},
+                "italy/Application_ru.pdf": {"source_file": "italy/Application_ru.pdf", "summary": "Поступление в университет Италии: admission и pre-enrollment.", "language": "ru", "doc_type": "application"},
+                "italy/Residence_Permit_ru.pdf": {"source_file": "italy/Residence_Permit_ru.pdf", "summary": "Студенческий ВНЖ в Италии: сроки подачи и этапы оформления.", "language": "ru", "doc_type": "residence_permit"},
+            },
+        )
+        initial_hits = [
+            RetrievedHit(score=1.12, nid=1, meta={"source_file": "italy/Application_ru.pdf", "filename": "italy/Application_ru.pdf", "page": "1", "text": "Документы для поступления."}),
+            RetrievedHit(score=1.01, nid=2, meta={"source_file": "italy/Residence_Permit_ru.pdf", "filename": "italy/Residence_Permit_ru.pdf", "page": "1", "text": "Сроки подачи на ВНЖ."}),
+        ]
+
+        refined_hits, refine_meta = store.refine_results(
+            query_text="Какой срок подачи на визу",
+            initial_hits=initial_hits,
+            k=5,
+            language="ru",
+        )
+
+        self.assertTrue(refine_meta["focused"])
+        self.assertIn("italy/Visa_ru.pdf", refine_meta["focus_files"])
+        self.assertEqual(refined_hits[0].meta["source_file"], "italy/Visa_ru.pdf")
+
     def test_refine_results_keeps_multiple_focus_files_in_second_pass(self) -> None:
         store = LightRAGMetadataStore(
             rag=None,
@@ -164,6 +257,7 @@ class LightRAGMetadataStoreTests(unittest.TestCase):
             mode="naive",
             source_files=[],
             runner=None,
+            gateway=FakeFocusGateway(["italy/Visa_en.pdf", "italy/Residence_Permit_eng.pdf"]),
             chunks_by_source_file={
                 "italy/Residence_Permit_eng.pdf": [
                     {"source_file": "italy/Residence_Permit_eng.pdf", "page": "1", "text": "Apply for residence permit within 8 days after arrival.", "language": "en", "doc_type": "residence_permit", "country": "italy"},
@@ -195,6 +289,42 @@ class LightRAGMetadataStoreTests(unittest.TestCase):
         top_files = {hit.meta["source_file"] for hit in refined_hits[:2]}
         self.assertIn("italy/Residence_Permit_eng.pdf", top_files)
         self.assertIn("italy/Visa_en.pdf", top_files)
+
+    def test_refine_results_falls_back_to_initial_hit_order_without_gateway(self) -> None:
+        store = LightRAGMetadataStore(
+            rag=None,
+            working_dir=Path("."),
+            mode="naive",
+            source_files=[],
+            runner=None,
+            chunks_by_source_file={
+                "italy/Visa_en.pdf": [
+                    {"source_file": "italy/Visa_en.pdf", "page": "2", "text": "Student visa documents and steps.", "language": "en", "doc_type": "visa", "country": "italy"},
+                ],
+                "italy/Application_en.pdf": [
+                    {"source_file": "italy/Application_en.pdf", "page": "1", "text": "University admission and pre-enrollment.", "language": "en", "doc_type": "application", "country": "italy"},
+                ],
+            },
+            file_catalog={
+                "italy/Visa_en.pdf": {"source_file": "italy/Visa_en.pdf", "summary": "Italian student visa process and documents.", "language": "en", "doc_type": "visa"},
+                "italy/Application_en.pdf": {"source_file": "italy/Application_en.pdf", "summary": "Italian university application steps and admission paperwork.", "language": "en", "doc_type": "application"},
+            },
+        )
+        initial_hits = [
+            RetrievedHit(score=1.75, nid=1, meta={"source_file": "italy/Visa_en.pdf", "filename": "italy/Visa_en.pdf", "page": "2", "text": "Visa steps."}),
+            RetrievedHit(score=1.20, nid=2, meta={"source_file": "italy/Application_en.pdf", "filename": "italy/Application_en.pdf", "page": "1", "text": "Application process."}),
+        ]
+
+        refined_hits, refine_meta = store.refine_results(
+            query_text="How to apply for an Italian student visa?",
+            initial_hits=initial_hits,
+            k=5,
+            language="en",
+        )
+
+        self.assertTrue(refine_meta["focused"])
+        self.assertEqual(refine_meta["focus_files"][0], "italy/Visa_en.pdf")
+        self.assertEqual(refined_hits[0].meta["source_file"], "italy/Visa_en.pdf")
 
     def test_load_file_catalog_prefers_generated_file_summaries_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

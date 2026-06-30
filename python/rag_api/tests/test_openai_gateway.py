@@ -389,6 +389,38 @@ class OpenAIGatewayTests(unittest.TestCase):
         self.assertIn("CV", clarity.standalone_query)
         self.assertIn("Italian university admission", clarity.standalone_query)
 
+    def test_clarify_or_rewrite_query_keeps_vnzh_query_clear(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa or student residence permit?","target_language":"","reason":"topic unclear"}'
+        )
+
+        clarity, _ = gateway.clarify_or_rewrite_query(
+            "Какой срок подачи на внж",
+            "ru",
+            "FACTUAL_QUESTION",
+        )
+
+        self.assertTrue(clarity.is_retrieval_related)
+        self.assertTrue(clarity.is_clear)
+        self.assertEqual(clarity.standalone_query, "Какой срок подачи на внж")
+        self.assertEqual(clarity.clarifying_question, "")
+
+    def test_clarify_or_rewrite_query_keeps_visa_query_clear(self) -> None:
+        gateway, _ = self._gateway_with_output(
+            '{"is_retrieval_related":true,"is_clear":false,"standalone_query":"","clarifying_question":"Which topic do you mean: student visa or student residence permit?","target_language":"","reason":"topic unclear"}'
+        )
+
+        clarity, _ = gateway.clarify_or_rewrite_query(
+            "Какой срок подачи на визу",
+            "ru",
+            "FACTUAL_QUESTION",
+        )
+
+        self.assertTrue(clarity.is_retrieval_related)
+        self.assertTrue(clarity.is_clear)
+        self.assertEqual(clarity.standalone_query, "Какой срок подачи на визу")
+        self.assertEqual(clarity.clarifying_question, "")
+
     def test_clarify_or_rewrite_query_returns_target_language_for_language_switch(self) -> None:
         gateway, _ = self._gateway_with_output(
             '{"is_retrieval_related":true,"is_clear":true,"standalone_query":"How to apply for an Italian student visa?","clarifying_question":"","target_language":"English","reason":"user asks for the previous answer in English"}'

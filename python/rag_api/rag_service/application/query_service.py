@@ -149,6 +149,28 @@ _RETRIEVAL_DISAMBIGUATION_SUFFIXES = {
     "kk": "Қай нұсқаны меңзеп тұрғаныңызды жазыңыз, мен іздеуді сол құжатқа дейін тарылтамын.",
 }
 
+_PENDING_ATTACHMENT_REQUEST_PHRASES = (
+    "send it",
+    "send file",
+    "send the file",
+    "send this file",
+    "send pdf",
+    "where is the file",
+    "where file",
+    "пришли файл",
+    "пришли этот файл",
+    "отправь файл",
+    "отправь этот файл",
+    "скинь файл",
+    "скинь этот файл",
+    "где файл",
+    "файл где",
+    "осы файлды жібер",
+    "файлды жібер",
+    "осы құжатты жібер",
+    "құжатты жібер",
+)
+
 _GENERIC_RETRIEVAL_CLARITY_WORDS = {
     "a",
     "an",
@@ -646,6 +668,15 @@ def _query_explicitly_references_attachment(query: str, attachment_source: str =
             return True
 
     return False
+
+
+def _looks_like_pending_attachment_request(query: str) -> bool:
+    normalized = " ".join(
+        str(query or "").strip().lower().translate(_ATTACHMENT_PUNCT_TRANSLATION).split()
+    )
+    if not normalized:
+        return False
+    return any(phrase in normalized for phrase in _PENDING_ATTACHMENT_REQUEST_PHRASES)
 
 
 def _detect_language_switch_follow_up(query: str) -> str:
@@ -1291,6 +1322,16 @@ class QueryService:
             )
         resend_source = _resend_attachment_source(latest_attachment) if latest_attachment is not None else None
         if latest_attachment is not None or pending_file:
+            if pending_file and _looks_like_pending_attachment_request(normalized_query):
+                trace("attachment.shortcut", action="send_pending_attachment")
+                self._clear_pending_attachment(conversation_id)
+                return finish(QueryResult(
+                    answer=_send_pending_attachment_answer(pending_file, language),
+                    file=pending_file,
+                    classification=classification,
+                    usage_events=usage_events,
+                ), "send_pending_attachment")
+
             attachment_action, attachment_action_usage = self._gateway.classify_attachment_follow_up(
                 normalized_query,
                 history=history,
@@ -1476,6 +1517,7 @@ class QueryService:
                 count=len(results),
                 top_hits=self._hits_preview(results[: max(1, min(8, len(results)))]),
             )
+            rag_usage_events = self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
 
             retrieval_anchor_source = None
             anchor_candidate = pending_file or resend_source
@@ -1512,10 +1554,13 @@ class QueryService:
                         count=len(results),
                         top_hits=self._hits_preview(results[: max(1, min(8, len(results)))]),
                     )
+                if isinstance(refine_meta, dict):
+                    selection_usage = refine_meta.get("selection_usage")
+                    if selection_usage is not None:
+                        rag_usage_events.append(usage_event_from_model_usage("classification", selection_usage))
 
             top_n = max(1, int(top_for_llm or 8))
             top_chunks = results[:top_n]
-            rag_usage_events = self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
 
             if defer_retrieval_clarification:
                 disambiguation_question = self._post_retrieval_disambiguation_question(

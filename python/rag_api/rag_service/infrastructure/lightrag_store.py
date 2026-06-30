@@ -365,6 +365,7 @@ class LightRAGMetadataStore:
         mode: str,
         source_files: List[str],
         runner: AsyncLoopRunner,
+        gateway: Optional[OpenAIGateway] = None,
         chunks_by_source_file: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         file_catalog: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> None:
@@ -373,6 +374,7 @@ class LightRAGMetadataStore:
         self._mode = mode
         self._source_files = source_files
         self._runner = runner
+        self._gateway = gateway
         self._chunks_by_source_file = chunks_by_source_file or {}
         self._file_catalog = file_catalog or {}
 
@@ -471,6 +473,7 @@ class LightRAGMetadataStore:
             mode=settings.lightrag_query_mode,
             source_files=source_files,
             runner=runner,
+            gateway=gateway,
             chunks_by_source_file=chunks_by_source_file,
             file_catalog=file_catalog,
         )
@@ -608,6 +611,7 @@ class LightRAGMetadataStore:
             )
             catalog = dict(self._file_catalog.get(source_file) or {})
             summary = str(catalog.get("summary") or "")
+            doc_type = str(catalog.get("doc_type") or state.get("doc_type") or "").strip().lower()
             file_language = str(catalog.get("language") or "")
             if not file_language:
                 file_language = str(
@@ -627,90 +631,83 @@ class LightRAGMetadataStore:
                     for chunk in self._chunks_by_source_file.get(source_file, [])[:2]
                     if str(chunk.get("text") or "").strip()
                 )
-            snippet_text = " ".join(snippet_parts)
-            summary_match = _text_match_score(query_text, summary)
-            snippet_match = _text_match_score(query_text, snippet_text)
-            name_match = _text_match_score(query_text, source_file)
-            summary_score = (summary_match * 2.5) + (snippet_match * 1.2) + (name_match * 0.6)
-            score = (float(state["sum_score"]) * 0.85) + (float(state["best_score"]) * 0.25)
-            score += (summary_match * 2.2) + (snippet_match * 1.4) + (name_match * 0.5)
-            if target_language and file_language == target_language:
-                score += 0.35
-                summary_score += 0.2
-            if preferred_source and source_file == preferred_source:
-                score += 2.0
-                summary_score += 2.0
+            snippet_text = " ".join(snippet_parts[:2]).strip()
             if (
-                float(state["sum_score"]) <= 0.0
-                and summary_score <= 0.0
-                and (not preferred_source or source_file != preferred_source)
+                float(state.get("sum_score") or 0.0) <= 0.0
+                and not summary.strip()
+                and not snippet_text
+                and source_file != preferred_source
             ):
                 continue
             candidates.append(
                 {
                     **catalog,
                     **state,
-                    "candidate_score": score,
-                    "summary_score": summary_score,
+                    "summary": summary.strip(),
+                    "doc_type": doc_type,
+                    "language": file_language,
+                    "snippet_preview": _summary_preview(snippet_text, limit=220) if snippet_text else "",
+                    "initial_hit_count": len(state.get("pages") or []),
+                    "initial_pages": list(state.get("pages") or []),
                 }
             )
 
-        candidates.sort(key=lambda item: float(item.get("candidate_score") or 0.0), reverse=True)
-        initial_ranked_files = [
-            str(item.get("source_file") or "")
-            for item in sorted(
+        if not candidates:
+            return initial_hits, {}
+
+        candidates.sort(
+            key=lambda item: (
+                1 if preferred_source and str(item.get("source_file") or "") == preferred_source else 0,
+                float(item.get("sum_score") or 0.0),
+                float(item.get("best_score") or 0.0),
+                1 if target_language and str(item.get("language") or "") == target_language else 0,
+                str(item.get("source_file") or ""),
+            ),
+            reverse=True,
+        )
+        candidate_by_source = {
+            str(item.get("source_file") or ""): item
+            for item in candidates
+            if str(item.get("source_file") or "")
+        }
+        fallback_ranked_files = [source_file for source_file in candidate_by_source]
+        llm_selected_files: List[str] = []
+        llm_reason = ""
+        selection_usage = None
+        if self._gateway is not None:
+            llm_selected_files, llm_reason, selection_usage = self._gateway.select_retrieval_focus_files(
+                query_text,
+                target_language or language,
                 candidates,
-                key=lambda item: (
-                    float(item.get("sum_score") or 0.0),
-                    float(item.get("best_score") or 0.0),
-                    float(item.get("candidate_score") or 0.0),
-                ),
-                reverse=True,
+                preferred_source=preferred_source,
+                max_files=2,
             )
-            if float(item.get("sum_score") or 0.0) > 0.0 and str(item.get("source_file") or "")
-        ]
-        summary_ranked_files = [
-            str(item.get("source_file") or "")
-            for item in sorted(candidates, key=lambda item: float(item.get("summary_score") or 0.0), reverse=True)
-            if float(item.get("summary_score") or 0.0) > 0.0 and str(item.get("source_file") or "")
-        ]
+
         selected_files: List[str] = []
         if preferred_source and preferred_source in all_source_files:
             selected_files.append(preferred_source)
-        for source_file in initial_ranked_files[:2]:
+        for source_file in llm_selected_files:
             if source_file not in selected_files:
                 selected_files.append(source_file)
-        for source_file in summary_ranked_files[:3]:
-            if source_file not in selected_files:
-                selected_files.append(source_file)
-        for item in candidates:
-            source_file = str(item.get("source_file") or "")
+        for source_file in fallback_ranked_files:
             if source_file and source_file not in selected_files:
                 selected_files.append(source_file)
             if len(selected_files) >= 4:
                 break
         selected_files = selected_files[:4]
-        focus_files: List[str] = []
-        if preferred_source and preferred_source in all_source_files:
-            focus_files.append(preferred_source)
-        for source_file in summary_ranked_files[:2]:
-            if source_file not in focus_files:
-                focus_files.append(source_file)
+        focus_files = selected_files[:2]
         if not focus_files:
-            focus_files = selected_files[:2]
-        if not selected_files:
             return initial_hits, {}
 
         focused_hits: List[RetrievedHit] = []
         for rank, source_file in enumerate(focus_files, start=1):
-            candidate = next((item for item in candidates if item.get("source_file") == source_file), {})
-            initial_pages = set(candidate.get("pages") or [])
-            summary_match = _text_match_score(query_text, str(candidate.get("summary") or ""))
+            candidate = candidate_by_source.get(source_file, {})
+            initial_pages = set(candidate.get("initial_pages") or candidate.get("pages") or [])
             for chunk in self._chunks_by_source_file.get(source_file, []):
                 chunk_text = str(chunk.get("text") or "")
                 lexical = _text_match_score(query_text, chunk_text)
                 page = str(chunk.get("page") or "").strip()
-                score = (lexical * 1.35) + (summary_match * 1.4) + (float(candidate.get("summary_score") or 0.0) * 0.2)
+                score = (lexical * 1.6) + (float(candidate.get("best_score") or 0.0) * 0.15)
                 if target_language and str(chunk.get("language") or "") == target_language:
                     score += 0.15
                 if page and page in initial_pages:
@@ -718,8 +715,8 @@ class LightRAGMetadataStore:
                 if not page:
                     score -= 0.25
                 if preferred_source and source_file == preferred_source:
-                    score += 0.15
-                if lexical <= 0 and page not in initial_pages:
+                    score += 0.25
+                if lexical <= 0 and page not in initial_pages and source_file != preferred_source:
                     continue
                 focused_hits.append(
                     RetrievedHit(
@@ -743,14 +740,18 @@ class LightRAGMetadataStore:
             return initial_hits, {
                 "selected_files": selected_files,
                 "focus_files": focus_files,
-                "candidates": candidates[:3],
+                "candidates": [candidate_by_source[source_file] for source_file in selected_files if source_file in candidate_by_source][:3],
                 "focused": False,
+                "selector_reason": llm_reason,
+                "selection_usage": selection_usage,
             }
 
         refined_hits = _diversify_hits_by_file(focused_hits, max(1, int(k or 1)))
         return refined_hits, {
             "selected_files": selected_files,
             "focus_files": focus_files,
-            "candidates": candidates[:3],
+            "candidates": [candidate_by_source[source_file] for source_file in selected_files if source_file in candidate_by_source][:3],
             "focused": True,
+            "selector_reason": llm_reason,
+            "selection_usage": selection_usage,
         }

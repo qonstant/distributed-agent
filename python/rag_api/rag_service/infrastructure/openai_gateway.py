@@ -637,6 +637,99 @@ class OpenAIGateway:
                 None,
             )
 
+    def select_retrieval_focus_files(
+        self,
+        query: str,
+        language_hint: str,
+        candidates: List[Dict[str, Any]],
+        *,
+        preferred_source: str = "",
+        max_files: int = 2,
+    ) -> tuple[List[str], str, Optional[ModelUsage]]:
+        valid_candidates = [
+            dict(candidate)
+            for candidate in candidates
+            if str(candidate.get("source_file") or "").strip()
+        ]
+        if not valid_candidates:
+            return [], "", None
+
+        allowed_sources = {
+            str(candidate.get("source_file") or "").strip(): dict(candidate)
+            for candidate in valid_candidates
+        }
+        language_name = self._language_name(language_hint) or "the user's language"
+        compact_candidates = []
+        for candidate in valid_candidates:
+            compact_candidates.append(
+                {
+                    "source_file": str(candidate.get("source_file") or "").strip(),
+                    "title": str(candidate.get("title") or "").strip(),
+                    "language": str(candidate.get("language") or "").strip(),
+                    "doc_type": str(candidate.get("doc_type") or "").strip(),
+                    "summary": str(candidate.get("summary") or "").strip()[:500],
+                    "snippet_preview": str(candidate.get("snippet_preview") or "").strip()[:280],
+                    "initial_sum_score": round(float(candidate.get("sum_score") or 0.0), 6),
+                    "initial_best_score": round(float(candidate.get("best_score") or 0.0), 6),
+                    "initial_pages": list(candidate.get("initial_pages") or [])[:6],
+                }
+            )
+
+        prompt = (
+            "You are selecting the best documents to focus a second-pass retrieval search.\n"
+            "Given a user query and candidate document summaries, choose up to two source files that are most likely to contain the answer.\n\n"
+            "Selection rules:\n"
+            " - Prioritize semantic topic match over exact keyword overlap.\n"
+            " - Use the summary as the main signal.\n"
+            " - Use initial retrieval evidence only as supporting signal, not as the final authority.\n"
+            " - Prefer documents in the user's language when relevance is otherwise similar.\n"
+            " - Avoid duplicates.\n"
+            " - Return ONLY source_file values that appear in the candidate list.\n"
+            " - If preferred_source is provided, it means the user explicitly referenced that file/attachment. Include it unless it is clearly unrelated.\n"
+            " - Do not ask clarifying questions. Just pick the best up to two files.\n\n"
+            "Return valid JSON with exactly these keys:\n"
+            ' - "selected_files": array of source_file strings, length 1 or 2 when possible\n'
+            ' - "reason": one short sentence\n\n'
+            f"User language: {language_name}\n"
+            f"Preferred source: {json.dumps(preferred_source or '', ensure_ascii=False)}\n"
+            f"User query: {json.dumps(query, ensure_ascii=False)}\n"
+            f"Max files: {int(max(1, max_files))}\n"
+            f"Candidates: {json.dumps(compact_candidates, ensure_ascii=False)}\n"
+        )
+        try:
+            response = self._client.responses.create(
+                model=self._settings.class_model,
+                input=prompt,
+                max_output_tokens=220,
+                temperature=0.0,
+            )
+            parsed = self._extract_json(self._resp_to_text(response) or "") or {}
+            raw_selected = parsed.get("selected_files")
+            selected_files: List[str] = []
+            if isinstance(raw_selected, list):
+                for item in raw_selected:
+                    source = str(item or "").strip()
+                    if not source:
+                        continue
+                    if source in allowed_sources and source not in selected_files:
+                        selected_files.append(source)
+                        continue
+                    basename = source.rsplit("/", 1)[-1]
+                    for allowed_source in allowed_sources:
+                        if allowed_source.rsplit("/", 1)[-1] == basename and allowed_source not in selected_files:
+                            selected_files.append(allowed_source)
+                            break
+                    if len(selected_files) >= max(1, int(max_files)):
+                        break
+            return (
+                selected_files[: max(1, int(max_files))],
+                str(parsed.get("reason") or "").strip(),
+                self._extract_usage(response, self._settings.class_model),
+            )
+        except Exception as exc:
+            print("[focus] retrieval file selector failed:", exc)
+            return [], "", None
+
     def _override_clear_supported_document_query(
         self,
         clarity: RetrievalClarity,
@@ -651,6 +744,49 @@ class OpenAIGateway:
         query_lc = (query or "").strip().lower()
         if not query_lc:
             return clarity
+
+        residence_permit_terms = (
+            "residence permit",
+            "permesso",
+            "внж",
+            "вид на жительство",
+            "тұруға рұқсат",
+            "ықтиярхат",
+        )
+        if any(term in query_lc for term in residence_permit_terms):
+            return RetrievalClarity(
+                is_clear=True,
+                standalone_query=(query or "").strip(),
+                clarifying_question="",
+                reason=(
+                    "Residence-permit wording is already a clear supported topic; "
+                    "topic clarification is unnecessary."
+                ),
+                is_retrieval_related=True,
+                target_language=clarity.target_language,
+            )
+
+        visa_terms = (
+            "visa",
+            "виза",
+            "виз",
+            "student visa",
+            "студенческая виза",
+            "студ виза",
+            "оқу визасы",
+        )
+        if any(term in query_lc for term in visa_terms):
+            return RetrievalClarity(
+                is_clear=True,
+                standalone_query=(query or "").strip(),
+                clarifying_question="",
+                reason=(
+                    "Visa wording is already a clear supported topic; "
+                    "topic clarification is unnecessary."
+                ),
+                is_retrieval_related=True,
+                target_language=clarity.target_language,
+            )
 
         document_terms = (
             "cv",

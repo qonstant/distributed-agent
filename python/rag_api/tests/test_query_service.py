@@ -10,6 +10,7 @@ from rag_service.application.query_service import (
     _detect_language_switch_follow_up,
     _extract_preferred_name_update,
     _infer_text_language,
+    _looks_like_pending_attachment_request,
     _looks_like_obvious_in_scope_education_query,
     _looks_like_preferred_name_update,
     _query_explicitly_references_attachment,
@@ -219,6 +220,8 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(_infer_text_language("Как подать на ВНЖ в Италии?"), "ru")
         self.assertEqual(_infer_text_language("How to apply for residence permit?"), "en")
         self.assertEqual(_infer_text_language("Италияда тұруға рұқсатты қалай аламын?"), "kk")
+        self.assertTrue(_looks_like_pending_attachment_request("где файл"))
+        self.assertTrue(_looks_like_pending_attachment_request("отправь этот файл"))
         self.assertEqual(
             _choose_retrieval_query(
                 "ru",
@@ -832,6 +835,30 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.attachment_follow_up_calls, [("yes please", memory.messages, "italy/Visa_en.pdf")])
         self.assertEqual(memory.cleared_pending, ["conv-1"])
         self.assertEqual(gateway.embedded_queries, [])
+
+    def test_explicit_russian_pending_file_request_sends_file_without_classifier_roundtrip(self) -> None:
+        gateway = FakeGateway(
+            Classification(intent="CHIT_CHAT", explain="asks for pending file", language="ru"),
+            attachment_action="",
+        )
+        memory = FakeConversationMemory(
+            [
+                ConversationMessage(
+                    role="assistant",
+                    text="Срок подачи на ВНЖ составляет 8 дней.\n\nОтправить вам файл с этой информацией?",
+                    ts=1,
+                )
+            ],
+            pending_attachment="italy/Residence_Permit_ru.pdf",
+        )
+        service = QueryService(gateway, FakeStore(), conversation_memory=memory)
+
+        result = service.handle_query("отправь этот файл", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "Конечно, отправляю файл: Residence_Permit_ru.pdf.")
+        self.assertEqual(result.file, "italy/Residence_Permit_ru.pdf")
+        self.assertEqual(gateway.attachment_follow_up_calls, [])
+        self.assertEqual(memory.cleared_pending, ["conv-1"])
 
     def test_document_request_uses_clarity_standalone_query_and_includes_history_in_prompt(self) -> None:
         history = [

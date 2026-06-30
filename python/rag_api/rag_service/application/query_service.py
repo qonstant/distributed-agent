@@ -452,6 +452,19 @@ def _disambiguation_doc_label(candidate: dict[str, Any], language: str) -> str:
     return _clean_candidate_title(candidate)
 
 
+def _humanize_doc_type_label(doc_type: str) -> str:
+    normalized = " ".join(str(doc_type or "").strip().replace("-", "_").split("_"))
+    return normalized.strip()
+
+
+def _disambiguation_topic_label(candidate: dict[str, Any], language: str) -> str:
+    del language
+    doc_type = _humanize_doc_type_label(str(candidate.get("doc_type") or ""))
+    if doc_type:
+        return doc_type
+    return _clean_candidate_title(candidate)
+
+
 def _disambiguation_summary(candidate: dict[str, Any]) -> str:
     summary = " ".join(str(candidate.get("summary") or "").split())
     if summary:
@@ -465,27 +478,39 @@ def _build_retrieval_disambiguation_question(language: str, options: List[dict[s
     normalized_language = normalize_language(language)
     if normalized_language == "kk":
         intro = _RETRIEVAL_DISAMBIGUATION_PREFIXES["kk"]
-        prompt = "Мыналардың қайсысын меңзеп тұрсыз?"
+        prompt = "Қай тақырыпты меңзеп тұрсыз?"
+        either_prompt = "Сізге {first} әлде {second} туралы ақпарат керек пе?"
         suffix = _RETRIEVAL_DISAMBIGUATION_SUFFIXES["kk"]
     elif normalized_language == "ru":
         intro = _RETRIEVAL_DISAMBIGUATION_PREFIXES["ru"]
-        prompt = "Какой из вариантов вы имеете в виду?"
+        prompt = "Какую тему вы имеете в виду?"
+        either_prompt = "Вам нужна информация про {first} или {second}?"
         suffix = _RETRIEVAL_DISAMBIGUATION_SUFFIXES["ru"]
     else:
         intro = _RETRIEVAL_DISAMBIGUATION_PREFIXES["en"]
-        prompt = "Which one do you mean?"
+        prompt = "Which topic do you mean?"
+        either_prompt = "Do you mean {first} or {second}?"
         suffix = _RETRIEVAL_DISAMBIGUATION_SUFFIXES["en"]
 
     lines = [intro, prompt]
+    compact_options = [str(option.get("label") or "").strip() for option in options if str(option.get("label") or "").strip()]
+    if len(compact_options) == 2:
+        lines.append(
+            either_prompt.format(
+                first=compact_options[0],
+                second=compact_options[1],
+            )
+        )
+        for index, label in enumerate(compact_options, start=1):
+            lines.append(f"{index}. {label}")
+        lines.append(suffix)
+        return "\n".join(lines)
+
     for index, option in enumerate(options, start=1):
         label = str(option.get("label") or "").strip()
-        summary = str(option.get("summary") or "").strip()
         if not label:
             continue
-        if summary:
-            lines.append(f"{index}. {label}: {summary}")
-        else:
-            lines.append(f"{index}. {label}")
+        lines.append(f"{index}. {label}")
     lines.append(suffix)
     return "\n".join(lines)
 
@@ -1766,7 +1791,7 @@ class QueryService:
             candidate = next((item for item in candidates if str(item.get("source_file") or "").strip() == source_file), None)
             if candidate is None:
                 continue
-            label = _disambiguation_doc_label(candidate, language)
+            label = _disambiguation_topic_label(candidate, language)
             summary = _disambiguation_summary(candidate)
             normalized_label = label.strip().lower()
             if not normalized_label or normalized_label in used_labels:

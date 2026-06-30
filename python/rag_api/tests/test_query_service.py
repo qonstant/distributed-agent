@@ -361,8 +361,7 @@ class QueryServiceTests(unittest.TestCase):
         result = service.handle_query("What photo format do I need?", conversation_id="conv-1")
 
         self.assertTrue(result.answer.startswith(EN_RETRIEVAL_DISAMBIGUATION))
-        self.assertIn("Visa", result.answer)
-        self.assertIn("Residence Permit", result.answer)
+        self.assertIn("Do you mean visa or residence permit?", result.answer)
         self.assertIsNone(result.file)
         self.assertEqual(store.search_calls[0]["query_text"], "photo format for Italy study documents")
         self.assertEqual(gateway.sufficiency_calls, [])
@@ -374,9 +373,10 @@ class QueryServiceTests(unittest.TestCase):
                 role="assistant",
                 text=(
                     "I found a couple of relevant document directions for this topic.\n"
-                    "Which one do you mean?\n"
-                    "1. student visa: Student visa application steps and ICAO photo requirements.\n"
-                    "2. residence permit: Residence permit process after arrival in Italy.\n"
+                    "Which topic do you mean?\n"
+                    "Do you mean student visa or residence permit?\n"
+                    "1. student visa\n"
+                    "2. residence permit\n"
                     "Reply with the option you mean, and I will narrow the search to that document."
                 ),
                 ts=2,

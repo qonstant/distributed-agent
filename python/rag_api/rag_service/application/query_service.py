@@ -121,6 +121,61 @@ _OBVIOUS_IN_SCOPE_EDUCATION_PHRASES = (
     "рекоменда",
 )
 
+_OBVIOUS_IN_SCOPE_EDUCATION_WEIGHTS = {
+    "isee": 3.0,
+    "equivalent isee": 3.0,
+    "dsu": 3.0,
+    "scholar": 2.5,
+    "financial aid": 2.5,
+    "fee waiver": 2.5,
+    "waiver": 2.0,
+    "tuition": 2.0,
+    "study for free": 3.0,
+    "free study": 3.0,
+    "student visa": 3.0,
+    "visa": 2.0,
+    "виза": 2.0,
+    "внж": 3.0,
+    "вид на жительство": 3.0,
+    "residence permit": 3.0,
+    "permesso": 3.0,
+    "тұруға рұқсат": 3.0,
+    "ықтиярхат": 3.0,
+    "universitaly": 2.5,
+    "pre-enrollment": 2.0,
+    "pre enrollment": 2.0,
+    "admission": 1.6,
+    "admission letter": 2.0,
+    "motivation letter": 2.5,
+    "recommendation letter": 2.5,
+    "стипенд": 2.5,
+    "шәкіртақы": 2.5,
+    "грант": 2.0,
+    "cv": 2.0,
+    "резюме": 2.0,
+    "модул": 1.3,
+    "modulo": 1.3,
+    "module": 1.1,
+    "заполн": 1.1,
+    "fill out": 1.1,
+    "анкет": 1.2,
+    "form": 0.8,
+    "photo format": 1.8,
+    "photo size": 1.8,
+    "background": 1.4,
+    "фото": 1.2,
+    "размер фото": 1.8,
+    "отпечатк": 2.0,
+    "fingerprint": 2.0,
+    "questura": 2.0,
+    "poste italiane": 2.0,
+    "marca da bollo": 2.0,
+    "ricevuta": 1.6,
+    "ричевут": 1.6,
+}
+
+_OBVIOUS_IN_SCOPE_EDUCATION_THRESHOLD = 2.0
+
 _OBVIOUS_UNSAFE_PHRASES = (
     "fake",
     "forge",
@@ -353,7 +408,16 @@ def _looks_like_obvious_in_scope_education_query(query: str) -> bool:
         return False
     if any(marker in normalized for marker in _OBVIOUS_UNSAFE_PHRASES):
         return False
-    return any(marker in normalized for marker in _OBVIOUS_IN_SCOPE_EDUCATION_PHRASES)
+    if any(marker in normalized for marker in _OBVIOUS_IN_SCOPE_EDUCATION_PHRASES):
+        return True
+
+    score = 0.0
+    for marker, weight in _OBVIOUS_IN_SCOPE_EDUCATION_WEIGHTS.items():
+        if marker in normalized:
+            score += float(weight)
+        if score >= _OBVIOUS_IN_SCOPE_EDUCATION_THRESHOLD:
+            return True
+    return False
 
 
 def _send_pending_attachment_answer(file_source: str, language: str) -> str:

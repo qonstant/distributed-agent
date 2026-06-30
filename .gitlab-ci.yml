@@ -481,7 +481,8 @@ build-golang-image-prod:
     - if: '$CI_COMMIT_BRANCH == "main"'
   script:
     - cd golang
-    - docker build -t "${GOLANG_IMAGE_NAME}" .
+    - 'BOT_DEPLOY_IMAGE="${BOT_IMAGE_NAME}"'
+    - docker build --label app=study-bot --label git_sha="${CI_COMMIT_SHA}" -t "${BOT_DEPLOY_IMAGE}" .
 
 build-golang-image-test:
   stage: build
@@ -492,7 +493,8 @@ build-golang-image-test:
     - if: '$CI_COMMIT_BRANCH == "test"'
   script:
     - cd golang
-    - docker build -t "${GOLANG_IMAGE_NAME}" .
+    - 'BOT_DEPLOY_IMAGE="${BOT_IMAGE_NAME}"'
+    - docker build --label app=study-bot --label git_sha="${CI_COMMIT_SHA}" -t "${BOT_DEPLOY_IMAGE}" .
 
 deploy-golang-prod:
   stage: deploy
@@ -510,6 +512,7 @@ deploy-golang-prod:
       optional: false
   script:
     - cd golang
+    - 'BOT_DEPLOY_IMAGE="${BOT_IMAGE_NAME}"'
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT}" > .env'
     - 'printf "S3_BUCKET=%s\n" "${S3_BUCKET}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID}" >> .env'
@@ -524,9 +527,14 @@ deploy-golang-prod:
     - 'printf "RABBITMQ_URL=%s\n" "${RABBITMQ_URL}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN}" >> .env'
     - chmod 600 .env
-    - 'docker image inspect "${GOLANG_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${GOLANG_IMAGE_NAME}" && exit 1)'
+    - 'docker image inspect "${BOT_DEPLOY_IMAGE}" >/dev/null 2>&1 || (echo "Missing built image: ${BOT_DEPLOY_IMAGE}" && exit 1)'
+    - 'docker image inspect "${BOT_DEPLOY_IMAGE}" --format ''[bot] image={{.RepoTags}} created={{.Created}} labels={{json .Config.Labels}}'''
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
     - docker-compose up -d --no-build
+    - sleep 3
+    - 'docker ps --filter "name=study-bot" --filter "name=study-bot-events-worker"'
+    - 'docker logs study-bot --tail 20 || true'
+    - 'docker logs study-bot-events-worker --tail 20 || true'
     - 'shred -u .env || rm -f .env || true'
 
 deploy-golang-test:
@@ -545,6 +553,7 @@ deploy-golang-test:
       optional: false
   script:
     - cd golang
+    - 'BOT_DEPLOY_IMAGE="${BOT_IMAGE_NAME}"'
     - 'printf "S3_ENDPOINT=%s\n" "${S3_ENDPOINT_TEST}" > .env'
     - 'printf "S3_BUCKET=%s\n" "${S3_BUCKET_TEST}" >> .env'
     - 'printf "S3_ACCESS_KEY_ID=%s\n" "${S3_ACCESS_KEY_ID_TEST}" >> .env'
@@ -559,9 +568,14 @@ deploy-golang-test:
     - 'printf "RABBITMQ_URL=%s\n" "${RABBITMQ_URL_TEST}" >> .env'
     - 'printf "TELEGRAM_BOT_TOKEN=%s\n" "${TELEGRAM_BOT_TOKEN_TEST}" >> .env'
     - chmod 600 .env
-    - 'docker image inspect "${GOLANG_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${GOLANG_IMAGE_NAME}" && exit 1)'
+    - 'docker image inspect "${BOT_DEPLOY_IMAGE}" >/dev/null 2>&1 || (echo "Missing built image: ${BOT_DEPLOY_IMAGE}" && exit 1)'
+    - 'docker image inspect "${BOT_DEPLOY_IMAGE}" --format ''[bot] image={{.RepoTags}} created={{.Created}} labels={{json .Config.Labels}}'''
     - 'if [ "${FORCE_S3_REFRESH}" = "1" ]; then docker-compose down -v --remove-orphans || true; else docker-compose down --remove-orphans || true; fi'
     - docker-compose up -d --no-build
+    - sleep 3
+    - 'docker ps --filter "name=study-bot" --filter "name=study-bot-events-worker"'
+    - 'docker logs study-bot --tail 20 || true'
+    - 'docker logs study-bot-events-worker --tail 20 || true'
     - 'shred -u .env || rm -f .env || true'
 
 prepare-golang-db-files-prod:

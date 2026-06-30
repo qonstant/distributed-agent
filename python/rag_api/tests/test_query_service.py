@@ -8,6 +8,7 @@ from rag_service.application.query_service import (
     QueryService,
     _choose_retrieval_query,
     _detect_language_switch_follow_up,
+    _extract_preferred_name_update,
     _infer_text_language,
     _looks_like_obvious_in_scope_education_query,
     _looks_like_preferred_name_update,
@@ -1717,6 +1718,12 @@ class QueryServiceTests(unittest.TestCase):
         self.assertTrue(_looks_like_preferred_name_update("Родриго деп ата"))
         self.assertFalse(_looks_like_preferred_name_update("Как получить визу в Италию?"))
 
+    def test_extracts_preferred_name_from_keyword_path(self) -> None:
+        self.assertEqual(_extract_preferred_name_update("Call me Alex"), "Alex")
+        self.assertEqual(_extract_preferred_name_update("Зови меня akimshilik"), "akimshilik")
+        self.assertEqual(_extract_preferred_name_update("Зови меня 'Bruno"), "Bruno")
+        self.assertEqual(_extract_preferred_name_update("Родриго деп ата"), "Родриго")
+
     def test_profile_update_bypasses_guardrail_keyword_path(self) -> None:
         gateway = FakeGateway(
             Classification(
@@ -1744,6 +1751,30 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.guard_calls, [])
         self.assertEqual(len(result.usage_events), 1)
         self.assertEqual(result.usage_events[0].event_type, "classification")
+
+    def test_profile_update_keyword_fallback_overrides_bad_classifier_output(self) -> None:
+        gateway = FakeGateway(
+            Classification(
+                intent="OUT_OF_DOMAIN",
+                explain="User's input is unrelated to education abroad.",
+                language="ru",
+                route="REFUSE_OR_REDIRECT",
+                confidence=0.9,
+                profile_action="",
+                preferred_name="",
+            )
+        )
+        service = QueryService(gateway, FakeStore(), conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("Зови меня akimshilik", conversation_id="conv-1")
+
+        self.assertEqual(result.answer, "")
+        self.assertIsNotNone(result.classification)
+        self.assertEqual(result.classification.profile_action, "set_preferred_name")
+        self.assertEqual(result.classification.preferred_name, "akimshilik")
+        self.assertEqual(gateway.guard_calls, [])
+        self.assertEqual(gateway.clarity_calls, [])
+        self.assertEqual(gateway.attachment_follow_up_calls, [])
 
     def test_detects_obvious_in_scope_education_query_phrases(self) -> None:
         self.assertTrue(_looks_like_obvious_in_scope_education_query("Какой isee нужен для учебы бесплатно"))

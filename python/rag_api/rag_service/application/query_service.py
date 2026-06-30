@@ -84,6 +84,14 @@ _PREFERRED_NAME_UPDATE_PHRASES = (
     "деп атаңыз",
 )
 
+_PREFERRED_NAME_SUFFIX_PHRASES = (
+    "деп ата",
+    "деп аташы",
+    "деп атай бер",
+    "деп атай аласыз",
+    "деп атаңыз",
+)
+
 _OBVIOUS_IN_SCOPE_EDUCATION_PHRASES = (
     "isee",
     "equivalent isee",
@@ -286,6 +294,35 @@ def _looks_like_preferred_name_update(query: str) -> bool:
         if candidate:
             return True
     return False
+
+
+def _clean_preferred_name_candidate(value: str) -> str:
+    cleaned = " ".join(str(value or "").strip().split())
+    if not cleaned:
+        return ""
+    cleaned = cleaned.strip("`'\"“”‘’.,!?:;()[]{}<>")
+    cleaned = " ".join(cleaned.split())
+    return cleaned
+
+
+def _extract_preferred_name_update(query: str) -> str:
+    normalized = " ".join((query or "").strip().split())
+    lowered = normalized.lower()
+    if not normalized:
+        return ""
+
+    for phrase in _PREFERRED_NAME_UPDATE_PHRASES:
+        index = lowered.find(phrase)
+        if index < 0:
+            continue
+        if phrase in _PREFERRED_NAME_SUFFIX_PHRASES:
+            candidate = normalized[:index].strip()
+        else:
+            candidate = normalized[index + len(phrase):].strip()
+        cleaned = _clean_preferred_name_candidate(candidate)
+        if cleaned:
+            return cleaned
+    return ""
 
 
 def _looks_like_obvious_in_scope_education_query(query: str) -> bool:
@@ -1103,6 +1140,31 @@ class QueryService:
         intent = normalize_intent(raw_intent)
         clarity_intent = raw_intent if raw_intent in {"CHIT_CHAT", "GUIDANCE", "DOCUMENT_REQUEST", "OTHER"} else intent
         language = classification.language or guardrail_language
+
+        if skip_guardrail_for_profile_update:
+            extracted_preferred_name = _extract_preferred_name_update(normalized_query)
+            if extracted_preferred_name and (
+                classification.profile_action != "set_preferred_name"
+                or not (classification.preferred_name or "").strip()
+            ):
+                classification = Classification(
+                    intent=classification.intent or "CHITCHAT",
+                    explain=classification.explain or "explicit preferred-name update phrase",
+                    language=classification.language or _infer_text_language(normalized_query),
+                    model=classification.model,
+                    version=classification.version,
+                    profile_action="set_preferred_name",
+                    preferred_name=extracted_preferred_name,
+                    confidence=classification.confidence,
+                    needs_rag=False,
+                    route=classification.route or "SMALL_MODEL_RESPONSE",
+                    rewritten_query="",
+                )
+                raw_intent = (classification.intent or "").strip().upper()
+                intent = normalize_intent(raw_intent)
+                clarity_intent = raw_intent if raw_intent in {"CHIT_CHAT", "GUIDANCE", "DOCUMENT_REQUEST", "OTHER"} else intent
+                language = classification.language or guardrail_language
+
         trace("classifier", **self._classification_trace(classification, normalized_intent=intent))
 
         forced_clarity: Optional[RetrievalClarity] = None

@@ -36,6 +36,7 @@ RU_PAGE_3_REFERENCE = "Особенно проверьте страницу 3 в
 EN_FILE_OFFER = "Should I send you the file with this information?"
 EN_TOPIC_CLARIFICATION = "Which topic do you mean: admission, student visa, residence permit, DSU scholarship, documents, deadlines, tuition, housing, exchange, CV, or letters?"
 EN_RETRIEVAL_FOLLOW_UP = "To find the right answer in the documents, which topic do you mean: admission, student visa, residence permit, DSU, documents, deadlines, tuition, housing, exchange, CV, or letters?"
+EN_RETRIEVAL_DISAMBIGUATION = "I found a couple of relevant document directions for this topic."
 EN_SCOPE_ANSWER = "I can help only with education-abroad questions: admission, documents, scholarships, deadlines, tuition, exchange programs, student visas, residence permits, housing, CVs, and letters."
 RU_SCOPE_ANSWER = "Я могу помогать только с вопросами про обучение за рубежом: поступление, документы, стипендии, дедлайны, стоимость обучения, exchange, студенческую визу, ВНЖ, жилье, CV и письма."
 
@@ -303,6 +304,117 @@ class QueryServiceTests(unittest.TestCase):
         self.assertEqual(gateway.sufficiency_calls[0][3], refined_results)
         self.assertEqual(result.file, "italy/Residence_Permit_ru.pdf")
         self.assertIn("страницу 1", result.answer)
+
+    def test_ambiguous_education_query_retrieves_first_then_asks_file_level_disambiguation(self) -> None:
+        gateway = FakeGateway(
+            Classification(
+                intent="FACTUAL_QUESTION",
+                explain="ambiguous but education-related",
+                language="en",
+                confidence=0.79,
+                needs_rag=True,
+                route="RAG_SEARCH",
+            ),
+            clarity=RetrievalClarity(
+                is_clear=False,
+                is_retrieval_related=True,
+                standalone_query="photo format for Italy study documents",
+                clarifying_question="Do you mean visa or residence permit?",
+                reason="Photo requirements may depend on the document path.",
+            ),
+        )
+        raw_results = [
+            RetrievedHit(
+                score=1.2,
+                nid=1,
+                meta={"source_file": "italy/Visa_en.pdf", "page": "3", "text": "Visa photo must follow ICAO format."},
+            ),
+            RetrievedHit(
+                score=1.05,
+                nid=2,
+                meta={"source_file": "italy/Residence_Permit_eng.pdf", "page": "7", "text": "Residence permit photos are brought to Questura."},
+            ),
+        ]
+        refine_meta = {
+            "selected_files": ["italy/Visa_en.pdf", "italy/Residence_Permit_eng.pdf"],
+            "focus_files": ["italy/Visa_en.pdf", "italy/Residence_Permit_eng.pdf"],
+            "focused": True,
+            "candidates": [
+                {
+                    "source_file": "italy/Visa_en.pdf",
+                    "title": "Visa_en.pdf",
+                    "doc_type": "visa",
+                    "summary": "Student visa application steps, required documents, and ICAO photo requirements for the consulate.",
+                },
+                {
+                    "source_file": "italy/Residence_Permit_eng.pdf",
+                    "title": "Residence_Permit_eng.pdf",
+                    "doc_type": "residence_permit",
+                    "summary": "Residence permit process after arrival in Italy, including the postal kit, fingerprints, and supporting documents.",
+                },
+            ],
+        }
+        store = FakeStore(results=raw_results, refined_results=raw_results, refine_meta=refine_meta)
+        service = QueryService(gateway, store, conversation_memory=FakeConversationMemory([]))
+
+        result = service.handle_query("What photo format do I need?", conversation_id="conv-1")
+
+        self.assertTrue(result.answer.startswith(EN_RETRIEVAL_DISAMBIGUATION))
+        self.assertIn("Visa", result.answer)
+        self.assertIn("Residence Permit", result.answer)
+        self.assertIsNone(result.file)
+        self.assertEqual(store.search_calls[0]["query_text"], "photo format for Italy study documents")
+        self.assertEqual(gateway.sufficiency_calls, [])
+
+    def test_short_reply_after_retrieval_disambiguation_expands_previous_query_before_rag(self) -> None:
+        history = [
+            ConversationMessage(role="user", text="What photo format do I need?", ts=1),
+            ConversationMessage(
+                role="assistant",
+                text=(
+                    "I found a couple of relevant document directions for this topic.\n"
+                    "Which one do you mean?\n"
+                    "1. student visa: Student visa application steps and ICAO photo requirements.\n"
+                    "2. residence permit: Residence permit process after arrival in Italy.\n"
+                    "Reply with the option you mean, and I will narrow the search to that document."
+                ),
+                ts=2,
+            ),
+        ]
+        gateway = FakeGateway(
+            Classification(
+                intent="FACTUAL_QUESTION",
+                explain="now specific enough after follow-up answer",
+                language="en",
+                needs_rag=True,
+                route="RAG_SEARCH",
+            ),
+            clarity=RetrievalClarity(
+                is_clear=True,
+                is_retrieval_related=True,
+                standalone_query="What photo format do I need? student visa",
+                reason="The follow-up picks the visa branch.",
+            ),
+            json_response={
+                "answer": "The visa photo must follow ICAO standards.",
+                "file": "italy/Visa_en.pdf",
+            },
+        )
+        results = [
+            RetrievedHit(
+                score=0.9,
+                nid=1,
+                meta={"source_file": "italy/Visa_en.pdf", "page": "3", "text": "Photo must comply with ICAO standards."},
+            )
+        ]
+        memory = FakeConversationMemory(history)
+        service = QueryService(gateway, FakeStore(results), conversation_memory=memory)
+
+        result = service.handle_query("student visa", conversation_id="conv-1")
+
+        self.assertEqual(gateway.classify_calls[0][0], "What photo format do I need? student visa")
+        self.assertEqual(service._store.search_calls[0]["query_text"], "What photo format do I need? student visa")
+        self.assertIn("ICAO", result.answer)
 
     def test_pretty_trace_formats_final_response_without_raw_json_noise(self) -> None:
         service = QueryService(

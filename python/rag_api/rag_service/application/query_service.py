@@ -129,6 +129,91 @@ _OBVIOUS_UNSAFE_PHRASES = (
     "обман",
 )
 
+_RETRIEVAL_DISAMBIGUATION_PREFIXES = {
+    "en": "I found a couple of relevant document directions for this topic.",
+    "ru": "Я нашел несколько подходящих направлений в документах по этой теме.",
+    "kk": "Бұл тақырып бойынша құжаттардан бірнеше ықтимал бағыт таптым.",
+}
+
+_RETRIEVAL_DISAMBIGUATION_SUFFIXES = {
+    "en": "Reply with the option you mean, and I will narrow the search to that document.",
+    "ru": "Ответьте, какой вариант вы имеете в виду, и я сузю поиск до этого документа.",
+    "kk": "Қай нұсқаны меңзеп тұрғаныңызды жазыңыз, мен іздеуді сол құжатқа дейін тарылтамын.",
+}
+
+_GENERIC_RETRIEVAL_CLARITY_WORDS = {
+    "a",
+    "an",
+    "and",
+    "apply",
+    "application",
+    "can",
+    "details",
+    "do",
+    "doc",
+    "docs",
+    "document",
+    "documents",
+    "for",
+    "get",
+    "guide",
+    "how",
+    "i",
+    "in",
+    "info",
+    "information",
+    "italy",
+    "it",
+    "me",
+    "need",
+    "of",
+    "on",
+    "process",
+    "required",
+    "requirement",
+    "requirements",
+    "steps",
+    "student",
+    "tell",
+    "the",
+    "them",
+    "to",
+    "what",
+    "which",
+    "about",
+    "как",
+    "какие",
+    "какой",
+    "какую",
+    "каком",
+    "документ",
+    "документы",
+    "документов",
+    "доки",
+    "для",
+    "мне",
+    "могу",
+    "мне",
+    "нужно",
+    "нужен",
+    "нужна",
+    "нужны",
+    "подать",
+    "подача",
+    "процесс",
+    "расскажи",
+    "что",
+    "қалай",
+    "қандай",
+    "құжат",
+    "құжаттар",
+    "құжаттарым",
+    "керек",
+    "маған",
+    "не",
+    "өтінім",
+    "процессі",
+}
 
 def _aggregate_by_file(results: List[RetrievedHit]) -> Tuple[Optional[str], Optional[RetrievedHit]]:
     file_sum: dict[str, float] = {}
@@ -223,6 +308,164 @@ def _send_pending_attachment_answer(file_source: str, language: str) -> str:
     return f"Sure, here is the file: {file_label}."
 
 
+def _is_short_follow_up_text(query: str) -> bool:
+    normalized = " ".join(str(query or "").strip().split())
+    if not normalized:
+        return False
+    return len(normalized) <= 80 and len(normalized.split()) <= 8
+
+
+def _is_retrieval_disambiguation_prompt(text: str) -> bool:
+    normalized = " ".join(str(text or "").strip().lower().split())
+    if not normalized:
+        return False
+    return any(normalized.startswith(prefix.lower()) for prefix in _RETRIEVAL_DISAMBIGUATION_PREFIXES.values())
+
+
+def _extract_retrieval_disambiguation_options(text: str) -> List[str]:
+    options: List[str] = []
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if len(line) < 3 or line[1] != "." or not line[0].isdigit():
+            continue
+        option_text = line[2:].strip()
+        label, _, _summary = option_text.partition(":")
+        cleaned_label = label.strip()
+        if cleaned_label:
+            options.append(cleaned_label)
+    return options
+
+
+def _expand_retrieval_disambiguation_follow_up(query: str, history: List[ConversationMessage]) -> str:
+    normalized_query = " ".join(str(query or "").strip().split())
+    if not normalized_query or not _is_short_follow_up_text(normalized_query) or not history:
+        return ""
+
+    latest_assistant: Optional[ConversationMessage] = None
+    previous_user: Optional[ConversationMessage] = None
+    for message in reversed(history):
+        if latest_assistant is None:
+            if message.role != "assistant":
+                continue
+            if not _is_retrieval_disambiguation_prompt(message.text):
+                return ""
+            latest_assistant = message
+            continue
+        if message.role == "user" and str(message.text or "").strip():
+            previous_user = message
+            break
+
+    if latest_assistant is None or previous_user is None:
+        return ""
+
+    option_labels = _extract_retrieval_disambiguation_options(latest_assistant.text)
+    effective_reply = normalized_query
+    if normalized_query.isdigit():
+        option_index = int(normalized_query) - 1
+        if 0 <= option_index < len(option_labels):
+            effective_reply = option_labels[option_index]
+
+    return f"{previous_user.text.strip()} {effective_reply}".strip()
+
+
+def _humanize_file_label(source_file: str) -> str:
+    name = _basename(source_file)
+    if not name:
+        return ""
+    stem = name.rsplit(".", 1)[0]
+    parts = [part for part in stem.split("_") if part.lower() not in {"en", "eng", "ru", "kk", "kz"}]
+    if not parts:
+        return stem
+    words: List[str] = []
+    for part in parts:
+        for word in part.replace("-", " ").split():
+            cleaned = word.strip()
+            if not cleaned:
+                continue
+            if cleaned.isupper() or len(cleaned) <= 3:
+                words.append(cleaned.upper())
+            else:
+                words.append(cleaned.capitalize())
+    return " ".join(words).strip()
+
+
+def _looks_like_filename_title(value: str) -> bool:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    return lowered.endswith(".pdf") or lowered.endswith(".md") or "_" in normalized or "/" in normalized
+
+
+def _clean_candidate_title(candidate: dict[str, Any]) -> str:
+    title = str(candidate.get("title") or "").strip()
+    source_file = str(candidate.get("source_file") or "").strip()
+    if title and not _looks_like_filename_title(title):
+        return title
+    humanized = _humanize_file_label(source_file or title)
+    if humanized:
+        return humanized
+    if title:
+        return title
+    return _basename(source_file)
+
+
+def _disambiguation_doc_label(candidate: dict[str, Any], language: str) -> str:
+    del language
+    return _clean_candidate_title(candidate)
+
+
+def _disambiguation_summary(candidate: dict[str, Any]) -> str:
+    summary = " ".join(str(candidate.get("summary") or "").split())
+    if summary:
+        if len(summary) <= 180:
+            return summary
+        return summary[:180].rsplit(" ", 1)[0].rstrip() + "..."
+    return _clean_candidate_title(candidate)
+
+
+def _build_retrieval_disambiguation_question(language: str, options: List[dict[str, str]]) -> str:
+    normalized_language = normalize_language(language)
+    if normalized_language == "kk":
+        intro = _RETRIEVAL_DISAMBIGUATION_PREFIXES["kk"]
+        prompt = "Мыналардың қайсысын меңзеп тұрсыз?"
+        suffix = _RETRIEVAL_DISAMBIGUATION_SUFFIXES["kk"]
+    elif normalized_language == "ru":
+        intro = _RETRIEVAL_DISAMBIGUATION_PREFIXES["ru"]
+        prompt = "Какой из вариантов вы имеете в виду?"
+        suffix = _RETRIEVAL_DISAMBIGUATION_SUFFIXES["ru"]
+    else:
+        intro = _RETRIEVAL_DISAMBIGUATION_PREFIXES["en"]
+        prompt = "Which one do you mean?"
+        suffix = _RETRIEVAL_DISAMBIGUATION_SUFFIXES["en"]
+
+    lines = [intro, prompt]
+    for index, option in enumerate(options, start=1):
+        label = str(option.get("label") or "").strip()
+        summary = str(option.get("summary") or "").strip()
+        if not label:
+            continue
+        if summary:
+            lines.append(f"{index}. {label}: {summary}")
+        else:
+            lines.append(f"{index}. {label}")
+    lines.append(suffix)
+    return "\n".join(lines)
+
+
+def _should_defer_retrieval_clarification(query: str) -> bool:
+    normalized = " ".join(
+        str(query or "").strip().lower().translate(_ATTACHMENT_PUNCT_TRANSLATION).split()
+    )
+    if not normalized:
+        return False
+    tokens = [token for token in normalized.split() if token]
+    if not tokens:
+        return False
+    specific_tokens = [token for token in tokens if token not in _GENERIC_RETRIEVAL_CLARITY_WORDS]
+    return bool(specific_tokens)
+
+
 _ATTACHMENT_REFERENCE_PHRASES = (
     "this file",
     "that file",
@@ -293,7 +536,7 @@ _ATTACHMENT_PUNCT_TRANSLATION = str.maketrans({
 _LANGUAGE_SWITCH_PREFIXES = {
     "en": ("english", "англ", "engl", "eng"),
     "ru": ("russian", "рус", "russ", "rus"),
-    "kk": ("kazakh", "qazaq", "қазақ", "қаз", "казах", "каз"),
+    "kk": ("kazakh", "qazaq", "қазақ", "қаз", "казах", "каз", "казак"),
 }
 _LANGUAGE_SWITCH_MARKERS = {
     "can",
@@ -745,6 +988,19 @@ class QueryService:
                 )
             return history
 
+        if conversation_id and _is_short_follow_up_text(normalized_query):
+            expanded_follow_up = _expand_retrieval_disambiguation_follow_up(
+                normalized_query,
+                ensure_history_loaded(),
+            )
+            if expanded_follow_up and expanded_follow_up != normalized_query:
+                trace(
+                    "disambiguation.follow_up",
+                    original_query=normalized_query,
+                    expanded_query=expanded_follow_up,
+                )
+                normalized_query = expanded_follow_up
+
         if language_switch_target:
             history = ensure_history_loaded()
             trace(
@@ -851,6 +1107,7 @@ class QueryService:
 
         forced_clarity: Optional[RetrievalClarity] = None
         skip_classifier_clarify = False
+        defer_retrieval_clarification = False
 
         if language_switch_target and history:
             switch_clarity, switch_clarity_usage = self._retrieval_clarity(
@@ -871,7 +1128,7 @@ class QueryService:
             )
             if switch_clarity_usage is not None:
                 usage_events.append(usage_event_from_model_usage("classification", switch_clarity_usage))
-            if switch_clarity.is_retrieval_related and switch_clarity.is_clear:
+            if switch_clarity.is_retrieval_related:
                 if not switch_clarity.target_language:
                     switch_clarity = RetrievalClarity(
                         is_retrieval_related=switch_clarity.is_retrieval_related,
@@ -886,6 +1143,10 @@ class QueryService:
                 if intent not in RETRIEVAL_INTENTS:
                     intent = "PROCEDURE"
                 skip_classifier_clarify = True
+                defer_retrieval_clarification = (
+                    (not switch_clarity.is_clear)
+                    and _should_defer_retrieval_clarification(normalized_query)
+                )
 
         if classification.profile_action == "set_preferred_name" and (classification.preferred_name or "").strip():
             return finish(QueryResult(
@@ -910,14 +1171,7 @@ class QueryService:
 
                 if clarity.is_retrieval_related:
                     if not clarity.is_clear:
-                        response_language = _effective_language(language, clarity.target_language)
-                        answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
-                        return finish(QueryResult(
-                            answer=answer,
-                            file=None,
-                            classification=classification,
-                            usage_events=usage_events,
-                        ), "clarity_question_after_classifier")
+                        defer_retrieval_clarification = _should_defer_retrieval_clarification(normalized_query)
                     forced_clarity = clarity
                     if intent not in RETRIEVAL_INTENTS:
                         intent = "PROCEDURE"
@@ -990,14 +1244,7 @@ class QueryService:
 
             if clarity.is_retrieval_related:
                 if not clarity.is_clear:
-                    response_language = _effective_language(language, clarity.target_language)
-                    answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
-                    return finish(QueryResult(
-                        answer=answer,
-                        file=None,
-                        classification=classification,
-                        usage_events=usage_events,
-                    ), "chitchat_clarity_question")
+                    defer_retrieval_clarification = _should_defer_retrieval_clarification(normalized_query)
                 forced_clarity = clarity
                 intent = "PROCEDURE"
 
@@ -1037,14 +1284,7 @@ class QueryService:
 
             if clarity.is_retrieval_related:
                 if not clarity.is_clear:
-                    response_language = _effective_language(language, clarity.target_language)
-                    answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
-                    return finish(QueryResult(
-                        answer=answer,
-                        file=None,
-                        classification=classification,
-                        usage_events=usage_events,
-                    ), "factual_clarity_question")
+                    defer_retrieval_clarification = _should_defer_retrieval_clarification(normalized_query)
                 forced_clarity = clarity
             else:
                 answer, completion_usage = self._gateway.answer_factual(
@@ -1091,14 +1331,16 @@ class QueryService:
                 ), "clarity_not_retrieval")
 
             if not clarity.is_clear:
-                response_language = _effective_language(language, clarity.target_language)
-                answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
-                return finish(QueryResult(
-                    answer=answer,
-                    file=None,
-                    classification=classification,
-                    usage_events=usage_events,
-                ), "clarity_question")
+                defer_retrieval_clarification = _should_defer_retrieval_clarification(normalized_query)
+                if not defer_retrieval_clarification:
+                    response_language = _effective_language(language, clarity.target_language)
+                    answer = (clarity.clarifying_question or "").strip() or _fallback_clarifying_question(response_language)
+                    return finish(QueryResult(
+                        answer=answer,
+                        file=None,
+                        classification=classification,
+                        usage_events=usage_events,
+                    ), "clarity_question")
 
             if raw_intent == "DOCUMENT_REQUEST":
                 retrieval_intent = "DOCUMENT_REQUEST"
@@ -1152,6 +1394,7 @@ class QueryService:
             anchor_candidate = pending_file or resend_source
             if anchor_candidate and _query_explicitly_references_attachment(normalized_query, anchor_candidate):
                 retrieval_anchor_source = anchor_candidate
+            refine_meta: dict[str, Any] = {}
             if hasattr(self._store, "refine_results"):
                 refined_results, refine_meta = self._store.refine_results(
                     query_text=retrieval_query,
@@ -1185,13 +1428,27 @@ class QueryService:
 
             top_n = max(1, int(top_for_llm or 8))
             top_chunks = results[:top_n]
+            rag_usage_events = self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
+
+            if defer_retrieval_clarification:
+                disambiguation_question = self._post_retrieval_disambiguation_question(
+                    response_language,
+                    refine_meta if isinstance(refine_meta, dict) else {},
+                )
+                if disambiguation_question:
+                    return finish(QueryResult(
+                        answer=disambiguation_question,
+                        file=None,
+                        classification=classification,
+                        usage_events=usage_events + rag_usage_events,
+                    ), "retrieval_disambiguation_question")
+
             trace(
                 "retrieval.results",
                 count=len(results),
                 top_chunks=len(top_chunks),
                 top_hits=self._hits_preview(top_chunks),
             )
-            rag_usage_events = self._rag_usage_events(retrieval_query, rewrite_usage, embedding_usage)
             sufficiency, sufficiency_usage = self._retrieval_sufficiency(
                 retrieval_query,
                 response_language,
@@ -1408,6 +1665,64 @@ class QueryService:
                 error=str(exc),
             )
             return RetrievalSufficiency(is_sufficient=False, reason=f"sufficiency failed: {exc}"), None
+
+    def _post_retrieval_disambiguation_question(
+        self,
+        language: str,
+        refine_meta: dict[str, Any],
+    ) -> str:
+        focus_files = [
+            str(source_file or "").strip()
+            for source_file in (refine_meta.get("focus_files") or [])
+            if str(source_file or "").strip()
+        ]
+        selected_files = [
+            str(source_file or "").strip()
+            for source_file in (refine_meta.get("selected_files") or [])
+            if str(source_file or "").strip()
+        ]
+        candidates = [
+            dict(item)
+            for item in (refine_meta.get("candidates") or [])
+            if isinstance(item, dict)
+        ]
+        if len(candidates) < 2:
+            return ""
+
+        ordered_sources: List[str] = []
+        for source_file in focus_files + selected_files:
+            if source_file and source_file not in ordered_sources:
+                ordered_sources.append(source_file)
+        for candidate in candidates:
+            source_file = str(candidate.get("source_file") or "").strip()
+            if source_file and source_file not in ordered_sources:
+                ordered_sources.append(source_file)
+
+        options: List[dict[str, str]] = []
+        used_labels: set[str] = set()
+        for source_file in ordered_sources:
+            candidate = next((item for item in candidates if str(item.get("source_file") or "").strip() == source_file), None)
+            if candidate is None:
+                continue
+            label = _disambiguation_doc_label(candidate, language)
+            summary = _disambiguation_summary(candidate)
+            normalized_label = label.strip().lower()
+            if not normalized_label or normalized_label in used_labels:
+                continue
+            options.append(
+                {
+                    "label": label.strip(),
+                    "summary": summary.strip(),
+                }
+            )
+            used_labels.add(normalized_label)
+            if len(options) >= 2:
+                break
+
+        if len(options) < 2:
+            return ""
+
+        return _build_retrieval_disambiguation_question(language, options)
 
     def _trace(self, trace_id: str, stage: str, **fields: Any) -> None:
         if not self._trace_enabled:

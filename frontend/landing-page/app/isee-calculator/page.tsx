@@ -361,30 +361,25 @@ export default function IseeCalculatorPage() {
 
             <Card className="rounded-[2rem] border-white/10 bg-card/75 shadow-[0_26px_80px_-40px_rgba(0,0,0,0.95)]">
               <CardHeader className="px-6 pt-6">
-                <CardTitle className="text-2xl text-white">{copy.liveResult}</CardTitle>
+                <CardTitle className="text-2xl text-white">{copy.scaleRulesTitle}</CardTitle>
                 <CardDescription className="text-white/55">
-                  {copy.liveResultDesc}
+                  {copy.scaleRulesDesc}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4 px-6 pb-6">
-                <div className="rounded-[1.75rem] border border-cyan-300/15 bg-linear-to-br from-cyan-300/14 via-sky-400/10 to-blue-500/14 p-5">
-                  <div className="text-sm uppercase tracking-[0.24em] text-cyan-200/85">{copy.resultLabel}</div>
-                  <div className="mt-3 text-4xl font-bold tracking-tight text-white">
-                    {scaleCoefficient > 0 ? formatMoney(equivalentIsee, locale) : "--"}
-                  </div>
-                  <p className="mt-3 text-sm text-white/65">
-                    {scaleCoefficient > 0
-                      ? copy.resultLive
-                      : copy.resultNeedMembers}
-                  </p>
+              <CardContent className="space-y-3 px-6 pb-6">
+                {[1, 2, 3, 4, 5].map((members) => (
+                  <BreakdownRow
+                    key={members}
+                    label={`${members} ${members > 1 ? copy.memberPlural : copy.memberSingle}`}
+                    value={formatNumber(BASE_SCALE_COEFFICIENTS[members], locale)}
+                  />
+                ))}
+                <div className="rounded-2xl border border-white/8 bg-black/20 px-4 py-4 text-sm leading-6 text-white/68">
+                  {copy.scaleRulesExtraLead} <span className="font-semibold text-white">{copy.scaleRulesExtraLeadStrong}</span> {copy.scaleRulesExtraMid}{" "}
+                  <span className="font-semibold text-white">{copy.scaleRulesExtraMidStrong}</span> {copy.scaleRulesExtraTail}
+                  <br />
+                  {copy.scaleRulesDisabledLead} <span className="font-semibold text-white">{copy.scaleRulesDisabledStrong}</span>.
                 </div>
-
-                <BreakdownRow label={copy.breakdownGrossIncome} value={formatMoney(grossIncomeValue, locale)} />
-                <BreakdownRow label={copy.breakdownRealEstateValue} value={formatMoney(realEstateValue, locale)} subtle />
-                <BreakdownRow label={copy.breakdownWeightedRealEstate} value={formatMoney(weightedRealEstateValue, locale)} />
-                <BreakdownRow label={copy.breakdownWeightedMovable} value={formatMoney(weightedMovableAssetsValue, locale)} />
-                <BreakdownRow label={copy.breakdownNumerator} value={formatMoney(numerator, locale)} />
-                <BreakdownRow label={copy.breakdownScale} value={scaleCoefficient > 0 ? formatNumber(scaleCoefficient, locale) : "--"} />
               </CardContent>
             </Card>
           </div>
@@ -501,25 +496,30 @@ export default function IseeCalculatorPage() {
           <div className="space-y-6">
             <Card className="rounded-[2rem] border-white/10 bg-white/[0.035]">
               <CardHeader className="px-6 pt-6">
-                <CardTitle className="text-2xl text-white">{copy.scaleRulesTitle}</CardTitle>
+                <CardTitle className="text-2xl text-white">{copy.liveResult}</CardTitle>
                 <CardDescription className="text-white/55">
-                  {copy.scaleRulesDesc}
+                  {copy.liveResultDesc}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3 px-6 pb-6">
-                {[1, 2, 3, 4, 5].map((members) => (
-                  <BreakdownRow
-                    key={members}
-                    label={`${members} ${members > 1 ? copy.memberPlural : copy.memberSingle}`}
-                    value={formatNumber(BASE_SCALE_COEFFICIENTS[members], locale)}
-                  />
-                ))}
-                <div className="rounded-2xl border border-white/8 bg-black/20 px-4 py-4 text-sm leading-6 text-white/68">
-                  {copy.scaleRulesExtraLead} <span className="font-semibold text-white">{copy.scaleRulesExtraLeadStrong}</span> {copy.scaleRulesExtraMid}{" "}
-                  <span className="font-semibold text-white">{copy.scaleRulesExtraMidStrong}</span> {copy.scaleRulesExtraTail}
-                  <br />
-                  {copy.scaleRulesDisabledLead} <span className="font-semibold text-white">{copy.scaleRulesDisabledStrong}</span>.
+              <CardContent className="space-y-4 px-6 pb-6">
+                <div className="rounded-[1.75rem] border border-cyan-300/15 bg-linear-to-br from-cyan-300/14 via-sky-400/10 to-blue-500/14 p-5">
+                  <div className="text-sm uppercase tracking-[0.24em] text-cyan-200/85">{copy.resultLabel}</div>
+                  <div className="mt-3 text-4xl font-bold tracking-tight text-white">
+                    {scaleCoefficient > 0 ? formatMoney(equivalentIsee, locale) : "--"}
+                  </div>
+                  <p className="mt-3 text-sm text-white/65">
+                    {scaleCoefficient > 0
+                      ? copy.resultLive
+                      : copy.resultNeedMembers}
+                  </p>
                 </div>
+
+                <BreakdownRow label={copy.breakdownGrossIncome} value={formatMoney(grossIncomeValue, locale)} />
+                <BreakdownRow label={copy.breakdownRealEstateValue} value={formatMoney(realEstateValue, locale)} subtle />
+                <BreakdownRow label={copy.breakdownWeightedRealEstate} value={formatMoney(weightedRealEstateValue, locale)} />
+                <BreakdownRow label={copy.breakdownWeightedMovable} value={formatMoney(weightedMovableAssetsValue, locale)} />
+                <BreakdownRow label={copy.breakdownNumerator} value={formatMoney(numerator, locale)} />
+                <BreakdownRow label={copy.breakdownScale} value={scaleCoefficient > 0 ? formatNumber(scaleCoefficient, locale) : "--"} />
               </CardContent>
             </Card>
 

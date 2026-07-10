@@ -663,15 +663,16 @@ prepare-uni-search-db-files-test:
         - golang/db/uni_search_migrations/001_init_uni_search.up.sql
   script:
     - 'test -n "${UNI_DATABASE_URL}" || (echo "UNI_DATABASE_URL is not set" && exit 1)'
-    - mkdir -p /opt/uni-search-db
-    - rm -rf /opt/uni-search-db/migrations
-    - cp -r golang/db/uni_search_migrations /opt/uni-search-db/migrations
-    - cp Makefile /opt/uni-search-db/
-    - sed -i 's|^UNI_MIGRATIONS_PATH := .*|UNI_MIGRATIONS_PATH := migrations|' /opt/uni-search-db/Makefile
-    - 'printf "UNI_DATABASE_URL=%s\n" "${UNI_DATABASE_URL}" > /opt/uni-search-db/.env'
-    - chmod 600 /opt/uni-search-db/.env
-    - echo "Copied uni-search DB files to /opt/uni-search-db"
-    - find /opt/uni-search-db -maxdepth 3 -type f | sort
+    - 'export UNI_DB_WORK_DIR="${UNI_DB_WORK_DIR:-/tmp/uni-search-db}"'
+    - mkdir -p "${UNI_DB_WORK_DIR}"
+    - rm -rf "${UNI_DB_WORK_DIR}/migrations"
+    - cp -r golang/db/uni_search_migrations "${UNI_DB_WORK_DIR}/migrations"
+    - cp Makefile "${UNI_DB_WORK_DIR}/"
+    - sed -i 's|^UNI_MIGRATIONS_PATH := .*|UNI_MIGRATIONS_PATH := migrations|' "${UNI_DB_WORK_DIR}/Makefile"
+    - 'printf "UNI_DATABASE_URL=%s\n" "${UNI_DATABASE_URL}" > "${UNI_DB_WORK_DIR}/.env"'
+    - chmod 600 "${UNI_DB_WORK_DIR}/.env"
+    - echo "Copied uni-search DB files to ${UNI_DB_WORK_DIR}"
+    - find "${UNI_DB_WORK_DIR}" -maxdepth 3 -type f | sort
 
 migrate-uni-search-db-test:
   stage: deploy
@@ -686,9 +687,10 @@ migrate-uni-search-db-test:
       exists:
         - golang/db/uni_search_migrations/001_init_uni_search.up.sql
   script:
-    - cd /opt/uni-search-db
-    - test -f .env || (echo "/opt/uni-search-db/.env is missing" && exit 1)
-    - test -d migrations || (echo "/opt/uni-search-db/migrations is missing" && exit 1)
+    - 'export UNI_DB_WORK_DIR="${UNI_DB_WORK_DIR:-/tmp/uni-search-db}"'
+    - cd "${UNI_DB_WORK_DIR}"
+    - test -f .env || (echo "${UNI_DB_WORK_DIR}/.env is missing" && exit 1)
+    - test -d migrations || (echo "${UNI_DB_WORK_DIR}/migrations is missing" && exit 1)
     - make uni-migrateup
 
 ################################################################################

@@ -652,6 +652,45 @@ migrate-db-test:
     - test -d migrations || (echo "/opt/golang-db/migrations is missing" && exit 1)
     - make migrateup
 
+prepare-uni-search-db-files-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - golang/db/uni_search_migrations/001_init_uni_search.up.sql
+  script:
+    - 'test -n "${UNI_DATABASE_URL}" || (echo "UNI_DATABASE_URL is not set" && exit 1)'
+    - mkdir -p /opt/uni-search-db
+    - rm -rf /opt/uni-search-db/migrations
+    - cp -r golang/db/uni_search_migrations /opt/uni-search-db/migrations
+    - cp Makefile /opt/uni-search-db/
+    - sed -i 's|^UNI_MIGRATIONS_PATH := .*|UNI_MIGRATIONS_PATH := migrations|' /opt/uni-search-db/Makefile
+    - 'printf "UNI_DATABASE_URL=%s\n" "${UNI_DATABASE_URL}" > /opt/uni-search-db/.env'
+    - chmod 600 /opt/uni-search-db/.env
+    - echo "Copied uni-search DB files to /opt/uni-search-db"
+    - find /opt/uni-search-db -maxdepth 3 -type f | sort
+
+migrate-uni-search-db-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  needs:
+    - job: prepare-uni-search-db-files-test
+      optional: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - golang/db/uni_search_migrations/001_init_uni_search.up.sql
+  script:
+    - cd /opt/uni-search-db
+    - test -f .env || (echo "/opt/uni-search-db/.env is missing" && exit 1)
+    - test -d migrations || (echo "/opt/uni-search-db/migrations is missing" && exit 1)
+    - make uni-migrateup
+
 ################################################################################
 # ADMIN PANEL (frontend/admin)
 ################################################################################

@@ -130,3 +130,4 @@ alembic/
 *.graphml
 *.pytest_cache
 /report
+/uni_list

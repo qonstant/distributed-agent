@@ -10,6 +10,7 @@ SHELL := /bin/bash
 	go-build go-up go-down go-clean \
 	db-up db-down db-smoke db-smoke-test \
 	migrateup migrateup1 migratedown migratedown1 \
+	uni-migrateup uni-migrateup1 uni-migratedown uni-migratedown1 \
 	go-test go-test-verbose python-test python-test-verbose \
 	test test-verbose coverage coverage-html \
 	test-docker coverage-docker
@@ -110,6 +111,7 @@ PYTHON ?= python
 PYTHON_RAG_DIR := python/rag_api
 DB_COMPOSE_FILE := golang/docker-compose.db.yml
 MIGRATIONS_PATH := golang/db/migrations
+UNI_MIGRATIONS_PATH := golang/db/uni_search_migrations
 ENV_FILE := ./.env
 
 help:
@@ -192,6 +194,10 @@ help:
 	@echo "  make migrateup1"
 	@echo "  make migratedown"
 	@echo "  make migratedown1"
+	@echo "  make uni-migrateup"
+	@echo "  make uni-migrateup1"
+	@echo "  make uni-migratedown"
+	@echo "  make uni-migratedown1"
 	@echo ""
 	@echo "Note: DB_URL must be provided through environment variables."
 
@@ -493,3 +499,27 @@ migratedown1:
 	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	test -n "$$DB_URL" || (echo "DB_URL is not set" && exit 1); \
 	migrate -path "$(MIGRATIONS_PATH)" -database "$$DB_URL" -verbose down 1
+
+uni-migrateup:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	test -n "$$UNI_DATABASE_URL" || (echo "UNI_DATABASE_URL is not set" && exit 1); \
+	UNI_DB_URL_MIGRATE="$$(printf '%s' "$$UNI_DATABASE_URL" | sed -E 's#^postgresql\\+asyncpg://#postgres://#')"; \
+	migrate -path "$(UNI_MIGRATIONS_PATH)" -database "$$UNI_DB_URL_MIGRATE" -verbose up
+
+uni-migrateup1:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	test -n "$$UNI_DATABASE_URL" || (echo "UNI_DATABASE_URL is not set" && exit 1); \
+	UNI_DB_URL_MIGRATE="$$(printf '%s' "$$UNI_DATABASE_URL" | sed -E 's#^postgresql\\+asyncpg://#postgres://#')"; \
+	migrate -path "$(UNI_MIGRATIONS_PATH)" -database "$$UNI_DB_URL_MIGRATE" -verbose up 1
+
+uni-migratedown:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	test -n "$$UNI_DATABASE_URL" || (echo "UNI_DATABASE_URL is not set" && exit 1); \
+	UNI_DB_URL_MIGRATE="$$(printf '%s' "$$UNI_DATABASE_URL" | sed -E 's#^postgresql\\+asyncpg://#postgres://#')"; \
+	migrate -path "$(UNI_MIGRATIONS_PATH)" -database "$$UNI_DB_URL_MIGRATE" -verbose down
+
+uni-migratedown1:
+	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
+	test -n "$$UNI_DATABASE_URL" || (echo "UNI_DATABASE_URL is not set" && exit 1); \
+	UNI_DB_URL_MIGRATE="$$(printf '%s' "$$UNI_DATABASE_URL" | sed -E 's#^postgresql\\+asyncpg://#postgres://#')"; \
+	migrate -path "$(UNI_MIGRATIONS_PATH)" -database "$$UNI_DB_URL_MIGRATE" -verbose down 1

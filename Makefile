@@ -503,23 +503,35 @@ migratedown1:
 uni-migrateup:
 	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	test -n "$$UNI_DATABASE_URL" || (echo "UNI_DATABASE_URL is not set" && exit 1); \
-	UNI_DB_URL_MIGRATE="$$(printf '%s' "$$UNI_DATABASE_URL" | sed -E 's#^postgresql\\+asyncpg://#postgres://#')"; \
+	UNI_DB_URL_MIGRATE="$$UNI_DATABASE_URL"; \
+	case "$$UNI_DB_URL_MIGRATE" in \
+		postgresql+asyncpg://*) UNI_DB_URL_MIGRATE="postgres://$${UNI_DB_URL_MIGRATE#postgresql+asyncpg://}" ;; \
+	esac; \
 	migrate -path "$(UNI_MIGRATIONS_PATH)" -database "$$UNI_DB_URL_MIGRATE" -verbose up
 
 uni-migrateup1:
 	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	test -n "$$UNI_DATABASE_URL" || (echo "UNI_DATABASE_URL is not set" && exit 1); \
-	UNI_DB_URL_MIGRATE="$$(printf '%s' "$$UNI_DATABASE_URL" | sed -E 's#^postgresql\\+asyncpg://#postgres://#')"; \
+	UNI_DB_URL_MIGRATE="$$UNI_DATABASE_URL"; \
+	case "$$UNI_DB_URL_MIGRATE" in \
+		postgresql+asyncpg://*) UNI_DB_URL_MIGRATE="postgres://$${UNI_DB_URL_MIGRATE#postgresql+asyncpg://}" ;; \
+	esac; \
 	migrate -path "$(UNI_MIGRATIONS_PATH)" -database "$$UNI_DB_URL_MIGRATE" -verbose up 1
 
 uni-migratedown:
 	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	test -n "$$UNI_DATABASE_URL" || (echo "UNI_DATABASE_URL is not set" && exit 1); \
-	UNI_DB_URL_MIGRATE="$$(printf '%s' "$$UNI_DATABASE_URL" | sed -E 's#^postgresql\\+asyncpg://#postgres://#')"; \
+	UNI_DB_URL_MIGRATE="$$UNI_DATABASE_URL"; \
+	case "$$UNI_DB_URL_MIGRATE" in \
+		postgresql+asyncpg://*) UNI_DB_URL_MIGRATE="postgres://$${UNI_DB_URL_MIGRATE#postgresql+asyncpg://}" ;; \
+	esac; \
 	migrate -path "$(UNI_MIGRATIONS_PATH)" -database "$$UNI_DB_URL_MIGRATE" -verbose down
 
 uni-migratedown1:
 	@set -a; [ -f "$(ENV_FILE)" ] && source "$(ENV_FILE)" || true; set +a; \
 	test -n "$$UNI_DATABASE_URL" || (echo "UNI_DATABASE_URL is not set" && exit 1); \
-	UNI_DB_URL_MIGRATE="$$(printf '%s' "$$UNI_DATABASE_URL" | sed -E 's#^postgresql\\+asyncpg://#postgres://#')"; \
+	UNI_DB_URL_MIGRATE="$$UNI_DATABASE_URL"; \
+	case "$$UNI_DB_URL_MIGRATE" in \
+		postgresql+asyncpg://*) UNI_DB_URL_MIGRATE="postgres://$${UNI_DB_URL_MIGRATE#postgresql+asyncpg://}" ;; \
+	esac; \
 	migrate -path "$(UNI_MIGRATIONS_PATH)" -database "$$UNI_DB_URL_MIGRATE" -verbose down 1

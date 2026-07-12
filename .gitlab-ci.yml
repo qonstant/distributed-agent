@@ -662,14 +662,15 @@ prepare-uni-search-db-files-test:
       exists:
         - golang/db/uni_search_migrations/001_init_uni_search.up.sql
   script:
-    - 'test -n "${UNI_DATABASE_URL}" || (echo "UNI_DATABASE_URL is not set" && exit 1)'
+    - 'export UNI_DB_URL_VALUE="${UNI_TEST_DATABASE_URL:-${UNI_DATABASE_URL:-}}"'
+    - 'test -n "${UNI_DB_URL_VALUE}" || (echo "UNI_TEST_DATABASE_URL / UNI_DATABASE_URL is not set" && exit 1)'
     - 'export UNI_DB_WORK_DIR="${UNI_DB_WORK_DIR:-/tmp/uni-search-db}"'
     - mkdir -p "${UNI_DB_WORK_DIR}"
     - rm -rf "${UNI_DB_WORK_DIR}/migrations"
     - cp -r golang/db/uni_search_migrations "${UNI_DB_WORK_DIR}/migrations"
     - cp Makefile "${UNI_DB_WORK_DIR}/"
     - sed -i 's|^UNI_MIGRATIONS_PATH := .*|UNI_MIGRATIONS_PATH := migrations|' "${UNI_DB_WORK_DIR}/Makefile"
-    - 'printf "UNI_DATABASE_URL=%s\n" "${UNI_DATABASE_URL}" > "${UNI_DB_WORK_DIR}/.env"'
+    - 'printf "UNI_DATABASE_URL=%s\n" "${UNI_DB_URL_VALUE}" > "${UNI_DB_WORK_DIR}/.env"'
     - chmod 600 "${UNI_DB_WORK_DIR}/.env"
     - echo "Copied uni-search DB files to ${UNI_DB_WORK_DIR}"
     - find "${UNI_DB_WORK_DIR}" -maxdepth 3 -type f | sort
@@ -692,6 +693,89 @@ migrate-uni-search-db-test:
     - test -f .env || (echo "${UNI_DB_WORK_DIR}/.env is missing" && exit 1)
     - test -d migrations || (echo "${UNI_DB_WORK_DIR}/migrations is missing" && exit 1)
     - make uni-migrateup
+
+prepare-uni-search-es-files-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - infra/elasticsearch/docker-compose.uni-search.yml
+  script:
+    - 'export UNI_ES_WORK_DIR="${UNI_TEST_ES_DIR:-/tmp/uni-search-es}"'
+    - 'export UNI_ES_URL_VALUE="${UNI_TEST_ELASTICSEARCH_URL:-http://127.0.0.1:9200}"'
+    - 'export UNI_ES_HTTP_PORT_VALUE="${UNI_TEST_ES_HTTP_PORT:-9200}"'
+    - 'export UNI_ES_JAVA_OPTS_VALUE="${UNI_TEST_ES_JAVA_OPTS:--Xms512m -Xmx512m}"'
+    - 'export UNI_ES_VERSION_VALUE="${UNI_TEST_ES_VERSION:-8.19.0}"'
+    - 'export UNI_ES_USERNAME_VALUE="${UNI_TEST_ES_USERNAME:-elastic}"'
+    - 'test "${UNI_ES_USERNAME_VALUE}" = "elastic" || (echo "UNI_TEST_ES_USERNAME must be elastic for this setup" && exit 1)'
+    - 'test -n "${UNI_TEST_ES_PASSWORD}" || (echo "UNI_TEST_ES_PASSWORD is not set" && exit 1)'
+    - mkdir -p "${UNI_ES_WORK_DIR}/data"
+    - cp infra/elasticsearch/docker-compose.uni-search.yml "${UNI_ES_WORK_DIR}/docker-compose.uni-search.yml"
+    - |
+      cat > "${UNI_ES_WORK_DIR}/.env" <<EOF
+      UNI_ES_HTTP_PORT=${UNI_ES_HTTP_PORT_VALUE}
+      UNI_ES_JAVA_OPTS=${UNI_ES_JAVA_OPTS_VALUE}
+      UNI_ES_VERSION=${UNI_ES_VERSION_VALUE}
+      UNI_ES_USERNAME=${UNI_ES_USERNAME_VALUE}
+      UNI_ES_PASSWORD=${UNI_TEST_ES_PASSWORD}
+      UNI_ES_DATA_DIR=${UNI_ES_WORK_DIR}/data
+      UNI_ELASTICSEARCH_URL=${UNI_ES_URL_VALUE}
+      EOF
+    - chmod 600 "${UNI_ES_WORK_DIR}/.env"
+    - echo "Copied uni-search Elasticsearch files to ${UNI_ES_WORK_DIR}"
+    - find "${UNI_ES_WORK_DIR}" -maxdepth 2 -type f | sort
+
+deploy-uni-search-es-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  needs:
+    - job: prepare-uni-search-es-files-test
+      optional: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - infra/elasticsearch/docker-compose.uni-search.yml
+  script:
+    - 'export UNI_ES_WORK_DIR="${UNI_TEST_ES_DIR:-/tmp/uni-search-es}"'
+    - cd "${UNI_ES_WORK_DIR}"
+    - test -f .env || (echo "${UNI_ES_WORK_DIR}/.env is missing" && exit 1)
+    - test -f docker-compose.uni-search.yml || (echo "${UNI_ES_WORK_DIR}/docker-compose.uni-search.yml is missing" && exit 1)
+    - docker compose -f docker-compose.uni-search.yml up -d --remove-orphans
+
+healthcheck-uni-search-es-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  needs:
+    - job: deploy-uni-search-es-test
+      optional: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - infra/elasticsearch/docker-compose.uni-search.yml
+  script:
+    - 'export UNI_ES_URL_VALUE="${UNI_TEST_ELASTICSEARCH_URL:-http://127.0.0.1:9200}"'
+    - 'export UNI_ES_USERNAME_VALUE="${UNI_TEST_ES_USERNAME:-elastic}"'
+    - 'test "${UNI_ES_USERNAME_VALUE}" = "elastic" || (echo "UNI_TEST_ES_USERNAME must be elastic for this setup" && exit 1)'
+    - 'test -n "${UNI_TEST_ES_PASSWORD}" || (echo "UNI_TEST_ES_PASSWORD is not set" && exit 1)'
+    - |
+      for attempt in $(seq 1 30); do
+        if curl -fsS -u "${UNI_ES_USERNAME_VALUE}:${UNI_TEST_ES_PASSWORD}" \
+          "${UNI_ES_URL_VALUE}/_cluster/health?wait_for_status=yellow&timeout=5s" >/dev/null; then
+          echo "Elasticsearch is healthy at ${UNI_ES_URL_VALUE}"
+          exit 0
+        fi
+        echo "Waiting for Elasticsearch (${attempt}/30)..."
+        sleep 5
+      done
+      echo "Elasticsearch did not become healthy in time"
+      exit 1
 
 ################################################################################
 # ADMIN PANEL (frontend/admin)

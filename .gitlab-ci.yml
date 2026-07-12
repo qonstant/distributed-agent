@@ -715,15 +715,15 @@ prepare-uni-search-es-files-test:
     - mkdir -p "${UNI_ES_WORK_DIR}/data"
     - cp infra/elasticsearch/docker-compose.uni-search.yml "${UNI_ES_WORK_DIR}/docker-compose.uni-search.yml"
     - |
-      cat > "${UNI_ES_WORK_DIR}/.env" <<EOF
-      UNI_ES_HTTP_PORT=${UNI_ES_HTTP_PORT_VALUE}
-      UNI_ES_JAVA_OPTS=${UNI_ES_JAVA_OPTS_VALUE}
-      UNI_ES_VERSION=${UNI_ES_VERSION_VALUE}
-      UNI_ES_USERNAME=${UNI_ES_USERNAME_VALUE}
-      UNI_ES_PASSWORD=${UNI_TEST_ES_PASSWORD}
-      UNI_ES_DATA_DIR=${UNI_ES_WORK_DIR}/data
-      UNI_ELASTICSEARCH_URL=${UNI_ES_URL_VALUE}
-      EOF
+      {
+        printf 'UNI_ES_HTTP_PORT=%s\n' "${UNI_ES_HTTP_PORT_VALUE}"
+        printf 'UNI_ES_JAVA_OPTS=%s\n' "${UNI_ES_JAVA_OPTS_VALUE}"
+        printf 'UNI_ES_VERSION=%s\n' "${UNI_ES_VERSION_VALUE}"
+        printf 'UNI_ES_USERNAME=%s\n' "${UNI_ES_USERNAME_VALUE}"
+        printf 'UNI_ES_PASSWORD=%s\n' "${UNI_TEST_ES_PASSWORD}"
+        printf 'UNI_ES_DATA_DIR=%s\n' "${UNI_ES_WORK_DIR}/data"
+        printf 'UNI_ELASTICSEARCH_URL=%s\n' "${UNI_ES_URL_VALUE}"
+      } > "${UNI_ES_WORK_DIR}/.env"
     - chmod 600 "${UNI_ES_WORK_DIR}/.env"
     - echo "Copied uni-search Elasticsearch files to ${UNI_ES_WORK_DIR}"
     - find "${UNI_ES_WORK_DIR}" -maxdepth 2 -type f | sort

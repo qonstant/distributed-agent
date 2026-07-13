@@ -13,12 +13,14 @@ import (
 type Config struct {
 	TelegramToken        string
 	DBURL                string
+	UniDatabaseURL       string
 	LocalAPIURL          string
 	LocalAPITimeout      time.Duration
 	LocalAPIMaxAttempts  int
 	LocalAPIRetryBackoff time.Duration
 	RabbitMQURL          string
 	DocRoot              string
+	UniSearchListenAddr  string
 	SampleAlbumTitle     string
 	SampleAttachmentKeys []string
 	Redis                RedisConfig
@@ -49,12 +51,14 @@ func Load() (Config, error) {
 	cfg := Config{
 		TelegramToken:        strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN")),
 		DBURL:                strings.TrimSpace(os.Getenv("DB_URL")),
+		UniDatabaseURL:       strings.TrimSpace(os.Getenv("UNI_DATABASE_URL")),
 		LocalAPIURL:          strings.TrimSpace(os.Getenv("LOCAL_API_URL")),
 		LocalAPITimeout:      parseDurationEnv("LOCAL_API_TIMEOUT", 60*time.Second),
 		LocalAPIMaxAttempts:  parseIntEnv("LOCAL_API_MAX_ATTEMPTS", 2),
 		LocalAPIRetryBackoff: parseDurationEnv("LOCAL_API_RETRY_BACKOFF", 750*time.Millisecond),
 		RabbitMQURL:          strings.TrimSpace(os.Getenv("RABBITMQ_URL")),
 		DocRoot:              strings.TrimSpace(os.Getenv("DOC_ROOT")),
+		UniSearchListenAddr:  defaultString(os.Getenv("UNI_SEARCH_LISTEN_ADDR"), ":8080"),
 		SampleAlbumTitle:     defaultString(os.Getenv("SAMPLE_ALBUM_TITLE"), "📄 Residence permit documents"),
 		SampleAttachmentKeys: parseCSV(os.Getenv("SAMPLE_ATTACHMENT_KEYS")),
 		Redis: RedisConfig{
@@ -103,6 +107,13 @@ func (cfg Config) ValidateWorker() error {
 	}
 	if cfg.RabbitMQURL == "" {
 		return fmt.Errorf("RABBITMQ_URL is missing")
+	}
+	return nil
+}
+
+func (cfg Config) ValidateUniSearchAPI() error {
+	if cfg.UniDatabaseURL == "" {
+		return fmt.Errorf("UNI_DATABASE_URL is missing")
 	}
 	return nil
 }

@@ -20,6 +20,8 @@ func main() {
 		err = app.Run()
 	case "events-worker":
 		err = app.RunTurnWorker()
+	case "uni-search-api":
+		err = app.RunUniSearchAPI()
 	default:
 		log.Fatalf("unknown APP_MODE %q", mode)
 	}

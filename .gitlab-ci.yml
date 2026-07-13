@@ -307,11 +307,13 @@ deploy-landing-prod:
     - 'export LANDING_BIND_HOST="${LANDING_BIND_HOST:-127.0.0.1}"'
     - 'export LANDING_HOST_PORT="${LANDING_HOST_PORT:-3000}"'
     - 'export NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL:-}"'
+    - 'export UNI_SEARCH_API_BASE_URL="${LANDING_UNI_SEARCH_API_BASE_URL:-}"'
     - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_IMAGE_NAME}" > .env'
     - 'printf "LANDING_CONTAINER_NAME=%s\n" "${LANDING_CONTAINER_NAME}" >> .env'
     - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST}" >> .env'
     - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT}" >> .env'
     - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${NEXT_PUBLIC_SCRIPT_URL}" >> .env'
+    - 'printf "UNI_SEARCH_API_BASE_URL=%s\n" "${UNI_SEARCH_API_BASE_URL}" >> .env'
     - chmod 600 .env
     - 'docker image inspect "${LANDING_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${LANDING_IMAGE_NAME}" && exit 1)'
     - docker-compose down --remove-orphans || true
@@ -343,11 +345,13 @@ deploy-landing-test:
     - 'export LANDING_BIND_HOST="${LANDING_BIND_HOST_TEST:-127.0.0.1}"'
     - 'export LANDING_HOST_PORT="${LANDING_HOST_PORT_TEST:-3000}"'
     - 'export NEXT_PUBLIC_SCRIPT_URL="${LANDING_NEXT_PUBLIC_SCRIPT_URL_TEST:-}"'
+    - 'export UNI_SEARCH_API_BASE_URL="${LANDING_UNI_SEARCH_API_BASE_URL_TEST:-}"'
     - 'printf "LANDING_IMAGE_NAME=%s\n" "${LANDING_IMAGE_NAME}" > .env'
     - 'printf "LANDING_CONTAINER_NAME=%s\n" "${LANDING_CONTAINER_NAME}" >> .env'
     - 'printf "LANDING_BIND_HOST=%s\n" "${LANDING_BIND_HOST}" >> .env'
     - 'printf "LANDING_HOST_PORT=%s\n" "${LANDING_HOST_PORT}" >> .env'
     - 'printf "NEXT_PUBLIC_SCRIPT_URL=%s\n" "${NEXT_PUBLIC_SCRIPT_URL}" >> .env'
+    - 'printf "UNI_SEARCH_API_BASE_URL=%s\n" "${UNI_SEARCH_API_BASE_URL}" >> .env'
     - chmod 600 .env
     - 'docker image inspect "${LANDING_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${LANDING_IMAGE_NAME}" && exit 1)'
     - docker-compose down --remove-orphans || true
@@ -774,6 +778,91 @@ healthcheck-uni-search-es-test:
         sleep 5
       done
       echo "Elasticsearch did not become healthy in time"
+      exit 1
+
+prepare-uni-search-api-files-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  needs:
+    - job: build-golang-image-test
+      optional: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - infra/uni-search-api/docker-compose.yml
+  script:
+    - 'export UNI_SEARCH_WORK_DIR="${UNI_TEST_SEARCH_API_DIR:-/tmp/uni-search-api}"'
+    - 'export UNI_SEARCH_DB_URL_VALUE="${UNI_TEST_DATABASE_URL:-${UNI_DATABASE_URL:-}}"'
+    - 'test -n "${UNI_SEARCH_DB_URL_VALUE}" || (echo "UNI_TEST_DATABASE_URL / UNI_DATABASE_URL is not set" && exit 1)'
+    - 'export UNI_SEARCH_IMAGE_VALUE="${BOT_IMAGE_NAME}"'
+    - 'export UNI_SEARCH_CONTAINER_VALUE="${UNI_TEST_SEARCH_API_CONTAINER_NAME:-uni-search-api}"'
+    - 'export UNI_SEARCH_BIND_HOST_VALUE="${UNI_TEST_SEARCH_BIND_HOST:-127.0.0.1}"'
+    - 'export UNI_SEARCH_HOST_PORT_VALUE="${UNI_TEST_SEARCH_HOST_PORT:-8080}"'
+    - 'export UNI_SEARCH_LISTEN_ADDR_VALUE="${UNI_TEST_SEARCH_LISTEN_ADDR:-:8080}"'
+    - mkdir -p "${UNI_SEARCH_WORK_DIR}"
+    - cp infra/uni-search-api/docker-compose.yml "${UNI_SEARCH_WORK_DIR}/docker-compose.yml"
+    - |
+      {
+        printf 'UNI_SEARCH_API_IMAGE=%s\n' "${UNI_SEARCH_IMAGE_VALUE}"
+        printf 'UNI_SEARCH_API_CONTAINER_NAME=%s\n' "${UNI_SEARCH_CONTAINER_VALUE}"
+        printf 'UNI_SEARCH_BIND_HOST=%s\n' "${UNI_SEARCH_BIND_HOST_VALUE}"
+        printf 'UNI_SEARCH_HOST_PORT=%s\n' "${UNI_SEARCH_HOST_PORT_VALUE}"
+        printf 'UNI_SEARCH_LISTEN_ADDR=%s\n' "${UNI_SEARCH_LISTEN_ADDR_VALUE}"
+        printf 'UNI_DATABASE_URL=%s\n' "${UNI_SEARCH_DB_URL_VALUE}"
+      } > "${UNI_SEARCH_WORK_DIR}/.env"
+    - chmod 600 "${UNI_SEARCH_WORK_DIR}/.env"
+    - echo "Copied uni-search API files to ${UNI_SEARCH_WORK_DIR}"
+    - find "${UNI_SEARCH_WORK_DIR}" -maxdepth 2 -type f | sort
+
+deploy-uni-search-api-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  needs:
+    - job: prepare-uni-search-api-files-test
+      optional: false
+    - job: migrate-uni-search-db-test
+      optional: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - infra/uni-search-api/docker-compose.yml
+  script:
+    - 'export UNI_SEARCH_WORK_DIR="${UNI_TEST_SEARCH_API_DIR:-/tmp/uni-search-api}"'
+    - cd "${UNI_SEARCH_WORK_DIR}"
+    - test -f .env || (echo "${UNI_SEARCH_WORK_DIR}/.env is missing" && exit 1)
+    - test -f docker-compose.yml || (echo "${UNI_SEARCH_WORK_DIR}/docker-compose.yml is missing" && exit 1)
+    - 'docker image inspect "${BOT_IMAGE_NAME}" >/dev/null 2>&1 || (echo "Missing built image: ${BOT_IMAGE_NAME}" && exit 1)'
+    - docker compose -f docker-compose.yml up -d --remove-orphans
+
+healthcheck-uni-search-api-test:
+  stage: deploy
+  tags:
+    - vps2-test
+  before_script: *before-vps2
+  needs:
+    - job: deploy-uni-search-api-test
+      optional: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "test"'
+      exists:
+        - infra/uni-search-api/docker-compose.yml
+  script:
+    - 'export UNI_SEARCH_BIND_HOST_VALUE="${UNI_TEST_SEARCH_BIND_HOST:-127.0.0.1}"'
+    - 'export UNI_SEARCH_HOST_PORT_VALUE="${UNI_TEST_SEARCH_HOST_PORT:-8080}"'
+    - |
+      for attempt in $(seq 1 20); do
+        if curl -fsS "http://${UNI_SEARCH_BIND_HOST_VALUE}:${UNI_SEARCH_HOST_PORT_VALUE}/api/health" >/dev/null; then
+          echo "Uni search API is healthy at http://${UNI_SEARCH_BIND_HOST_VALUE}:${UNI_SEARCH_HOST_PORT_VALUE}"
+          exit 0
+        fi
+        echo "Waiting for uni search API (${attempt}/20)..."
+        sleep 3
+      done
+      echo "Uni search API did not become healthy in time"
       exit 1
 
 ################################################################################

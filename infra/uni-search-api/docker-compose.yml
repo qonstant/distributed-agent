@@ -1,0 +1,12 @@
+services:
+  api:
+    image: ${UNI_SEARCH_API_IMAGE}
+    container_name: ${UNI_SEARCH_API_CONTAINER_NAME}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_MODE: uni-search-api
+      UNI_SEARCH_LISTEN_ADDR: ${UNI_SEARCH_LISTEN_ADDR}
+    ports:
+      - "${UNI_SEARCH_BIND_HOST}:${UNI_SEARCH_HOST_PORT}:8080"

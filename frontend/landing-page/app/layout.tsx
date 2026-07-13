@@ -7,17 +7,68 @@ import { SiteHeader } from "@/components/site-header"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "nomadmit - Your Path to European Education",
+  metadataBase: new URL("https://nomadmit.dev"),
+  title: {
+    default: "nomadmit - Your Path to European Education",
+    template: "%s | nomadmit",
+  },
   description:
     "Expert guidance for international students applying to top European universities. We help with admissions, scholarships, visa support, and all bureaucracy.",
-  generator: "v0.app",
+  applicationName: "nomadmit",
+  category: "education",
+  keywords: [
+    "study in Italy",
+    "study in Europe",
+    "Italian universities",
+    "international students",
+    "scholarships in Italy",
+    "university admissions",
+    "student visa Italy",
+    "Nomadmit",
+  ],
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    type: "website",
+    url: "https://nomadmit.dev",
+    siteName: "nomadmit",
+    title: "nomadmit - Your Path to European Education",
+    description:
+      "Expert guidance for international students applying to top European universities. We help with admissions, scholarships, visa support, and all bureaucracy.",
+    images: [
+      {
+        url: "/opengraph-image",
+        width: 1200,
+        height: 630,
+        alt: "nomadmit brand preview",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "nomadmit - Your Path to European Education",
+    description:
+      "Expert guidance for international students applying to top European universities. We help with admissions, scholarships, visa support, and all bureaucracy.",
+    images: ["/twitter-image"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
   icons: {
     icon: [
       { url: "/icon-light-32x32.png", media: "(prefers-color-scheme: light)" },
       { url: "/icon-dark-32x32.png", media: "(prefers-color-scheme: dark)" },
       { url: "/icon.svg", type: "image/svg+xml" },
     ],
-    apple: "/apple-icon.png",
   },
 }
 

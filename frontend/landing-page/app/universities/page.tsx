@@ -6,6 +6,14 @@ import { ArrowRight, ExternalLink, GraduationCap, Loader2, MapPin, Search, Spark
 import { Footer } from "@/components/footer"
 import { useLanguage } from "@/components/language-provider"
 import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { UNIVERSITY_SUBJECT_OPTIONS } from "@/lib/university-subjects"
 
 type SearchSubject = {
   subject_slug: string
@@ -35,9 +43,11 @@ const pageCopy = {
     intro:
       "Browse strong-fit options, compare cities and study styles, and get a clearer sense of where your profile belongs before moving to a paid plan.",
     searchPlaceholder: "Search universities, cities, or programs...",
-    filtersNote: "MVP search is live here first. Next filters can be subject, city, region, and ranking range.",
+    subjectLabel: "Subject",
+    subjectPlaceholder: "All subjects",
+    filtersNote: "This is the first version of the university finder. More filters are coming next, including city, region, ranking range, and other study-fit options.",
     searchButton: "Search",
-    searchHint: "Try Bologna, Milan, law, medicine, or computer science.",
+    searchHint: "Try Bologna, Milan, law, medicine, or computer science to explore the first results.",
     searchResultsTitle: "Search results",
     searchResultsSubtitle: "Internal API result preview for your uni-search MVP.",
     topResultsTitle: "Top Italian universities right now",
@@ -93,9 +103,11 @@ const pageCopy = {
     intro:
       "Смотрите подходящие варианты, сравнивайте города и стили обучения, чтобы лучше понять, куда подходит ваш профиль, прежде чем переходить к платному сопровождению.",
     searchPlaceholder: "Поиск по университетам, городам или программам...",
-    filtersNote: "Сначала здесь работает MVP-поиск. Следующими можно добавить фильтры по направлению, городу, региону и диапазону рейтинга.",
+    subjectLabel: "Subject",
+    subjectPlaceholder: "All subjects",
+    filtersNote: "Это первая версия поиска университетов. Дальше добавим больше фильтров, включая город, регион, диапазон рейтинга и другие параметры подбора.",
     searchButton: "Искать",
-    searchHint: "Попробуйте Bologna, Milan, law, medicine или computer science.",
+    searchHint: "Попробуйте Bologna, Milan, law, medicine или computer science, чтобы посмотреть первые результаты.",
     searchResultsTitle: "Результаты поиска",
     searchResultsSubtitle: "Черновой просмотр внутреннего API для MVP поиска университетов.",
     topResultsTitle: "Топ университетов Италии сейчас",
@@ -151,9 +163,11 @@ const pageCopy = {
     intro:
       "Профиліңізге сай келетін бағыттарды көріп, қалалар мен оқу стильдерін салыстырыңыз, содан кейін ғана ақылы қызметке өтуді шешіңіз.",
     searchPlaceholder: "Университет, қала немесе бағдарлама бойынша іздеу...",
-    filtersNote: "Алдымен осы жерде MVP іздеу жұмыс істейді. Келесі қадамда мамандық, қала, өңір және рейтинг ауқымы бойынша сүзгілер қосуға болады.",
+    subjectLabel: "Subject",
+    subjectPlaceholder: "All subjects",
+    filtersNote: "Бұл университет іздеудің алғашқы нұсқасы. Келесі кезеңде қала, өңір, рейтинг ауқымы және басқа да сәйкестік сүзгілері қосылады.",
     searchButton: "Іздеу",
-    searchHint: "Bologna, Milan, law, medicine немесе computer science деп көріңіз.",
+    searchHint: "Алғашқы нәтижелерді көру үшін Bologna, Milan, law, medicine немесе computer science деп көріңіз.",
     searchResultsTitle: "Іздеу нәтижелері",
     searchResultsSubtitle: "Университет іздеу MVP-іне арналған ішкі API нәтижелерінің алдын ала көрінісі.",
     topResultsTitle: "Қазір Италиядағы үздік университеттер",
@@ -209,16 +223,23 @@ export default function UniversitiesPage() {
   const { language } = useLanguage()
   const copy = pageCopy[language]
   const [query, setQuery] = useState("")
+  const [selectedSubjectSlug, setSelectedSubjectSlug] = useState("all")
   const [results, setResults] = useState<SearchUniversity[]>([])
   const [rankingYear, setRankingYear] = useState<number | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const hasActiveFilters = query.trim().length > 0 || selectedSubjectSlug !== "all"
+  const selectedSubjectName =
+    selectedSubjectSlug === "all"
+      ? copy.subjectPlaceholder
+      : UNIVERSITY_SUBJECT_OPTIONS.find((subject) => subject.slug === selectedSubjectSlug)?.name ||
+        copy.subjectPlaceholder
 
   useEffect(() => {
-    void runSearch("")
+    void runSearch("", "all")
   }, [])
 
-  async function runSearch(nextQuery: string) {
+  async function runSearch(nextQuery: string, nextSubjectSlug: string) {
     setIsLoading(true)
     setError(null)
 
@@ -226,6 +247,9 @@ export default function UniversitiesPage() {
       const params = new URLSearchParams({ limit: "12" })
       if (nextQuery.trim()) {
         params.set("q", nextQuery.trim())
+      }
+      if (nextSubjectSlug !== "all") {
+        params.set("subject_slug", nextSubjectSlug)
       }
 
       const response = await fetch(`/api/universities/search?${params.toString()}`, {
@@ -251,7 +275,12 @@ export default function UniversitiesPage() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    void runSearch(query)
+    void runSearch(query, selectedSubjectSlug)
+  }
+
+  function handleSubjectChange(nextSubjectSlug: string) {
+    setSelectedSubjectSlug(nextSubjectSlug)
+    void runSearch(query, nextSubjectSlug)
   }
 
   return (
@@ -274,25 +303,46 @@ export default function UniversitiesPage() {
           </div>
 
           <div className="mt-8 grid gap-4 md:grid-cols-[1.6fr_0.8fr]">
-            <form onSubmit={handleSubmit} className="flex items-center gap-3 rounded-[1.5rem] border border-white/10 bg-black/30 px-5 py-3">
-              <Search className="h-5 w-5 text-cyan-300" />
-              <input
-                type="text"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={copy.searchPlaceholder}
-                className="w-full bg-transparent text-base text-white outline-none placeholder:text-white/35"
-              />
+            <form
+              onSubmit={handleSubmit}
+              className="grid gap-3 rounded-[1.5rem] border border-white/10 bg-black/30 px-5 py-4 md:max-w-4xl md:grid-cols-[minmax(0,1fr)_200px_120px] md:items-center"
+            >
+              <div className="flex items-center gap-3">
+                <Search className="h-5 w-5 text-cyan-300" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={copy.searchPlaceholder}
+                  className="w-full bg-transparent text-base text-white outline-none placeholder:text-white/35"
+                />
+              </div>
+
+              <Select value={selectedSubjectSlug} onValueChange={handleSubjectChange}>
+                <SelectTrigger className="h-11 w-full rounded-full border-white/10 bg-white/[0.04] px-4 text-left text-white">
+                  <SelectValue placeholder={copy.subjectPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{copy.subjectPlaceholder}</SelectItem>
+                  {UNIVERSITY_SUBJECT_OPTIONS.map((subject) => (
+                    <SelectItem key={subject.slug} value={subject.slug}>
+                      {subject.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
               <Button
                 type="submit"
-                className="rounded-full bg-cyan-300 px-5 text-black hover:bg-cyan-200"
+                className="h-11 w-full rounded-full bg-cyan-300 px-5 text-black hover:bg-cyan-200"
                 disabled={isLoading}
               >
                 {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : copy.searchButton}
               </Button>
             </form>
             <div className="rounded-[1.5rem] border border-white/10 bg-black/30 px-5 py-4 text-sm text-white/70">
-              <p>{copy.filtersNote}</p>
+              <p>{copy.subjectLabel}: {selectedSubjectName}</p>
+              <p className="mt-2">{copy.filtersNote}</p>
               <p className="mt-2 text-white/45">{copy.searchHint}</p>
             </div>
           </div>
@@ -304,10 +354,10 @@ export default function UniversitiesPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
               <h2 className="text-2xl font-semibold text-white md:text-3xl">
-                {query.trim() ? copy.searchResultsTitle : copy.topResultsTitle}
+                {hasActiveFilters ? copy.searchResultsTitle : copy.topResultsTitle}
               </h2>
               <p className="mt-2 text-sm text-white/60">
-                {query.trim() ? copy.searchResultsSubtitle : copy.topResultsSubtitle}
+                {hasActiveFilters ? copy.searchResultsSubtitle : copy.topResultsSubtitle}
               </p>
             </div>
             {rankingYear ? (

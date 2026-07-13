@@ -712,7 +712,7 @@ prepare-uni-search-es-files-test:
     - 'export UNI_ES_USERNAME_VALUE="${UNI_TEST_ES_USERNAME:-elastic}"'
     - 'test "${UNI_ES_USERNAME_VALUE}" = "elastic" || (echo "UNI_TEST_ES_USERNAME must be elastic for this setup" && exit 1)'
     - 'test -n "${UNI_TEST_ES_PASSWORD}" || (echo "UNI_TEST_ES_PASSWORD is not set" && exit 1)'
-    - mkdir -p "${UNI_ES_WORK_DIR}/data"
+    - mkdir -p "${UNI_ES_WORK_DIR}"
     - cp infra/elasticsearch/docker-compose.uni-search.yml "${UNI_ES_WORK_DIR}/docker-compose.uni-search.yml"
     - |
       {
@@ -721,7 +721,6 @@ prepare-uni-search-es-files-test:
         printf 'UNI_ES_VERSION=%s\n' "${UNI_ES_VERSION_VALUE}"
         printf 'UNI_ES_USERNAME=%s\n' "${UNI_ES_USERNAME_VALUE}"
         printf 'UNI_ES_PASSWORD=%s\n' "${UNI_TEST_ES_PASSWORD}"
-        printf 'UNI_ES_DATA_DIR=%s\n' "${UNI_ES_WORK_DIR}/data"
         printf 'UNI_ELASTICSEARCH_URL=%s\n' "${UNI_ES_URL_VALUE}"
       } > "${UNI_ES_WORK_DIR}/.env"
     - chmod 600 "${UNI_ES_WORK_DIR}/.env"
